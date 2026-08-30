@@ -14,7 +14,7 @@ public static class WaitingRoomToastDetector
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex FullWaitingPhraseRegex = new(
-        @"^(?<name>.+?)\s+(?:has\s+)?entered\s+the\s+waiting\s+room$",
+        @"(?<name>.+?)\s+(?:has\s+)?entered\s+(?:the\s+)?waiting\s+room(?:\s*(?:Admit|View))?$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex WaitingRoomSignalRegex = new(
@@ -79,7 +79,7 @@ public static class WaitingRoomToastDetector
                 Dy = Math.Abs(admit.Bounds.Y - view.Bounds.Y),
                 Dx = view.Bounds.X - (admit.Bounds.X + admit.Bounds.Width)
             })
-            .Where(item => item.Dy <= Math.Max(15.0, admit.Bounds.Height * 0.8) && item.Dx > 10 && item.Dx < 400)
+            .Where(item => item.Dy <= Math.Max(20.0, admit.Bounds.Height * 1.5) && item.Dx > 0 && item.Dx < 450)
             .OrderBy(item => item.Dy)
             .ThenBy(item => item.Dx)
             .FirstOrDefault();
@@ -134,10 +134,10 @@ public static class WaitingRoomToastDetector
         var sameRowLines = allLines
             .Where(line =>
                 !LineIsOnlyAction(line.Text) &&
-                Math.Abs((line.Bounds.Y + line.Bounds.Height / 2.0) - admitCenterY) <= Math.Max(15.0, admit.Bounds.Height * 1.5) &&
-                line.Bounds.X + line.Bounds.Width <= admit.Bounds.X + 15 &&
-                admit.Bounds.X - (line.Bounds.X + line.Bounds.Width) >= -15 &&
-                admit.Bounds.X - (line.Bounds.X + line.Bounds.Width) <= 250)
+                Math.Abs((line.Bounds.Y + line.Bounds.Height / 2.0) - admitCenterY) <= Math.Max(25.0, admit.Bounds.Height * 2.0) &&
+                line.Bounds.X <= admit.Bounds.X + 25 &&
+                admit.Bounds.X - (line.Bounds.X + line.Bounds.Width) >= -50 &&
+                admit.Bounds.X - (line.Bounds.X + line.Bounds.Width) <= 500)
             .OrderBy(line => line.Bounds.X)
             .ToList();
 

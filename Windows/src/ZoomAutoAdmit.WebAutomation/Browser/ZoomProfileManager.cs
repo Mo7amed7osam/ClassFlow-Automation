@@ -29,8 +29,46 @@ public sealed class ZoomProfileManager
         if (!directory.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Resolved browser profile escaped the managed Profiles directory.");
         Directory.CreateDirectory(directory);
+
+        // If directory is empty, check if an alias profile exists (e.g. CAI5_AIS4_S8 -> s8, S8)
+        if (Directory.GetFileSystemEntries(directory).Length == 0)
+        {
+            var parts = name.Split(new[] { '_', '-' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 0)
+            {
+                string lastPart = parts[^1];
+                string[] candidateAliases = [lastPart.ToLowerInvariant(), lastPart.ToUpperInvariant(), lastPart];
+                foreach (var alias in candidateAliases)
+                {
+                    string aliasDir = Path.Combine(_profilesRoot, alias);
+                    if (Directory.Exists(aliasDir) && Directory.GetFileSystemEntries(aliasDir).Length > 0 && !aliasDir.Equals(directory, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            CopyDirectoryRecursively(aliasDir, directory);
+                        }
+                        catch { }
+                        break;
+                    }
+                }
+            }
+        }
+
         string marker = Path.Combine(directory, ReadyMarkerFileName);
         return new ZoomBrowserProfile(name, directory, marker, File.Exists(marker));
+    }
+
+    private static void CopyDirectoryRecursively(string sourceDir, string targetDir)
+    {
+        foreach (string dirPath in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            Directory.CreateDirectory(dirPath.Replace(sourceDir, targetDir));
+        }
+
+        foreach (string newPath in Directory.GetFiles(sourceDir, "*.*", SearchOption.AllDirectories))
+        {
+            File.Copy(newPath, newPath.Replace(sourceDir, targetDir), true);
+        }
     }
 
     public ZoomBrowserProfile MarkSessionReady(ZoomBrowserProfile profile)

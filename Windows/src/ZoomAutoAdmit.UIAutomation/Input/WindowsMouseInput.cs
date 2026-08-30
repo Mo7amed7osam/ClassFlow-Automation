@@ -38,6 +38,24 @@ public sealed class WindowsMouseInput : IMouseInput
     private const uint MouseEventLeftUp = 0x0004;
     private const uint MouseEventWheel = 0x0800;
 
+    public void DirectClick(int x, int y)
+    {
+        try
+        {
+            SetCursorPos(x, y);
+            Thread.Sleep(30);
+
+            var inputs = new[]
+            {
+                CreateMouseInput(MouseEventLeftDown),
+                CreateMouseInput(MouseEventLeftUp)
+            };
+
+            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        }
+        catch { }
+    }
+
     public void LeftClickOncePreservingCursor(int x, int y)
     {
         bool hasOriginal = GetCursorPos(out var original);

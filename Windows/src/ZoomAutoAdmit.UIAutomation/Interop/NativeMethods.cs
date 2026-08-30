@@ -376,12 +376,39 @@ public static class NativeMethods
     public const byte VK_ESCAPE = 0x1B;
     public const byte VK_TAB = 0x09;
 
+    [DllImport("user32.dll")]
+    public static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
     public static void SendKeyPress(byte vk)
     {
-        keybd_event(vk, 0, 0, UIntPtr.Zero);
+        uint scan = MapVirtualKey(vk, 0);
+        keybd_event(vk, (byte)scan, 0, UIntPtr.Zero);
         Thread.Sleep(60);
-        keybd_event(vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        keybd_event(vk, (byte)scan, KEYEVENTF_KEYUP, UIntPtr.Zero);
         Thread.Sleep(120);
+    }
+
+    public static void SendAltKey(byte vkKey)
+    {
+        uint vkAlt = 0x12; // VK_MENU
+        uint scanAlt = MapVirtualKey(vkAlt, 0);
+        uint scanKey = MapVirtualKey(vkKey, 0);
+
+        // Alt down
+        keybd_event((byte)vkAlt, (byte)scanAlt, 0, UIntPtr.Zero);
+        Thread.Sleep(80);
+
+        // Key down
+        keybd_event(vkKey, (byte)scanKey, 0, UIntPtr.Zero);
+        Thread.Sleep(120);
+
+        // Key up
+        keybd_event(vkKey, (byte)scanKey, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        Thread.Sleep(80);
+
+        // Alt up
+        keybd_event((byte)vkAlt, (byte)scanAlt, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        Thread.Sleep(150);
     }
 
     [DllImport("kernel32.dll")]

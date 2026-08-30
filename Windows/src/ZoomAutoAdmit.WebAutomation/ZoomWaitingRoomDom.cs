@@ -371,6 +371,19 @@ public sealed class ZoomWaitingRoomDom
             string text = (await button.InnerTextAsync()).Trim();
             if (ExactAdmitPattern.IsMatch(text)) return button;
         }
+
+        var roleButtons = notification.GetByRole(AriaRole.Button, new() { NameRegex = ExactAdmitPattern });
+        foreach (var button in await roleButtons.AllAsync())
+        {
+            if (await button.IsVisibleAsync()) return button;
+        }
+
+        var textButtons = notification.GetByText("Admit", new() { Exact = true });
+        foreach (var button in await textButtons.AllAsync())
+        {
+            if (await button.IsVisibleAsync()) return button;
+        }
+
         return null;
     }
 
