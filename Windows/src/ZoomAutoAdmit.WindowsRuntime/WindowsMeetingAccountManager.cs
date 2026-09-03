@@ -22,6 +22,12 @@ public sealed record WindowsMeetingAccountMetadata(
 {
     public string? ZoomEmail { get; init; }
     public string? DefaultMeetingUrl { get; init; }
+    /// <summary>
+    /// Browser profile directory this account signs in with, under the managed Profiles folder.
+    /// Empty keeps the historical name derived from the account id. Set it to reuse a profile you
+    /// already signed in to (for example one created from the console tester).
+    /// </summary>
+    public string? WebProfileName { get; init; }
 }
 
 public sealed class WindowsAccountWebProfileMapper
@@ -36,9 +42,13 @@ public sealed class WindowsAccountWebProfileMapper
             "Profiles"));
     }
 
-    public string ResolveDirectory(string accountId)
+    public string ResolveDirectory(string accountId) => ResolveDirectory(accountId, null);
+
+    public string ResolveDirectory(string accountId, string? webProfileName)
     {
-        string profileName = AccountWebProfile.ForAccount(accountId);
+        string profileName = string.IsNullOrWhiteSpace(webProfileName)
+            ? AccountWebProfile.ForAccount(accountId)
+            : webProfileName.Trim();
         Directory.CreateDirectory(_profilesRoot);
         string directory = Path.GetFullPath(Path.Combine(_profilesRoot, profileName));
         string rootWithSeparator = _profilesRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
@@ -163,7 +173,7 @@ public sealed class WindowsMeetingAccountManager : IMeetingAccountManager
         // Saved Zoom Desktop accounts and persistent Web sessions do not need a password.
         // Legacy records without an explicit identity retain their credential-reference path.
         if (account.ZoomEmail == null && !_credentialResolver.CanResolve(account.CredentialReference)) return null;
-        _profileMapper.ResolveDirectory(account.AccountId);
+        _profileMapper.ResolveDirectory(account.AccountId, account.WebProfileName);
 
         // Only the secure target reference crosses the orchestration boundary. Credential
         // secret bytes remain owned by Windows Credential Manager and are never serialized.
@@ -176,7 +186,11 @@ public sealed class WindowsMeetingAccountManager : IMeetingAccountManager
                 AccountEnginePreference.Desktop => SessionEngineType.Desktop,
                 AccountEnginePreference.Web => SessionEngineType.Web,
                 _ => null
-            }) { ZoomEmail = account.ZoomEmail };
+            })
+        {
+            ZoomEmail = account.ZoomEmail,
+            WebProfileName = NormalizeWebProfileName(account.WebProfileName)
+        };
         ConsoleLogger.Success($"[ACCOUNT] Loaded: {loaded.AccountId}");
         return loaded;
     }
@@ -302,7 +316,19 @@ public sealed class WindowsMeetingAccountManager : IMeetingAccountManager
             throw new ArgumentException("Zoom email is required (legacy records may use a credential reference).", nameof(account));
         return account with { AccountId = account.AccountId.Trim(), DisplayName = account.DisplayName.Trim(),
             CredentialReference = account.CredentialReference?.Trim() ?? string.Empty, ZoomEmail = email,
-            DefaultMeetingUrl = NormalizeDefaultMeetingUrl(account.DefaultMeetingUrl) };
+            DefaultMeetingUrl = NormalizeDefaultMeetingUrl(account.DefaultMeetingUrl),
+            WebProfileName = NormalizeWebProfileName(account.WebProfileName) };
+    }
+
+    /// <summary>Same rules the browser profile manager enforces for a directory name.</summary>
+    public static string? NormalizeWebProfileName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        string name = value.Trim();
+        if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"))
+            throw new ArgumentException(
+                "Web profile must be 1-64 characters: letters, numbers, dot, underscore or hyphen, starting with a letter or number.");
+        return name;
     }
 
     public static string? NormalizeDefaultMeetingUrl(string? value)

@@ -27,6 +27,7 @@ internal static class Program
                 "account-menu-inspect" => AccountMenuInspectCommand.Execute(options),
                 "keyboard-switch-debug" => KeyboardSwitchDebugCommand.Execute(options),
                 "uia-hwnd-inspect" => UiaHwndInspectCommand.Execute(options),
+                "roles-probe" => RolesProbeCommand.Execute(options),
                 "account-menu-capture" => AccountMenuCaptureCommand.Execute(options),
                 "profile-menu-watch" => ProfileMenuWatchCommand.Execute(options),
                 "meeting-watch" => MeetingWatchCommand.Execute(options),
@@ -40,6 +41,10 @@ internal static class Program
                 "meeting-start" => await MeetingStartCommand.ExecuteAsync(options),
                 "diagnose-zoom" => ExecuteDiagnoseZoom(),
                 "background-zoom-test" => BackgroundZoomTestCommand.Execute(options),
+                "web-dom-probe" => await WebDomProbeCommand.ExecuteAsync(options),
+                "lms-run-session" => await LmsSessionCommand.ExecuteAsync(options),
+                "lms-record-link" => await LmsRecordLinkCommand.ExecuteAsync(options),
+                "lms-attendance" => await LmsAttendanceCommand.ExecuteAsync(options),
                 _ => HandleUnknownCommand(options.Command)
             };
         }
@@ -95,10 +100,14 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine("Primary Commands:");
         Console.WriteLine("  waiting-room-auto-admit   Continuously auto-admit participants (Windows UI or Web engine)");
+        Console.WriteLine("  web-dom-probe             Print the Zoom Web client's frames and buttons (read-only)");
+        Console.WriteLine("  lms-run-session           Press Run Session on the DEPI dashboard for --group");
+        Console.WriteLine("  lms-record-link           Copy the group's Zoom recording link onto its finished session");
         Console.WriteLine("  meeting-start             Run the complete allocated meeting lifecycle");
         Console.WriteLine("  background-zoom-test      Safe diagnostic probe of background window capture & input");
         Console.WriteLine("  inspect                   Print the Zoom UI Automation element tree (read-only)");
         Console.WriteLine("  uia-hwnd-inspect          Print UIA tree for --hwnd plus visible same-process popups");
+        Console.WriteLine("  roles-probe               READ-ONLY: report Participants/Joined/More/Make Co-host exposure");
         Console.WriteLine("  keyboard-switch-debug    LIVE debug-only account switch using Profile click + keyboard");
         Console.WriteLine("    --target-email <EMAIL> Required exact saved Zoom account email (changes active account)");
         Console.WriteLine("  processes                 Enumerate candidate Zoom processes and window handles");

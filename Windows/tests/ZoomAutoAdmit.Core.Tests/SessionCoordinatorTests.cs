@@ -48,27 +48,46 @@ public sealed class SessionCoordinatorTests
     }
 
     [Fact]
-    public void SameWebProfileIsRejectedWithClearError()
+    public void SameAccountRunsSeveralWebMeetingsEachWithItsOwnProfile()
     {
         var coordinator = new SessionCoordinator();
         Assert.True(coordinator.Allocate("desktop-account").IsSuccess);
-        Assert.True(coordinator.Allocate("web-account").IsSuccess);
+        var first = coordinator.Allocate("web-account");
+        var second = coordinator.Allocate("web-account");
+        var third = coordinator.Allocate("web-account");
 
-        var duplicate = coordinator.Allocate("web-account");
-
-        Assert.False(duplicate.IsSuccess);
-        Assert.Equal(SessionAllocationError.WebProfileLocked, duplicate.Error);
-        Assert.Contains("already locked", duplicate.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.True(second.IsSuccess);
+        Assert.True(third.IsSuccess);
+        Assert.Equal(SessionEngineType.Web, second.Session!.EngineType);
+        Assert.Equal("web-account", first.Session!.WebProfileName);
+        Assert.Equal("web-account-2", second.Session.WebProfileName);
+        Assert.Equal("web-account-3", third.Session.WebProfileName);
+        Assert.Equal("web-account", AccountWebProfile.BaseProfileOf(second.Session.WebProfileName!));
     }
 
     [Fact]
-    public async Task ConcurrentRequestsCannotReserveTheSameWebProfileTwice()
+    public void SimultaneousWebMeetingsForOneAccountAreCapped()
+    {
+        var coordinator = new SessionCoordinator();
+        Assert.True(coordinator.Allocate("desktop-account").IsSuccess);
+        for (int i = 0; i < SessionAllocationPolicy.MaxWebInstancesPerAccount; i++)
+            Assert.True(coordinator.Allocate("web-account").IsSuccess);
+
+        var rejected = coordinator.Allocate("web-account");
+
+        Assert.False(rejected.IsSuccess);
+        Assert.Equal(SessionAllocationError.WebProfileLocked, rejected.Error);
+        Assert.Contains("simultaneous Web meetings", rejected.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ConcurrentRequestsNeverShareOneWebProfile()
     {
         var coordinator = new SessionCoordinator();
         Assert.True(coordinator.Allocate("desktop-account").IsSuccess);
         using var start = new ManualResetEventSlim(false);
 
-        Task<SessionAllocationResult>[] requests = Enumerable.Range(0, 2)
+        Task<SessionAllocationResult>[] requests = Enumerable.Range(0, 4)
             .Select(_ => Task.Run(() =>
             {
                 start.Wait();
@@ -78,9 +97,9 @@ public sealed class SessionCoordinatorTests
         start.Set();
         var results = await Task.WhenAll(requests);
 
-        Assert.Single(results.Where(result => result.IsSuccess));
-        var rejected = Assert.Single(results.Where(result => !result.IsSuccess));
-        Assert.Equal(SessionAllocationError.WebProfileLocked, rejected.Error);
+        Assert.All(results, result => Assert.True(result.IsSuccess));
+        var profiles = results.Select(result => result.Session!.WebProfileName).ToArray();
+        Assert.Equal(profiles.Length, profiles.Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
     [Fact]

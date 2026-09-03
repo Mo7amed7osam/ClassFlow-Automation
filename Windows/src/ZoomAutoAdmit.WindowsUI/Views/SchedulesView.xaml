@@ -1,0 +1,132 @@
+<UserControl x:Class="ZoomAutoAdmit.WindowsUI.Views.SchedulesView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:ZoomAutoAdmit.WindowsUI.ViewModels">
+<UserControl.Resources><vm:ScheduleDaysConverter x:Key="ScheduleDaysText"/></UserControl.Resources>
+<ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
+<Border Style="{DynamicResource Card}" Margin="0,0,0,16" DataContext="{Binding Schedules}"><StackPanel>
+<StackPanel Margin="0,0,0,14"><Border Style="{DynamicResource Badge}" Margin="0,0,0,10"><StackPanel Orientation="Horizontal"><Ellipse Width="6" Height="6" Fill="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/><TextBlock Text="IMPORT" Style="{DynamicResource BadgeText}"/></StackPanel></Border><TextBlock Text="Upload a timetable" FontSize="19" FontWeight="Bold"/><TextBlock Text="One row per session with its own date, read in this computer&apos;s timezone." Style="{DynamicResource PageLead}" FontSize="12" Margin="0,5,0,0"/></StackPanel>
+<Grid IsEnabled="{Binding IsIdle}" Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
+<StackPanel><TextBlock Text="Import account" Style="{DynamicResource FieldLabel}"/><ComboBox ItemsSource="{Binding Accounts}" SelectedItem="{Binding ImportAccount}" DisplayMemberPath="DisplayName"/></StackPanel>
+<StackPanel Grid.Column="1"><TextBlock Text="Meeting URL for these sessions" Style="{DynamicResource FieldLabel}"/><TextBox Text="{Binding ImportMeetingUrl, UpdateSourceTrigger=PropertyChanged}"/></StackPanel></Grid>
+<WrapPanel IsEnabled="{Binding IsIdle}"><Button Content="Upload Excel…" Command="{Binding UploadCommand}" Style="{DynamicResource PrimaryButton}"/>
+<Button Content="Select all dates" Command="{Binding SelectAllImportCommand}"/>
+<Button Content="Clear selection" Command="{Binding ClearImportSelectionCommand}"/>
+<CheckBox Content="Enable imported meetings" IsChecked="{Binding EnableImported}" Margin="12,8" VerticalAlignment="Center"/>
+<Button Content="Confirm import" Command="{Binding ConfirmImportCommand}"/></WrapPanel>
+<TextBlock Text="{Binding ImportSelectionSummary}" Style="{DynamicResource Muted}" Margin="0,6,0,0"/>
+<TextBlock Text="Check the account and link above before importing. Dates in the past and rows you already have are skipped." Style="{DynamicResource Muted}" Margin="0,8"/>
+<TextBlock Text="{Binding ImportStatus}" Foreground="{DynamicResource AccentBrush}" TextWrapping="Wrap" Margin="0,8" AutomationProperties.LiveSetting="Polite"/>
+<DataGrid ItemsSource="{Binding ImportRows}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" MaxHeight="300" MinHeight="100" Background="Transparent" RowBackground="Transparent" AlternatingRowBackground="{DynamicResource InputBrush}" GridLinesVisibility="None" BorderThickness="0"><DataGrid.Style><Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}"><Style.Triggers><DataTrigger Binding="{Binding ImportRows.Count}" Value="0"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></DataGrid.Style>
+<DataGrid.ColumnHeaderStyle><Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/><Setter Property="BorderThickness" Value="0,0,0,1"/><Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/><Setter Property="Padding" Value="10,6"/></Style></DataGrid.ColumnHeaderStyle>
+<DataGrid.Columns>
+<DataGridTemplateColumn Header="Import" Width="70"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+<CheckBox IsChecked="{Binding Include}" IsEnabled="{Binding CanImport}" Margin="0" HorizontalAlignment="Center" AutomationProperties.Name="Import this date"/>
+</DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+<DataGridTextColumn Header="#" Binding="{Binding SessionNumber}" Width="40"/><DataGridTextColumn Header="Date" Binding="{Binding Date, StringFormat=yyyy-MM-dd}" Width="*"/>
+<DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="*"/><DataGridTextColumn Header="Topic" Binding="{Binding Topic}" Width="2*"/><DataGridTextColumn Header="Time" Binding="{Binding TimeRange}" Width="2*"/><DataGridTextColumn Header="Excluded / issue" Binding="{Binding Issue}" Width="2*"/>
+</DataGrid.Columns></DataGrid>
+</StackPanel></Border>
+
+<Border Style="{DynamicResource Card}" Padding="12" MinHeight="520">
+<Grid Margin="12" DataContext="{Binding Schedules}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <!-- Header, then a single row of controls that all sit on the same baseline. The
+                         buttons used to stretch to the height of the panel beside them. -->
+                    <Grid Grid.ColumnSpan="2" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="330"/></Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Top" Margin="0,0,16,0">
+                            <Border Style="{DynamicResource Badge}" Margin="0,0,0,10"><StackPanel Orientation="Horizontal">
+                                <Ellipse Width="6" Height="6" Fill="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                                <TextBlock Text="TIMETABLE" Style="{DynamicResource BadgeText}"/>
+                            </StackPanel></Border>
+                            <TextBlock Text="Meeting schedules" FontSize="19" FontWeight="Bold"/>
+                            <TextBlock Text="{Binding LeadNote}" Style="{DynamicResource PageLead}" FontSize="12" Margin="0,5,0,10"/>
+                            <WrapPanel Margin="-3,0,0,0">
+                                <Button Content="Refresh" Command="{Binding RefreshCommand}" VerticalAlignment="Center"/>
+                                <Button Content="Enable all shown" Command="{Binding EnableAllShownCommand}" VerticalAlignment="Center"/>
+                                <Button Content="Disable all shown" Command="{Binding DisableAllShownCommand}" VerticalAlignment="Center"/>
+                                <TextBlock Text="SHOW" Style="{DynamicResource FieldLabel}" VerticalAlignment="Center" Margin="12,0,6,0"/>
+                                <ComboBox ItemsSource="{Binding ScheduleFilters}" SelectedItem="{Binding ScheduleFilter}" Width="150"
+                                          VerticalAlignment="Center" Margin="0,3" AutomationProperties.Name="Schedule day filter"/>
+                                <TextBlock Text="{Binding FilterSummary}" Style="{DynamicResource Muted}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                            </WrapPanel>
+                        </StackPanel>
+                        <Border Grid.Column="1" Style="{DynamicResource InsetCard}" VerticalAlignment="Top" Padding="14,12">
+                            <StackPanel>
+                                <TextBlock Text="TODAY" Style="{DynamicResource FieldLabel}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding TodaySummary}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,12" AutomationProperties.Name="Today's sessions"/>
+                                <TextBlock Text="{Binding UpcomingCount}" Style="{DynamicResource FieldLabel}" Margin="0,0,0,6"/>
+                                <!-- Every upcoming session, each with the time it opens, not just the first.
+                                     It scrolls: with seventy schedules loaded, an unbounded list made this
+                                     panel taller than the window and pushed the schedules table out of sight. -->
+                                <ScrollViewer MaxHeight="230" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <ItemsControl ItemsSource="{Binding Upcoming}"><ItemsControl.ItemTemplate><DataTemplate>
+                                    <Grid Margin="0,0,0,7">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis">
+                                                <Run Text="{Binding When, Mode=OneWay}"/><Run Text="  ·  "/><Run Text="{Binding Opens, Mode=OneWay}"/>
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{Binding Countdown}" Foreground="{DynamicResource AccentBrush}"
+                                                   FontWeight="Bold" FontSize="12" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                                    </Grid>
+                                </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+                                </ScrollViewer>
+                                <TextBlock Text="{Binding NextMeetingCountdown}" Foreground="{DynamicResource AccentBrush}" FontSize="19" FontWeight="Bold"
+                                           Margin="0,6,0,0" AutomationProperties.Name="Time until the next meeting opens"/>
+                                <TextBlock Text="until the next one opens" Style="{DynamicResource Muted}" FontSize="11"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                    <DataGrid Grid.Row="1" IsEnabled="{Binding IsIdle}" ItemsSource="{Binding FilteredItems}" SelectedItem="{Binding SelectedSchedule}"
+                              AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" Margin="0,0,12,0">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
+                            <DataGridTextColumn Header="URL" Binding="{Binding MeetingUrl}" Width="2*" />
+                            <DataGridTextColumn Header="Account" Binding="{Binding AccountId}" Width="*" />
+                            <DataGridTextColumn Header="Time" Binding="{Binding Time, StringFormat=HH\\:mm}" Width="*" />
+                            <DataGridTextColumn Header="Date" Binding="{Binding OccurrenceDate, StringFormat=yyyy-MM-dd}" Width="*" />
+                            <DataGridTextColumn Header="Day" Binding="{Binding Converter={StaticResource ScheduleDaysText}}" Width="*" />
+                            <DataGridTemplateColumn Header="Enabled" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                <CheckBox IsChecked="{Binding Enabled, Mode=OneWay}" Margin="0" HorizontalAlignment="Left"
+                                          Command="{Binding DataContext.ToggleEnabledCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                          CommandParameter="{Binding}" ToolTip="Turn this schedule on or off" AutomationProperties.Name="Schedule enabled"/>
+                            </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <ScrollViewer Grid.Row="1" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                        <StackPanel IsEnabled="{Binding IsIdle}">
+                            <TextBlock Text="Schedule details" FontSize="20" FontWeight="SemiBold" Margin="4,0,4,8" />
+                            <TextBlock Text="Name" Style="{DynamicResource FieldLabel}"/><TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Text="Meeting URL" Style="{DynamicResource FieldLabel}"/><TextBox Text="{Binding MeetingUrl, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Text="Account" Style="{DynamicResource FieldLabel}"/>
+                            <ComboBox ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount}" DisplayMemberPath="DisplayName" />
+                            <TextBlock Text="Time (HH:mm)" Style="{DynamicResource FieldLabel}"/><TextBox Text="{Binding Time, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Text="Exact date (leave blank for weekly schedule)" Style="{DynamicResource FieldLabel}"/>
+                            <DatePicker SelectedDate="{Binding OccurrenceDate}" Margin="4"/>
+                            <TextBlock Text="Days" Style="{DynamicResource FieldLabel}" />
+                            <WrapPanel>
+                                <CheckBox Content="Mon" IsChecked="{Binding Monday}" Margin="5"/>
+                                <CheckBox Content="Tue" IsChecked="{Binding Tuesday}" Margin="5"/>
+                                <CheckBox Content="Wed" IsChecked="{Binding Wednesday}" Margin="5"/>
+                                <CheckBox Content="Thu" IsChecked="{Binding Thursday}" Margin="5"/>
+                                <CheckBox Content="Fri" IsChecked="{Binding Friday}" Margin="5"/>
+                                <CheckBox Content="Sat" IsChecked="{Binding Saturday}" Margin="5"/>
+                                <CheckBox Content="Sun" IsChecked="{Binding Sunday}" Margin="5"/>
+                            </WrapPanel>
+                            <CheckBox Content="Enabled" IsChecked="{Binding Enabled}" Margin="5,10" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="New" Command="{Binding NewCommand}" />
+                                <Button Style="{DynamicResource PrimaryButton}" Content="Save" Command="{Binding SaveCommand}" />
+                                <Button Content="Delete" Command="{Binding DeleteCommand}" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="4,10" />
+                            <TextBlock Text="{Binding ExecutionStatus}" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="4,4,4,10" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+</Border>
+</StackPanel></ScrollViewer>
+</UserControl>

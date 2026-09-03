@@ -8,7 +8,7 @@ namespace ZoomAutoAdmit.WindowsUI.ViewModels;
 public sealed class LogsViewModel : ObservableObject, IDisposable
 {
     private static readonly string[] RuntimeCategories =
-        ["[BOOTSTRAP]", "[ACCOUNT]", "[ALLOCATOR]", "[MEETING]", "[AUTO_ADMIT]", "[SCHEDULER]", "[ZOOM]", "[MEETING_CHECK]", "[ACCOUNT_SWITCH]"];
+        ["[BOOTSTRAP]", "[ACCOUNT]", "[ALLOCATOR]", "[MEETING]", "[AUTO_ADMIT]", "[SCHEDULER]", "[ZOOM]", "[MEETING_CHECK]", "[ACCOUNT_SWITCH]", "[AI_SETUP]", "[ATTENDANCE]", "[MATCHING]", "[ROSTER]"];
     private readonly SynchronizationContext? _context = SynchronizationContext.Current;
 
     public LogsViewModel()
@@ -23,7 +23,7 @@ public sealed class LogsViewModel : ObservableObject, IDisposable
 
     private void OnEntryWritten(LogEntry entry)
     {
-        if (!RuntimeCategories.Any(category => entry.Message.Contains(category, StringComparison.Ordinal))) return;
+        if (!RuntimeCategories.Any(category => entry.Message.Contains(category, StringComparison.Ordinal)) && !WaitingRoomViewModel.IsAdmissionDiagnostic(entry)) return;
         string line = $"[{entry.Timestamp:HH:mm:ss.fff}] [{entry.Level}] {entry.Message}";
         if (_context == null) Add(line);
         else _context.Post(_ => Add(line), null);

@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 
 namespace ZoomAutoAdmit.WaitingRoomTester;
 
@@ -15,61 +15,60 @@ public sealed class WebWaitingRoomDetector
             if (await joinFromBrowser.CountAsync() > 0 && await joinFromBrowser.First.IsVisibleAsync())
             {
                 TesterLogger.Web("Clicking 'Join from Your Browser' to enter web meeting");
-                await joinFromBrowser.First.ClickAsync();
+                await ActionExecutor.ClickWebElementAsync(joinFromBrowser.First, "Join from Your Browser");
                 await Task.Delay(1000);
                 return false;
             }
 
-            // Priority 1: Check for "Admit" or "Admit all" button by role or text
-            var admitRole = page.GetByRole(AriaRole.Button, new() { Name = "Admit", Exact = true });
-            if (await admitRole.CountAsync() > 0 && await admitRole.First.IsVisibleAsync())
-            {
-                TesterLogger.Web("Admit detected");
-                return await ActionExecutor.ClickWebElementAsync(admitRole.First, "Admit");
-            }
-
-            var admitAllRole = page.GetByRole(AriaRole.Button, new() { Name = "Admit all", Exact = true });
+            // Fast check 1: Instant "Admit all" button
+            var admitAllRole = page.Locator("button").Filter(new() { HasTextRegex = new System.Text.RegularExpressions.Regex(@"^Admit\s+all$", System.Text.RegularExpressions.RegexOptions.IgnoreCase) });
             if (await admitAllRole.CountAsync() > 0 && await admitAllRole.First.IsVisibleAsync())
             {
                 TesterLogger.Web("Admit all detected");
                 return await ActionExecutor.ClickWebElementAsync(admitAllRole.First, "Admit all");
             }
 
-            var admitButtons = page.Locator("button").Filter(new() { HasTextRegex = new System.Text.RegularExpressions.Regex(@"^Admit(?:\s+all)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase) });
-            if (await admitButtons.CountAsync() > 0 && await admitButtons.First.IsVisibleAsync())
+            // Fast check 2: Instant "Admit" button
+            var admitRole = page.Locator("button").Filter(new() { HasTextRegex = new System.Text.RegularExpressions.Regex(@"^Admit$", System.Text.RegularExpressions.RegexOptions.IgnoreCase) });
+            if (await admitRole.CountAsync() > 0 && await admitRole.First.IsVisibleAsync())
             {
                 TesterLogger.Web("Admit detected");
-                return await ActionExecutor.ClickWebElementAsync(admitButtons.First, "Admit");
+                return await ActionExecutor.ClickWebElementAsync(admitRole.First, "Admit");
             }
 
-            // Priority 2: Check for "View" button ONLY inside a Waiting Room notification toast (not top-right Gallery View)
+            // Fast check 3: Any button containing "Admit" (e.g. aria-label or text)
+            var anyAdmit = page.Locator("button[aria-label*='Admit'], button:has-text('Admit')");
+            if (await anyAdmit.CountAsync() > 0 && await anyAdmit.First.IsVisibleAsync())
+            {
+                TesterLogger.Web("Admit button detected");
+                return await ActionExecutor.ClickWebElementAsync(anyAdmit.First, "Admit");
+            }
+
+            // Priority 2: Check for Waiting Room notification toast
             var waitingToast = page.Locator("div, section, aside, [role='alert'], [role='dialog']")
                 .Filter(new() { HasTextRegex = new System.Text.RegularExpressions.Regex(@"entered\s+(?:the\s+)?waiting\s+room", System.Text.RegularExpressions.RegexOptions.IgnoreCase) });
 
             if (await waitingToast.CountAsync() > 0 && await waitingToast.First.IsVisibleAsync())
             {
-                // Check if toast has Admit button
-                var toastAdmit = waitingToast.First.Locator("button").Filter(new() { HasTextRegex = new System.Text.RegularExpressions.Regex(@"Admit", System.Text.RegularExpressions.RegexOptions.IgnoreCase) });
+                var toastAdmit = waitingToast.First.Locator("button:has-text('Admit')");
                 if (await toastAdmit.CountAsync() > 0 && await toastAdmit.First.IsVisibleAsync())
                 {
                     TesterLogger.Web("Toast Admit detected");
                     return await ActionExecutor.ClickWebElementAsync(toastAdmit.First, "Toast Admit");
                 }
 
-                // Check if toast has View button
-                var toastView = waitingToast.First.Locator("button").Filter(new() { HasTextRegex = new System.Text.RegularExpressions.Regex(@"View", System.Text.RegularExpressions.RegexOptions.IgnoreCase) });
+                var toastView = waitingToast.First.Locator("button:has-text('View')");
                 if (await toastView.CountAsync() > 0 && await toastView.First.IsVisibleAsync())
                 {
                     TesterLogger.Web("Toast View detected");
                     if (await ActionExecutor.ClickWebElementAsync(toastView.First, "Toast View"))
                     {
-                        await Task.Delay(500);
+                        await Task.Delay(300);
 
-                        // Search again for Admit button
-                        if (await admitRole.CountAsync() > 0 && await admitRole.First.IsVisibleAsync())
+                        if (await anyAdmit.CountAsync() > 0 && await anyAdmit.First.IsVisibleAsync())
                         {
                             TesterLogger.Web("Admit detected (post-View)");
-                            return await ActionExecutor.ClickWebElementAsync(admitRole.First, "Admit");
+                            return await ActionExecutor.ClickWebElementAsync(anyAdmit.First, "Admit");
                         }
                     }
                 }
@@ -88,16 +87,21 @@ public sealed class WebWaitingRoomDetector
 
     public async Task StartWatcherAsync(IBrowserContext context, CancellationToken cancellationToken)
     {
-        TesterLogger.WaitingRoom("Web watcher started.");
+        await StartMultiContextWatcherAsync(new List<IBrowserContext> { context }, cancellationToken);
+    }
+
+    public async Task StartMultiContextWatcherAsync(List<IBrowserContext> contexts, CancellationToken cancellationToken)
+    {
+        TesterLogger.WaitingRoom($"Web watcher started across {contexts.Count} profile session(s).");
 
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                var pages = context.Pages.Where(p => !p.IsClosed).ToList();
+                var pages = contexts.SelectMany(c => c.Pages.Where(p => !p.IsClosed)).ToList();
                 if (pages.Count == 0)
                 {
-                    await Task.Delay(1000, cancellationToken);
+                    await Task.Delay(500, cancellationToken);
                     continue;
                 }
 
@@ -118,7 +122,7 @@ public sealed class WebWaitingRoomDetector
 
             try
             {
-                await Task.Delay(500, cancellationToken);
+                await Task.Delay(250, cancellationToken);
             }
             catch (OperationCanceledException)
             {

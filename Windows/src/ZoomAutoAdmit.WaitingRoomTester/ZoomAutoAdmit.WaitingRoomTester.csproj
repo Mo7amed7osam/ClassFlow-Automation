@@ -1,12 +1,16 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>ZoomAutoAdmit.WaitingRoomTester</RootNamespace>
     <AssemblyName>ZoomAutoAdmit.WaitingRoomTester</AssemblyName>
+    <!-- Per-monitor DPI awareness. See PerMonitorV2.manifest: without it the screen capture
+         and every Admit click land on the wrong coordinates on a mixed-scaling desktop. -->
+    <ApplicationManifest>..\PerMonitorV2.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ZoomAutoAdmit.Core\ZoomAutoAdmit.Core.csproj" />
+    <ProjectReference Include="..\ZoomAutoAdmit.UIAutomation\ZoomAutoAdmit.UIAutomation.csproj" />
   </ItemGroup>
 
 </Project>

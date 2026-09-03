@@ -1,4 +1,4 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 
 namespace ZoomAutoAdmit.WaitingRoomTester;
 
@@ -7,7 +7,7 @@ internal static class Program
     private static CancellationTokenSource? _activeCts;
     private static Task? _activeTask;
     private static IPlaywright? _playwright;
-    private static IBrowserContext? _browserContext;
+    private static List<IBrowserContext> _browserContexts = new();
 
     private static string GetProfilesBaseDir()
     {
@@ -33,6 +33,68 @@ internal static class Program
         return path;
     }
 
+    private static string? GetSavedProfileUrl(string profileName)
+    {
+        try
+        {
+            string profileDir = GetProfilePath(profileName);
+            string file = Path.Combine(profileDir, "meeting_url.txt");
+            if (File.Exists(file))
+            {
+                string text = File.ReadAllText(file).Trim();
+                if (!string.IsNullOrWhiteSpace(text)) return text;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private static void SaveProfileUrl(string profileName, string url)
+    {
+        try
+        {
+            string profileDir = GetProfilePath(profileName);
+            string file = Path.Combine(profileDir, "meeting_url.txt");
+            File.WriteAllText(file, url.Trim());
+        }
+        catch { }
+    }
+
+    private static string? PromptForMeetingUrl(string profileName, string prompt = "Enter Zoom Web Meeting URL")
+    {
+        string? savedUrl = GetSavedProfileUrl(profileName);
+        if (!string.IsNullOrEmpty(savedUrl))
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"[Saved URL for '{profileName}']: {savedUrl}");
+            Console.ResetColor();
+            Console.Write($"{prompt} [Press ENTER to use saved URL, or paste new URL]: ");
+        }
+        else
+        {
+            Console.Write($"{prompt}: ");
+        }
+
+        string? input = Console.ReadLine()?.Trim();
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            if (!string.IsNullOrEmpty(savedUrl))
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"[INFO] Using saved URL: {savedUrl}");
+                Console.ResetColor();
+                return savedUrl;
+            }
+            return null;
+        }
+
+        SaveProfileUrl(profileName, input);
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"[INFO] Saved new URL for profile '{profileName}'.");
+        Console.ResetColor();
+        return input;
+    }
+
     private static async Task Main(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -43,16 +105,21 @@ internal static class Program
             Console.WriteLine();
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine("==================================================");
-            Console.WriteLine("       Zoom Waiting Room Action Tester (Standalone)       ");
+            Console.WriteLine("       Zoom Waiting Room Multi-Meeting Tester     ");
             Console.WriteLine("==================================================");
             Console.ResetColor();
             Console.WriteLine("1. Start Desktop watcher");
-            Console.WriteLine("2. Start Web watcher (Persistent Profile)");
-            Console.WriteLine("3. Setup / Login to a Web Profile (Manual Login)");
-            Console.WriteLine("4. Stop watcher");
-            Console.WriteLine("5. Show logs");
-            Console.WriteLine("6. Exit");
-            Console.Write("\nSelect an option (1-6): ");
+            Console.WriteLine("2. Start Web watcher (Single Meeting)");
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("3. Start BOTH (Desktop + Web simultaneously) ??");
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.WriteLine("4. Start MULTI-MEETINGS (Multiple Distinct Profiles) ??");
+            Console.ResetColor();
+            Console.WriteLine("5. Setup / Login to a Web Profile (Save Zoom Login)");
+            Console.WriteLine("6. Stop watcher");
+            Console.WriteLine("7. Show logs");
+            Console.WriteLine("8. Exit");
+            Console.Write("\nSelect an option (1-8): ");
 
             string? input = Console.ReadLine()?.Trim();
             Console.WriteLine();
@@ -63,24 +130,30 @@ internal static class Program
                     StartDesktopWatcher();
                     break;
                 case "2":
-                    await StartWebWatcherAsync();
+                    await StartSingleWebWatcherAsync();
                     break;
                 case "3":
-                    await SetupWebProfileAsync();
+                    await StartBothWatchersAsync();
                     break;
                 case "4":
-                    StopWatcher();
+                    await StartMultiMeetingWithSeparateProfilesAsync();
                     break;
                 case "5":
-                    ShowLogs();
+                    await SetupWebProfileAsync();
                     break;
                 case "6":
+                    StopWatcher();
+                    break;
+                case "7":
+                    ShowLogs();
+                    break;
+                case "8":
                     StopWatcher();
                     await CleanupPlaywrightAsync();
                     Console.WriteLine("Exiting tester.");
                     return;
                 default:
-                    Console.WriteLine("Invalid option. Please choose 1 to 6.");
+                    Console.WriteLine("Invalid option. Please choose 1 to 8.");
                     break;
             }
         }
@@ -106,27 +179,145 @@ internal static class Program
         StopWatcher();
     }
 
-    private static async Task StartWebWatcherAsync()
+    private static async Task StartSingleWebWatcherAsync()
     {
         StopWatcher();
         await CleanupPlaywrightAsync();
 
-        Console.Write("Enter Profile Name (e.g. s7, depi21, depi20, depi42): ");
+        Console.Write("Enter Profile Name (e.g. s7, s8, depi21) [default]: ");
         string? profile = Console.ReadLine()?.Trim();
-        if (string.IsNullOrWhiteSpace(profile))
-        {
-            profile = "default";
-        }
+        if (string.IsNullOrWhiteSpace(profile)) profile = "default";
 
-        Console.Write("Enter Zoom Web Meeting URL: ");
-        string? url = Console.ReadLine()?.Trim();
+        string? url = PromptForMeetingUrl(profile);
         if (string.IsNullOrWhiteSpace(url))
         {
             Console.WriteLine("Meeting URL cannot be empty.");
             return;
         }
 
-        // Normalize zoom /j/ URL to web client /wc/join/ URL for direct web client loading
+        var list = new List<(string Profile, string Url)> { (profile, url) };
+        await LaunchMultiProfileWebWatchersAsync(list);
+    }
+
+    private static async Task StartMultiMeetingWithSeparateProfilesAsync()
+    {
+        StopWatcher();
+        await CleanupPlaywrightAsync();
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("--- Multi-Meeting Setup (Each Meeting in its Own Independent Profile) ---");
+        Console.WriteLine("Each meeting will run in its own completely isolated browser profile/session!");
+        Console.ResetColor();
+
+        var sessions = new List<(string Profile, string Url)>();
+
+        for (int i = 1; i <= 10; i++)
+        {
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.Write($"Meeting #{i} - Enter Profile Name (e.g. s{i+6}, depi2{i}, or press Enter when done): ");
+            Console.ResetColor();
+            string? profile = Console.ReadLine()?.Trim();
+
+            if (string.IsNullOrWhiteSpace(profile))
+            {
+                if (sessions.Count > 0) break;
+                Console.WriteLine("Please enter at least one meeting profile.");
+                i--;
+                continue;
+            }
+
+            string? url = PromptForMeetingUrl(profile, $"Meeting #{i} - Enter Zoom Meeting URL for profile '{profile}'");
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                Console.WriteLine("URL cannot be empty. Skipping this meeting.");
+                continue;
+            }
+
+            sessions.Add((profile, url));
+
+            Console.Write($"Add another meeting? (y/n) [y]: ");
+            string? another = Console.ReadLine()?.Trim().ToLowerInvariant();
+            if (another == "n" || another == "no") break;
+        }
+
+        if (sessions.Count == 0) return;
+
+        await LaunchMultiProfileWebWatchersAsync(sessions);
+    }
+
+    private static async Task LaunchMultiProfileWebWatchersAsync(List<(string Profile, string Url)> sessions)
+    {
+        try
+        {
+            _playwright ??= await Playwright.CreateAsync();
+
+            foreach (var (profile, rawUrl) in sessions)
+            {
+                string url = rawUrl;
+                if (url.Contains("zoom.us/j/", StringComparison.OrdinalIgnoreCase))
+                {
+                    url = url.Replace("zoom.us/j/", "zoom.us/wc/join/", StringComparison.OrdinalIgnoreCase);
+                }
+
+                string profileDir = GetProfilePath(profile);
+                Console.WriteLine($"[INFO] Launching isolated profile '{profile}' (Path: {profileDir})");
+
+                var context = await _playwright.Chromium.LaunchPersistentContextAsync(
+                    profileDir,
+                    new BrowserTypeLaunchPersistentContextOptions
+                    {
+                        Headless = false,
+                        ViewportSize = new ViewportSize { Width = 1280, Height = 800 },
+                        Args = new[] { "--disable-blink-features=AutomationControlled" }
+                    });
+
+                _browserContexts.Add(context);
+
+                var page = context.Pages.Count > 0 ? context.Pages[0] : await context.NewPageAsync();
+                Console.WriteLine($"[INFO] Navigating Profile '{profile}' to Meeting URL: {url}");
+                await page.GotoAsync(url);
+            }
+
+            _activeCts = new CancellationTokenSource();
+            var token = _activeCts.Token;
+
+            var detector = new WebWaitingRoomDetector();
+            _activeTask = Task.Run(() => detector.StartMultiContextWatcherAsync(_browserContexts, token), token);
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"\n[ACTIVE] Multi-Profile Web Watcher is RUNNING across {sessions.Count} isolated session(s) simultaneously!");
+            Console.WriteLine("All incoming participants in ANY of the meetings will be admitted instantly!");
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("==> Press [ENTER] at any time to stop watcher and return to main menu <==\n");
+            Console.ResetColor();
+
+            Console.ReadLine();
+            StopWatcher();
+            await CleanupPlaywrightAsync();
+        }
+        catch (Exception ex)
+        {
+            TesterLogger.Error($"Failed to launch multi-profile watchers: {ex.Message}");
+        }
+    }
+
+    private static async Task StartBothWatchersAsync()
+    {
+        StopWatcher();
+        await CleanupPlaywrightAsync();
+
+        Console.Write("Enter Profile Name for Web [default]: ");
+        string? profile = Console.ReadLine()?.Trim();
+        if (string.IsNullOrWhiteSpace(profile)) profile = "default";
+
+        string? url = PromptForMeetingUrl(profile);
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            Console.WriteLine("Meeting URL cannot be empty.");
+            return;
+        }
+
         if (url.Contains("zoom.us/j/", StringComparison.OrdinalIgnoreCase))
         {
             url = url.Replace("zoom.us/j/", "zoom.us/wc/join/", StringComparison.OrdinalIgnoreCase);
@@ -138,7 +329,7 @@ internal static class Program
             Console.WriteLine($"[INFO] Using profile directory: {profileDir}");
 
             _playwright ??= await Playwright.CreateAsync();
-            _browserContext = await _playwright.Chromium.LaunchPersistentContextAsync(
+            var context = await _playwright.Chromium.LaunchPersistentContextAsync(
                 profileDir,
                 new BrowserTypeLaunchPersistentContextOptions
                 {
@@ -147,24 +338,27 @@ internal static class Program
                     Args = new[] { "--disable-blink-features=AutomationControlled" }
                 });
 
-            var page = _browserContext.Pages.Count > 0 
-                ? _browserContext.Pages[0] 
-                : await _browserContext.NewPageAsync();
+            _browserContexts.Add(context);
 
-            Console.WriteLine($"[INFO] Navigating directly to web client URL: {url}");
+            var page = context.Pages.Count > 0 ? context.Pages[0] : await context.NewPageAsync();
+            Console.WriteLine($"[INFO] Navigating Web to: {url}");
             await page.GotoAsync(url);
 
             _activeCts = new CancellationTokenSource();
             var token = _activeCts.Token;
 
-            var detector = new WebWaitingRoomDetector();
-            _activeTask = Task.Run(() => detector.StartWatcherAsync(_browserContext, token), token);
+            var desktopDetector = new DesktopWaitingRoomDetector();
+            var webDetector = new WebWaitingRoomDetector();
+
+            var taskDesktop = Task.Run(() => desktopDetector.StartWatcherAsync(token), token);
+            var taskWeb = Task.Run(() => webDetector.StartMultiContextWatcherAsync(_browserContexts, token), token);
+            _activeTask = Task.WhenAll(taskDesktop, taskWeb);
 
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("\n[ACTIVE] Web Watcher is RUNNING and monitoring the Waiting Room in real-time.");
-            Console.WriteLine("Incoming detections (Admit / View / Actions) will be printed live below:");
+            Console.WriteLine($"\n[ACTIVE] DUAL WATCHER is RUNNING (Desktop App + Web Profile '{profile}') simultaneously!");
+            Console.WriteLine("Incoming detections from either surface will be processed in real-time.");
             Console.ForegroundColor = ConsoleColor.DarkYellow;
-            Console.WriteLine("==> Press [ENTER] at any time to stop watcher and return to main menu <==\n");
+            Console.WriteLine("==> Press [ENTER] at any time to stop both watchers and return to main menu <==\n");
             Console.ResetColor();
 
             Console.ReadLine();
@@ -173,7 +367,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            TesterLogger.Error($"Failed to launch web watcher: {ex.Message}");
+            TesterLogger.Error($"Failed to launch dual watcher: {ex.Message}");
         }
     }
 
@@ -182,7 +376,7 @@ internal static class Program
         StopWatcher();
         await CleanupPlaywrightAsync();
 
-        Console.Write("Enter Profile Name to setup (e.g. depi21, depi20, depi42): ");
+        Console.Write("Enter Profile Name to setup (e.g. s7, s8, depi21, depi20, depi42): ");
         string? profile = Console.ReadLine()?.Trim();
         if (string.IsNullOrWhiteSpace(profile))
         {
@@ -197,7 +391,7 @@ internal static class Program
             Console.WriteLine($"[INFO] Storage path: {profileDir}");
 
             _playwright ??= await Playwright.CreateAsync();
-            _browserContext = await _playwright.Chromium.LaunchPersistentContextAsync(
+            var context = await _playwright.Chromium.LaunchPersistentContextAsync(
                 profileDir,
                 new BrowserTypeLaunchPersistentContextOptions
                 {
@@ -206,22 +400,34 @@ internal static class Program
                     Args = new[] { "--disable-blink-features=AutomationControlled" }
                 });
 
-            var page = _browserContext.Pages.Count > 0 
-                ? _browserContext.Pages[0] 
-                : await _browserContext.NewPageAsync();
+            _browserContexts.Add(context);
 
+            var page = context.Pages.Count > 0 ? context.Pages[0] : await context.NewPageAsync();
             await page.GotoAsync("https://zoom.us/signin");
 
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("\n[ACTION REQUIRED] Please complete manual Zoom login in the opened browser window.");
+            Console.WriteLine($"\n[ACTION REQUIRED] Please complete manual Zoom login for profile '{profile}' in the opened browser.");
             Console.WriteLine("When done logging in, press [ENTER] here to save profile and return to menu...");
             Console.ResetColor();
 
             Console.ReadLine();
 
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"[SUCCESS] Profile '{profile}' is saved! Future meeting runs will use this session automatically without asking for login.\n");
+            Console.WriteLine($"[SUCCESS] Profile '{profile}' is saved! Future meetings using '{profile}' will open signed in automatically.\n");
             Console.ResetColor();
+
+            string? currentSaved = GetSavedProfileUrl(profile);
+            Console.Write(currentSaved != null
+                ? $"Enter default Zoom Meeting URL for '{profile}' [{currentSaved}] (or press Enter to keep): "
+                : $"Optional: Enter default Zoom Meeting URL for '{profile}' (or press Enter to skip): ");
+            string? customUrl = Console.ReadLine()?.Trim();
+            if (!string.IsNullOrWhiteSpace(customUrl))
+            {
+                SaveProfileUrl(profile, customUrl);
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"[INFO] Saved default meeting URL for '{profile}'.\n");
+                Console.ResetColor();
+            }
 
             await CleanupPlaywrightAsync();
         }
@@ -258,15 +464,16 @@ internal static class Program
 
     private static async Task CleanupPlaywrightAsync()
     {
-        if (_browserContext != null)
+        foreach (var ctx in _browserContexts)
         {
             try
             {
-                await _browserContext.CloseAsync();
+                await ctx.CloseAsync();
             }
             catch { }
-            _browserContext = null;
         }
+        _browserContexts.Clear();
+
         if (_playwright != null)
         {
             try

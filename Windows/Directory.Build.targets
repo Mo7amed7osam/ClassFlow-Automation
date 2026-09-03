@@ -1,0 +1,46 @@
+<Project>
+  <!--
+    Evaluated after each project file, so OutputType and MSBuildProjectName are known here.
+
+    Playwright copies its bundled node runtime (~102 MB with PlaywrightPlatform=win-x64) into the
+    output folder of every project that references it, directly or transitively, once per
+    configuration. Only the three executables ever call Playwright.CreateAsync; the class
+    libraries never launch a browser, and every test that touches Playwright does so through
+    Moq'd IPlaywright/IPage instances, which need the assembly but not the node driver.
+
+    Copying it only for the executables keeps the driver where it is actually launched and
+    removes roughly 600 MB of duplicated build output.
+  -->
+  <PropertyGroup>
+    <_PlaywrightDriverNeeded>false</_PlaywrightDriverNeeded>
+    <_PlaywrightDriverNeeded Condition="'$(MSBuildProjectName)' == 'ZoomAutoAdmit.WindowsUI'
+                                     Or '$(MSBuildProjectName)' == 'ZoomAutoAdmit.Inspector'
+                                     Or '$(MSBuildProjectName)' == 'ZoomAutoAdmit.WaitingRoomTester'">true</_PlaywrightDriverNeeded>
+
+    <PlaywrightPlatform Condition="'$(_PlaywrightDriverNeeded)' != 'true'">none</PlaywrightPlatform>
+  </PropertyGroup>
+
+  <!--
+    PlaywrightPlatform only controls the driver copy for the project that owns the package
+    reference. A project that references one of the executables above still receives the whole
+    .playwright folder transitively, which put another 204 MB into the WindowsUI and
+    WindowsRuntime test outputs. GetCopyToOutputDirectoryItems fills the copy lists from the
+    transitive items in the same pass, so the driver entries have to be dropped from the copy
+    lists themselves, not just from AllItemsFullPathWithTargetPath.
+  -->
+  <Target Name="StripTransitivePlaywrightDriver"
+          AfterTargets="GetCopyToOutputDirectoryItems"
+          Condition="'$(_PlaywrightDriverNeeded)' != 'true'">
+    <ItemGroup>
+      <_SourceItemsToCopyToOutputDirectory
+          Remove="@(_SourceItemsToCopyToOutputDirectory)"
+          Condition="$([System.String]::new('%(TargetPath)').StartsWith('.playwright'))" />
+      <_SourceItemsToCopyToOutputDirectoryAlways
+          Remove="@(_SourceItemsToCopyToOutputDirectoryAlways)"
+          Condition="$([System.String]::new('%(TargetPath)').StartsWith('.playwright'))" />
+      <AllItemsFullPathWithTargetPath
+          Remove="@(AllItemsFullPathWithTargetPath)"
+          Condition="$([System.String]::new('%(TargetPath)').StartsWith('.playwright'))" />
+    </ItemGroup>
+  </Target>
+</Project>

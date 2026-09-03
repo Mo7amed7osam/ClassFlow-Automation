@@ -51,7 +51,23 @@ internal sealed class DesktopMeetingLaunchFlow(IDesktopMeetingLaunchActions acti
             return MeetingOperationResult.Failure("Zoom state is uncertain; Join-by-ID was not attempted to avoid a duplicate launch.");
 
         ConsoleLogger.Info($"[MEETING_JOIN_FALLBACK] Trying Join with meeting ID {id}");
-        actions.JoinById(id, cancellation); // Exactly one submission; never retry Enter/Join.
+        try
+        {
+            actions.JoinById(id, cancellation); // Exactly one submission; never retry Enter/Join.
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // The fallback refuses to run once Zoom has left its home screen. That refusal means
+            // the opened link is taking effect after all, so the launch succeeded and no second
+            // one is needed. Reporting failure here abandoned a meeting that was already opening.
+            if (actions.ReadState() != DesktopLaunchState.Home)
+            {
+                ConsoleLogger.Info("[MEETING_JOIN_FALLBACK] Zoom is already opening the meeting; the fallback was not needed");
+                return MeetingOperationResult.Success();
+            }
+            return MeetingOperationResult.Failure(ex.Message);
+        }
         ConsoleLogger.Info("[MEETING_JOIN_FALLBACK] Join request sent; waiting for normal join verification");
         return MeetingOperationResult.Success();
     }

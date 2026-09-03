@@ -116,6 +116,27 @@ public class NotificationRuntimeSafetyTests
             hasZoomParentOwnerChain: true).IsAllowed);
     }
 
+    [Fact]
+    public void WindowsNotificationHostIsAllowedEvenWhenTheLayoutWasGuessedAsInMeetingToast()
+    {
+        // A real Zoom alert delivered as a Windows notification reads "<name> entered the" /
+        // "waiting room", which the layout classifier labels InMeetingToast because the line break
+        // falls after "the" and the Zoom logo on the card is an image rather than recognised text.
+        // The host process is the evidence that matters; the layout guess must not veto it.
+        Assert.True(NotificationSurfacePolicy.Evaluate(
+            WaitingRoomNotificationLayout.InMeetingToast,
+            "explorer",
+            "Windows.UI.Core.CoreWindow",
+            "New notification").IsAllowed);
+
+        // An unrelated application at the same point is still refused.
+        Assert.False(NotificationSurfacePolicy.Evaluate(
+            WaitingRoomNotificationLayout.InMeetingToast,
+            "notepad",
+            "Notepad",
+            "Untitled").IsAllowed);
+    }
+
     private static WaitingRoomToastCandidate Candidate(
         string participant,
         double x,

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="ZoomAutoAdmit.app"/>
+  <!--
+    Per-monitor DPI awareness (V2) for every executable that captures the screen or clicks.
+
+    A process can only set its DPI awareness once, before anything reads a DPI. WPF makes the UI
+    app system-DPI-aware at startup, and any early GDI or WinForms use can do the same to a
+    console app, after which SetProcessDpiAwarenessContext in WindowsScreenCapturer returns false
+    and changes nothing.
+
+    Being stuck on system awareness with monitors at different scale factors is not a cosmetic
+    problem. Windows then reports every non-primary monitor scaled by the primary's factor: on
+    this machine a real 1920x1080 panel is reported as 4800x2700, CopyFromScreen reads far
+    outside it, and the frame handed to OCR is mostly blank - so nobody in the waiting room is
+    ever seen. On the primary monitor the bounds are right but the cursor and hit-test
+    coordinates live in a different space, so the Admit button is found in physical pixels and
+    clicked somewhere else.
+
+    A manifest is applied by the loader before any code runs, so it cannot fail the way the
+    runtime call can. WindowsScreenCapturer.IsPerMonitorAware reports what the process actually
+    got, and the auto-admit command refuses to click when it is not per-monitor aware.
+  -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>

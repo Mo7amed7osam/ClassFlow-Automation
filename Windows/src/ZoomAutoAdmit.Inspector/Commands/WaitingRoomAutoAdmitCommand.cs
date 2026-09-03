@@ -2,11 +2,13 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Matching;
+using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.Core.Models;
 using ZoomAutoAdmit.UIAutomation.Input;
 using ZoomAutoAdmit.UIAutomation.Interop;
 using ZoomAutoAdmit.UIAutomation.Ocr;
 using ZoomAutoAdmit.UIAutomation.Screen;
+using ZoomAutoAdmit.UIAutomation.WaitingRoom;
 using ZoomAutoAdmit.UIAutomation.Window;
 
 namespace ZoomAutoAdmit.Inspector.Commands;
@@ -17,6 +19,7 @@ public static class WaitingRoomAutoAdmitCommand
     private static readonly TimeSpan HoverRenderDelay = TimeSpan.FromMilliseconds(200);
     private static readonly TimeSpan IdleDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan VerificationWindow = TimeSpan.FromSeconds(2.5);
+    private static readonly TimeSpan BackgroundProbeInterval = TimeSpan.FromMilliseconds(750);
     private const double MinimumPanelRowConfidence = 0.90;
 
     public static int Execute(CliOptions options, CancellationToken cancellationToken = default)
@@ -36,6 +39,20 @@ public static class WaitingRoomAutoAdmitCommand
             return 1;
         }
 
+        // Every coordinate below - the captured monitor bounds, the OCR word positions and the
+        // point the mouse is moved to - is only meaningful while the process is per-monitor DPI
+        // aware. On system awareness Windows scales non-primary monitors by the primary's factor,
+        // so the captured frames are mostly blank and the Admit clicks land somewhere else.
+        // Stopping is the safe answer: a blind click can hit anything on screen.
+        WindowsScreenCapturer.EnsureDpiAwareness();
+        if (!WindowsScreenCapturer.IsPerMonitorAware)
+        {
+            ConsoleLogger.Error(
+                "DPI_AWARENESS_NOT_PER_MONITOR: refusing to run so that no click lands on the wrong " +
+                "coordinates. The executable must ship with src/PerMonitorV2.manifest applied.");
+            return 1;
+        }
+
         string diagnosticsDirectory = Path.Combine(Environment.CurrentDirectory, "diagnostics");
         Directory.CreateDirectory(diagnosticsDirectory);
         string framePath = Path.Combine(diagnosticsDirectory, "auto-admit-current-frame.png");
@@ -49,7 +66,8 @@ public static class WaitingRoomAutoAdmitCommand
         var handledBatchCache = new HandledBatchCache(TimeSpan.FromSeconds(3));
         var failedHoverCooldown = new FailedHoverCooldown(TimeSpan.FromMilliseconds(1000));
         DateTimeOffset lastInMeetingDebugAt = DateTimeOffset.MinValue;
-        int knownWaitingCount = 0;
+        DateTimeOffset lastBackgroundProbeAt = DateTimeOffset.MinValue;
+        DateTimeOffset lastParticipantsOpenAttemptAt = DateTimeOffset.MinValue;
         IntPtr lastObservedForegroundHwnd = NativeMethods.GetForegroundWindow();
 
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -63,8 +81,27 @@ public static class WaitingRoomAutoAdmitCommand
 
         try
         {
+            bool pausedLogged = false;
             while (!cancellation.IsCancellationRequested)
             {
+                // Paused means the screen is not even read: no capture, no OCR, no clicking.
+                // The meeting stays open and the monitor stays alive, ready to resume.
+                if (!ZoomAutoAdmit.Core.Meetings.AdmissionControl.IsAdmitting)
+                {
+                    if (!pausedLogged)
+                    {
+                        ConsoleLogger.Info("ADMITTING_PAUSED: waiting for the operator to switch it back on.");
+                        pausedLogged = true;
+                    }
+                    Thread.Sleep(IdleDelay);
+                    continue;
+                }
+                if (pausedLogged)
+                {
+                    ConsoleLogger.Info("ADMITTING_RESUMED");
+                    pausedLogged = false;
+                }
+
                 AutoAdmitScan scan;
                 try
                 {
@@ -214,20 +251,38 @@ public static class WaitingRoomAutoAdmitCommand
                     }
                 }
 
-                // 4. Waiting Room Watchdog: Event-driven 100% Background Watchdog (Zero Foreground Activation)
-                bool hasWaitingEvidence = knownWaitingCount > 0 ||
-                                          (panel.IsPanelVisible && panel.HasActiveWaitingParticipants);
-
-                if (hasWaitingEvidence)
+                // The meeting may be behind another application or its Participants panel may
+                // be detached. Probe the actual Zoom windows instead of waiting for foreground
+                // OCR to provide evidence first. The previous evidence gate was unreachable in
+                // practice, so a running monitor could never discover a background waiter.
+                if (DateTimeOffset.UtcNow - lastBackgroundProbeAt >= BackgroundProbeInterval)
                 {
-                    var zoomHwnd = ZoomWindowManager.FindActiveZoomWindow();
-                    if (zoomHwnd != IntPtr.Zero)
+                    lastBackgroundProbeAt = DateTimeOffset.UtcNow;
+                    bool backgroundActionHandled = false;
+                    foreach (var zoomHwnd in GetBackgroundZoomWindowCandidates())
                     {
-                        string reason = $"Known Waiting Room activity (count={knownWaitingCount}, rows={panel.Rows.Count})";
+                        if (TryExecuteBackgroundWaitingRoomAdmission(
+                                zoomHwnd,
+                                engine,
+                                framePath,
+                                handledCache,
+                                handledBatchCache,
+                                failedHoverCooldown,
+                                cancellation.Token,
+                                out bool waitingDetected))
+                        {
+                            ConsoleLogger.Success("[AUTO_ADMIT] Background admission verified");
+                            backgroundActionHandled = true;
+                            break;
+                        }
 
-                        RunBackgroundWatchdogCheck(
+                        if (!waitingDetected) continue;
+
+                        ConsoleLogger.Info(
+                            $"[AUTO_ADMIT] Waiting Room detected in Zoom window HWND=0x{zoomHwnd.ToInt64():X}; " +
+                            "using real foreground hover fallback");
+                        RunEmergencyForegroundFallback(
                             zoomHwnd,
-                            reason,
                             engine,
                             framePath,
                             panelAfterHoverPath,
@@ -239,10 +294,18 @@ public static class WaitingRoomAutoAdmitCommand
                             handledBatchCache,
                             failedHoverCooldown,
                             cancellation.Token);
-
-                        knownWaitingCount = 0;
-                        continue;
+                        backgroundActionHandled = true;
+                        break;
                     }
+
+                    if (backgroundActionHandled) continue;
+                }
+
+                if (ZoomWindowManager.FindParticipantsWindow() == IntPtr.Zero &&
+                    DateTimeOffset.UtcNow - lastParticipantsOpenAttemptAt >= TimeSpan.FromSeconds(5))
+                {
+                    lastParticipantsOpenAttemptAt = DateTimeOffset.UtcNow;
+                    if (TryOpenParticipantsPanelForMonitoring()) continue;
                 }
 
                 // Level 1 Passive Watch - zero foreground switching
@@ -297,7 +360,8 @@ public static class WaitingRoomAutoAdmitCommand
                 handledCache,
                 handledBatchCache,
                 failedHoverCooldown,
-                cancellationToken))
+                cancellationToken,
+                out _))
         {
             Console.WriteLine("BACKGROUND_ACTION_VERIFIED");
             Console.WriteLine("FOREGROUND_REQUIRED: NO");
@@ -317,7 +381,8 @@ public static class WaitingRoomAutoAdmitCommand
                 handledCache,
                 handledBatchCache,
                 failedHoverCooldown,
-                cancellationToken))
+                cancellationToken,
+                out _))
         {
             Console.WriteLine("BACKGROUND_ACTION_VERIFIED");
             Console.WriteLine("FOREGROUND_REQUIRED: NO");
@@ -366,9 +431,37 @@ public static class WaitingRoomAutoAdmitCommand
         Console.WriteLine("FOREGROUND_FALLBACK_RUNNING");
         Console.WriteLine("FOREGROUND_FALLBACK_STARTED");
 
+        // Admission execution is intentionally UIA-only. Detection and the surrounding
+        // monitor cadence are unchanged; no OCR coordinate, mouse or image action is used.
+        bool invoked = new FlaUiWaitingRoomAdmitExecutor().TryAdmit(zoomHwnd, cancellationToken);
+        if (!invoked)
+            ConsoleLogger.Warn("[WAITING_ROOM] Admit not found after hover");
+        Console.WriteLine("FOREGROUND_FALLBACK_COMPLETED");
+        Console.WriteLine("USER_FOREGROUND_RESTORED");
+        return;
+
+#if false // Retained only as historical diagnostic reference; action execution is UIA-only above.
+
         using var preserver = new ForegroundWindowPreserver(zoomHwnd);
         if (!preserver.ActivateZoomTemporarily())
         {
+            Console.WriteLine("FOREGROUND_FALLBACK_COMPLETED");
+            Console.WriteLine("USER_FOREGROUND_RESTORED");
+            return;
+        }
+
+        // The background probe already selected the authoritative Zoom surface. Keep all
+        // row discovery, hover, Admit lookup, click and verification scoped to that same
+        // HWND. This avoids losing a detached Participants window when a full-desktop
+        // recapture still contains the user's previous foreground application.
+        if (TryExecuteForegroundWindowScopedAdmission(
+                zoomHwnd,
+                engine,
+                panelAfterHoverPath,
+                handledCache,
+                cancellationToken))
+        {
+            ConsoleLogger.Success("[AUTO_ADMIT] Foreground row admission verified");
             Console.WriteLine("FOREGROUND_FALLBACK_COMPLETED");
             Console.WriteLine("USER_FOREGROUND_RESTORED");
             return;
@@ -490,6 +583,144 @@ public static class WaitingRoomAutoAdmitCommand
 
         Console.WriteLine("FOREGROUND_FALLBACK_COMPLETED");
         Console.WriteLine("USER_FOREGROUND_RESTORED");
+#endif
+    }
+
+    private static bool TryExecuteForegroundWindowScopedAdmission(
+        IntPtr zoomHwnd,
+        WindowsNativeOcrEngine engine,
+        string postHoverPath,
+        HandledNotificationCache handledCache,
+        CancellationToken cancellationToken)
+    {
+        if (zoomHwnd == IntPtr.Zero || !NativeMethods.IsWindow(zoomHwnd)) return false;
+
+        try
+        {
+            using var beforeCapture = WindowsWindowCapturer.CaptureWindow(zoomHwnd);
+            if (!beforeCapture.IsSuccessful || beforeCapture.Bitmap == null)
+            {
+                ConsoleLogger.Warn($"[AUTO_ADMIT] Foreground window capture failed: {beforeCapture.FailureReason}");
+                return false;
+            }
+
+            string directory = Path.GetDirectoryName(postHoverPath) ?? Environment.CurrentDirectory;
+            string beforePath = Path.Combine(directory, "foreground-window-before-hover.png");
+            beforeCapture.Bitmap.Save(beforePath, ImageFormat.Png);
+            var beforeLocal = engine.RecognizeImageFileAsync(beforePath, cancellationToken).GetAwaiter().GetResult();
+            var beforeOcr = ScreenCropGeometry.MapMonitorOcrToVirtualDesktop(beforeLocal, beforeCapture.WindowBounds);
+            var panel = WaitingRoomParticipantRowDetector.Detect(beforeOcr);
+            if (!panel.IsPanelVisible || !panel.HasActiveWaitingParticipants) return false;
+
+            int initialCount = panel.DeclaredWaitingCount ?? panel.Rows.Count;
+            if (initialCount >= 2 || panel.Rows.Count >= 2)
+            {
+                var admitAll = PanelAdmitAllDetector.Detect(beforeOcr);
+                if (admitAll.IsAccepted && IsLiveZoomSurfaceAt(admitAll.AdmitAllCenter.X, admitAll.AdmitAllCenter.Y))
+                {
+                    ConsoleLogger.Info("[AUTO_ADMIT] Foreground Admit all found");
+                    if (!new SingleClickExecutor(new WindowsMouseInput()).TryClick(
+                            checked((int)Math.Round(admitAll.AdmitAllCenter.X)),
+                            checked((int)Math.Round(admitAll.AdmitAllCenter.Y))))
+                        return false;
+                    return VerifyWindowAdmission(zoomHwnd, engine, beforePath, initialCount, null, cancellationToken);
+                }
+            }
+
+            var row = panel.Rows
+                .Where(candidate => candidate.Confidence >= MinimumPanelRowConfidence &&
+                                    !handledCache.IsParticipantSuppressed(candidate.ParticipantName, DateTimeOffset.UtcNow))
+                .OrderBy(candidate => candidate.RowBounds.Y)
+                .FirstOrDefault();
+            if (row == null) return false;
+
+            ConsoleLogger.Info($"[AUTO_ADMIT] WAITING_ROW_FOUND: {row.ParticipantName}");
+            var finalHover = (
+                checked((int)Math.Round(row.SafeHoverPoint.X)),
+                checked((int)Math.Round(row.SafeHoverPoint.Y)));
+            if (!IsLiveZoomSurfaceAt(finalHover.Item1, finalHover.Item2))
+            {
+                ConsoleLogger.Warn("[AUTO_ADMIT] Authoritative Participants window is not the pointer target after activation");
+                return false;
+            }
+
+            var cursor = new WindowsCursorController();
+            var cursorSession = new CursorPreservingSession(cursor);
+            return cursorSession.Run(_ =>
+            {
+                new SyntheticHoverActivator(cursor).Activate(WaitingRowHoverPath.GetEntryPoint(row), finalHover);
+                ConsoleLogger.Info($"[AUTO_ADMIT] PARTICIPANT_HOVERED: {row.ParticipantName}");
+
+                using var afterCapture = WindowsWindowCapturer.CaptureWindow(zoomHwnd);
+                if (!afterCapture.IsSuccessful || afterCapture.Bitmap == null) return false;
+                afterCapture.Bitmap.Save(postHoverPath, ImageFormat.Png);
+                var afterLocal = engine.RecognizeImageFileAsync(postHoverPath, cancellationToken).GetAwaiter().GetResult();
+                var afterOcr = ScreenCropGeometry.MapMonitorOcrToVirtualDesktop(afterLocal, afterCapture.WindowBounds);
+                var admit = WaitingRoomParticipantRowDetector
+                    .EvaluateIndividualAdmitsAfterHover(row, panel, afterOcr)
+                    .FirstOrDefault(candidate => candidate.IsAccepted);
+                if (admit == null)
+                {
+                    ConsoleLogger.Warn($"[AUTO_ADMIT] Row-scoped Admit did not appear after real hover: {row.ParticipantName}");
+                    return false;
+                }
+
+                ConsoleLogger.Success($"[AUTO_ADMIT] ADMIT_BUTTON_VISIBLE: {row.ParticipantName}");
+                if (!new SingleClickExecutor(new WindowsMouseInput()).TryClick(
+                        checked((int)Math.Round(admit.AdmitWord.Center.X)),
+                        checked((int)Math.Round(admit.AdmitWord.Center.Y))))
+                    return false;
+                ConsoleLogger.Success($"[AUTO_ADMIT] ADMISSION_CLICKED: {row.ParticipantName}");
+                handledCache.MarkParticipantHandled(row.ParticipantName, DateTimeOffset.UtcNow);
+                return VerifyWindowAdmission(
+                    zoomHwnd,
+                    engine,
+                    postHoverPath,
+                    initialCount,
+                    row.ParticipantName,
+                    cancellationToken);
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return false; }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Error($"[AUTO_ADMIT] Foreground window-scoped admission failed: {ex}");
+            return false;
+        }
+    }
+
+    private static bool VerifyWindowAdmission(
+        IntPtr zoomHwnd,
+        WindowsNativeOcrEngine engine,
+        string imagePath,
+        int initialCount,
+        string? participantName,
+        CancellationToken cancellationToken)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
+        {
+            Thread.Sleep(250);
+            using var capture = WindowsWindowCapturer.CaptureWindow(zoomHwnd);
+            if (!capture.IsSuccessful || capture.Bitmap == null) continue;
+            capture.Bitmap.Save(imagePath, ImageFormat.Png);
+            var local = engine.RecognizeImageFileAsync(imagePath, cancellationToken).GetAwaiter().GetResult();
+            var mapped = ScreenCropGeometry.MapMonitorOcrToVirtualDesktop(local, capture.WindowBounds);
+            var current = WaitingRoomParticipantRowDetector.Detect(mapped);
+            int count = current.DeclaredWaitingCount ?? current.Rows.Count;
+            bool countDecreased = count < initialCount;
+            bool participantDisappeared = !string.IsNullOrWhiteSpace(participantName) &&
+                current.Rows.All(row => !row.ParticipantName.Equals(participantName, StringComparison.OrdinalIgnoreCase));
+            if (countDecreased || participantDisappeared || !current.HasActiveWaitingParticipants)
+            {
+                MeetingAdmissionScope.NotifyVerified();
+                ConsoleLogger.Success("[AUTO_ADMIT] ADMISSION_CONFIRMED");
+                return true;
+            }
+        }
+
+        ConsoleLogger.Warn("[AUTO_ADMIT] Admission click was not verified within 10 seconds");
+        return false;
     }
 
     private static bool TryExecuteBackgroundWaitingRoomAdmission(
@@ -499,8 +730,10 @@ public static class WaitingRoomAutoAdmitCommand
         HandledNotificationCache handledCache,
         HandledBatchCache handledBatchCache,
         FailedHoverCooldown failedHoverCooldown,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        out bool waitingDetected)
     {
+        waitingDetected = false;
         if (zoomHwnd == IntPtr.Zero || !NativeMethods.IsWindow(zoomHwnd)) return false;
 
         bool wasMinimized = NativeMethods.IsIconic(zoomHwnd);
@@ -536,6 +769,15 @@ public static class WaitingRoomAutoAdmitCommand
                 return false;
             }
 
+            waitingDetected = true;
+
+            // Keep OCR-based waiting-room detection intact, but hand off the action itself
+            // to the row-scoped UI Automation executor. This replaces background mouse
+            // messages and coordinate clicks without changing the monitor loop.
+            return new FlaUiWaitingRoomAdmitExecutor().TryAdmit(zoomHwnd, cancellationToken);
+
+#if false // Disabled coordinate/mouse execution; detection above remains unchanged.
+
             int waitingCount = panel.DeclaredWaitingCount ?? (panel.WaitingRoomHeader != null ? panel.Rows.Count : 0);
             if (waitingCount >= 2 || panel.Rows.Count >= 2)
             {
@@ -558,6 +800,7 @@ public static class WaitingRoomAutoAdmitCommand
                         if (!verifyPanel.HasActiveWaitingParticipants)
                         {
                             Console.WriteLine("WAITING_ROOM_CONFIRMED_EMPTY");
+                            ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
                             return true;
                         }
                     }
@@ -589,6 +832,7 @@ public static class WaitingRoomAutoAdmitCommand
                             BackgroundZoomInteraction.SendMouseClick(zoomHwnd, admitClientX, admitClientY);
                             Thread.Sleep(200);
                             Console.WriteLine("PANEL_ADMIT_CONFIRMED");
+                            ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
                             Console.WriteLine("WAITING_ROOM_CONFIRMED_EMPTY");
                             return true;
                         }
@@ -599,6 +843,7 @@ public static class WaitingRoomAutoAdmitCommand
                     }
                 }
             }
+#endif
         }
         catch (Exception ex)
         {
@@ -613,6 +858,51 @@ public static class WaitingRoomAutoAdmitCommand
         }
 
         return false;
+    }
+
+    private static IReadOnlyList<IntPtr> GetBackgroundZoomWindowCandidates()
+    {
+        // A detached Participants window is authoritative when present. Fall back to the
+        // active/main meeting surfaces for docked layouts. Distinct preserves stable priority
+        // without relying on process window order or any fixed HWND.
+        return new[]
+            {
+                ZoomWindowManager.FindParticipantsWindow(),
+                ZoomWindowManager.FindActiveZoomWindow(),
+                ZoomWindowManager.FindMainZoomMeetingWindow()
+            }
+            .Where(handle => handle != IntPtr.Zero && NativeMethods.IsWindow(handle))
+            .Distinct()
+            .ToArray();
+    }
+
+    private static bool TryOpenParticipantsPanelForMonitoring()
+    {
+        IntPtr meetingHwnd = ZoomWindowManager.FindMainZoomMeetingWindow();
+        if (meetingHwnd == IntPtr.Zero) return false;
+
+        try
+        {
+            using var preserver = new ForegroundWindowPreserver(meetingHwnd);
+            if (!preserver.ActivateZoomTemporarily()) return false;
+            NativeMethods.SendAltKey(0x55); // Zoom's standard Alt+U Participants shortcut.
+            Thread.Sleep(500);
+            IntPtr participants = ZoomWindowManager.FindParticipantsWindow();
+            if (participants == IntPtr.Zero)
+            {
+                ConsoleLogger.Warn("[AUTO_ADMIT] Alt+U sent but Participants panel was not detected");
+                return false;
+            }
+
+            ConsoleLogger.Success(
+                $"[AUTO_ADMIT] Participants panel opened for continuous monitoring; HWND=0x{participants.ToInt64():X}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"[AUTO_ADMIT] Participants panel open retry failed: {ex.Message}");
+            return false;
+        }
     }
 
     private static void ProcessMultiPersonNotification(
@@ -890,6 +1180,7 @@ public static class WaitingRoomAutoAdmitCommand
                 {
                     handledBatchCache.Forget(current);
                     Console.WriteLine("PANEL_ADMIT_ALL_VERIFIED");
+                    ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
                     return;
                 }
             }
@@ -973,7 +1264,10 @@ public static class WaitingRoomAutoAdmitCommand
             {
                 var rowCrop = ScreenCropGeometry.GetParticipantRowCrop(originalRow, originalPanel, primaryBounds);
                 SaveAbsoluteCrop(framePath, panelRowBeforeHoverPath, rowCrop, primaryBounds);
-                var neutral = GetNeutralHoverPoint(originalRow, originalPanel);
+                // Enter through the participant row itself and move across to the detected
+                // name. Zoom's native list reacts to this real pointer path; entering from
+                // the panel/header edge can collapse or miss the row hover state.
+                var neutral = WaitingRowHoverPath.GetEntryPoint(originalRow);
                 var finalHover = (
                     checked((int)Math.Round(originalRow.SafeHoverPoint.X)),
                     checked((int)Math.Round(originalRow.SafeHoverPoint.Y)));
@@ -1103,6 +1397,7 @@ public static class WaitingRoomAutoAdmitCommand
         if (result.Verified)
         {
             Console.WriteLine("PANEL_ADMIT_VERIFIED");
+            ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
             Console.WriteLine($"Participant: {originalRow.ParticipantName}");
             Console.WriteLine("Path: ParticipantsPanel");
             return;
@@ -1245,6 +1540,7 @@ public static class WaitingRoomAutoAdmitCommand
                 if (consecutiveMissing >= 2)
                 {
                     Console.WriteLine("ADMIT_VERIFIED");
+                    ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
                     Console.WriteLine($"Participant: {finalCandidate.ParticipantNormalizedName}");
                     return;
                 }
@@ -1498,24 +1794,6 @@ public static class WaitingRoomAutoAdmitCommand
 
         PrintPostHoverDebug(row, panel, actionMerged);
         return new(null, "None");
-    }
-
-    private static (int X, int Y) GetNeutralHoverPoint(
-        WaitingParticipantRowCandidate row,
-        ParticipantsPanelDetectionResult panel)
-    {
-        int x = checked((int)Math.Round(panel.PanelBounds.X + 2));
-        double participantsBottom = panel.ParticipantsHeader == null
-            ? panel.PanelBounds.Y + 8
-            : panel.ParticipantsHeader.Bounds.Y + panel.ParticipantsHeader.Bounds.Height;
-        double waitingTop = panel.WaitingRoomHeader?.Bounds.Y ?? row.RowBounds.Y;
-        double desiredY = participantsBottom < waitingTop
-            ? participantsBottom + (waitingTop - participantsBottom) / 2.0
-            : panel.PanelBounds.Y + 8;
-        double minY = panel.PanelBounds.Y + 8;
-        double maxY = panel.PanelBounds.Y + panel.PanelBounds.Height - 8;
-        int y = checked((int)Math.Round(Math.Clamp(desiredY, minY, maxY)));
-        return (x, y);
     }
 
     private static void PrintHoverActivationDebug(

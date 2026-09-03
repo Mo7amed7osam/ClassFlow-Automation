@@ -1,0 +1,24 @@
+<UserControl x:Class="ZoomAutoAdmit.WindowsUI.Views.LogsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+<Border Style="{DynamicResource Card}">
+<Grid DataContext="{Binding Logs}">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+  <DockPanel Margin="0,0,0,12">
+    <Button DockPanel.Dock="Right" Content="Clear" Command="{Binding ClearCommand}" VerticalAlignment="Top" Margin="8,0,0,0"/>
+    <StackPanel>
+      <Border Style="{DynamicResource Badge}" Margin="0,0,0,10"><StackPanel Orientation="Horizontal">
+        <Ellipse Width="6" Height="6" Fill="{DynamicResource SuccessBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/>
+        <TextBlock Text="LIVE FEED" Style="{DynamicResource BadgeText}" Foreground="{DynamicResource SuccessBrush}"/>
+      </StackPanel></Border>
+      <TextBlock Text="Runtime log" FontSize="19" FontWeight="Bold"/>
+      <TextBlock Text="What the app recorded while it worked, newest at the bottom." Style="{DynamicResource PageLead}" FontSize="12" Margin="0,5,0,0"/>
+    </StackPanel>
+  </DockPanel>
+  <!-- The log reads like a terminal: fixed pitch on its own inset surface, as in the reference. -->
+  <Border Grid.Row="1" Style="{DynamicResource InsetCard}" Padding="4">
+    <ListBox ItemsSource="{Binding Entries}" Background="Transparent" BorderThickness="0"
+             FontFamily="{DynamicResource AppMono}" FontSize="12"
+             ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Runtime log entries"/>
+  </Border>
+</Grid>
+</Border>
+</UserControl>

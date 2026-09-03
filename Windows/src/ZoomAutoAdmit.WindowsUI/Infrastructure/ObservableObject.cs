@@ -7,6 +7,8 @@ namespace ZoomAutoAdmit.WindowsUI.Infrastructure;
 public abstract class ObservableObject : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
+    protected void OnPropertyChanged([CallerMemberName] string? name = null) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
     protected bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {

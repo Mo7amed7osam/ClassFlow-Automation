@@ -4,9 +4,18 @@ using ZoomAutoAdmit.WebAutomation.Browser;
 
 namespace ZoomAutoAdmit.WebAutomation;
 
+/// <summary>Raised when a Zoom Web profile needs someone to sign in before it can host.</summary>
+public sealed class ZoomWebSignInRequiredException(string profileName, string message)
+    : InvalidOperationException(message)
+{
+    public string ProfileName { get; } = profileName;
+}
+
 public sealed class ZoomWebMeetingController
 {
-    private static readonly TimeSpan HeadlessStartupTimeout = TimeSpan.FromSeconds(30);
+    // Zoom's PWA meeting page loads its client frame well after the first paint; 30 s used to
+    // expire while a perfectly good saved session was still connecting.
+    private static readonly TimeSpan HeadlessStartupTimeout = TimeSpan.FromSeconds(75);
     private static readonly TimeSpan ManualLoginPollInterval = TimeSpan.FromSeconds(2);
     private readonly IZoomWebMeetingLocator _locator;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
@@ -19,11 +28,17 @@ public sealed class ZoomWebMeetingController
         _delay = delay ?? Task.Delay;
     }
 
+    /// <param name="manualLoginTimeout">
+    /// How long a visible browser waits for someone to sign in. Null waits indefinitely, which is
+    /// right when a person asked for the browser; a scheduled run passes a limit so it can report
+    /// instead of hanging.
+    /// </param>
     public async Task<ZoomMeetingSurface> OpenAndWaitForHostControlsAsync(
         ZoomBrowserSession session,
         string meetingUrl,
         ZoomProfileManager profileManager,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? manualLoginTimeout = null)
     {
         Uri validatedUrl = ValidateMeetingUrl(meetingUrl);
         var openingPage = await OpenMeetingPageAsync(session.Context, validatedUrl);
@@ -37,7 +52,9 @@ public sealed class ZoomWebMeetingController
 
         DateTimeOffset? deadline = session.IsHeadless
             ? DateTimeOffset.UtcNow + HeadlessStartupTimeout
-            : null;
+            : manualLoginTimeout.HasValue
+                ? DateTimeOffset.UtcNow + manualLoginTimeout.Value
+                : null;
         while (!cancellationToken.IsCancellationRequested)
         {
             ZoomMeetingSurface? surface;
@@ -67,8 +84,11 @@ public sealed class ZoomWebMeetingController
             }
 
             if (deadline != null && DateTimeOffset.UtcNow >= deadline.Value)
-                throw new InvalidOperationException(
-                    "The saved Zoom session did not reach host controls. Re-run with --headed to refresh login manually.");
+                throw new ZoomWebSignInRequiredException(
+                    session.Profile.Name,
+                    session.IsHeadless
+                        ? $"The saved Zoom sign-in for profile '{session.Profile.Name}' is no longer accepted."
+                        : $"Nobody signed in to Zoom for profile '{session.Profile.Name}' within the allowed time.");
             await _delay(
                 session.IsHeadless ? TimeSpan.FromMilliseconds(500) : ManualLoginPollInterval,
                 cancellationToken);

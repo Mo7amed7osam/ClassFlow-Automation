@@ -34,6 +34,11 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
     }
 
     public string Name => "web";
+    // Read-only runtime binding; attendance must never create or select a replacement page.
+    public IPage? ActiveMeetingPage => _session?.ActiveMeetingPage;
+
+    /// <summary>How long a visible browser waits for a person to complete the Zoom sign-in.</summary>
+    private static readonly TimeSpan ManualSignInTimeout = TimeSpan.FromMinutes(10);
 
     public async Task<int> RunAsync(CliOptions options, CancellationToken cancellationToken = default)
     {
@@ -90,12 +95,44 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
         _session = await _browserLauncher.LaunchAsync(plan, _stopCancellation.Token);
         ConsoleLogger.Success("WEB_BROWSER_STARTED");
         ConsoleLogger.Info($"Browser mode: {(_session.IsHeadless ? "headless" : "visible")}");
-        await _meetingController.OpenAndWaitForHostControlsAsync(
-            _session,
-            options.MeetingUrl,
-            _profileManager,
-            _stopCancellation.Token);
+        try
+        {
+            await _meetingController.OpenAndWaitForHostControlsAsync(
+                _session,
+                options.MeetingUrl,
+                _profileManager,
+                _stopCancellation.Token);
+        }
+        catch (ZoomWebSignInRequiredException ex) when (_session.IsHeadless)
+        {
+            // A saved sign-in Zoom no longer accepts is a request for a login, not a dead end.
+            // Reopen the same profile in a visible browser so it can be signed in once, exactly
+            // like setting up a profile by hand, then carry on with this meeting.
+            ConsoleLogger.Warn($"[WEB_PROFILE] {ex.Message}");
+            ConsoleLogger.Info(
+                $"[WEB_PROFILE] Opening a visible browser for profile '{profile.Name}'. Sign in to Zoom there and the meeting continues by itself; the sign-in is saved for next time.");
+            await CloseSessionAsync();
+            profile = _profileManager.MarkSessionExpired(profile);
+            plan = _profileManager.CreateLaunchPlan(profile, forceHeaded: true);
+            _session = await _browserLauncher.LaunchAsync(plan, _stopCancellation.Token);
+            ConsoleLogger.Info("Browser mode: visible (waiting for sign-in)");
+            await _meetingController.OpenAndWaitForHostControlsAsync(
+                _session,
+                options.MeetingUrl,
+                _profileManager,
+                _stopCancellation.Token,
+                ManualSignInTimeout);
+            ConsoleLogger.Success($"[WEB_PROFILE] Profile '{profile.Name}' is signed in and saved.");
+        }
         ConsoleLogger.Success("Waiting room monitor started");
+    }
+
+    private async Task CloseSessionAsync()
+    {
+        if (_session == null) return;
+        try { await _session.DisposeAsync(); }
+        catch (Exception ex) { ConsoleLogger.Debug($"Closing the previous browser failed: {ex.Message}"); }
+        _session = null;
     }
 
     public async Task MonitorAsync(CliOptions options, CancellationToken cancellationToken = default)
@@ -108,10 +145,28 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
             _stopCancellation?.Token ?? CancellationToken.None);
         bool pageMissingLogged = false;
 
+        bool pausedLogged = false;
         while (!linked.IsCancellationRequested)
         {
             try
             {
+                // Same switch the desktop engine reads: while it is off nobody is let in.
+                if (!ZoomAutoAdmit.Core.Meetings.AdmissionControl.IsAdmitting)
+                {
+                    if (!pausedLogged)
+                    {
+                        ConsoleLogger.Info("ADMITTING_PAUSED: waiting for the operator to switch it back on.");
+                        pausedLogged = true;
+                    }
+                    await DelayAsync(options.WebPollIntervalMilliseconds, linked.Token);
+                    continue;
+                }
+                if (pausedLogged)
+                {
+                    ConsoleLogger.Info("ADMITTING_RESUMED");
+                    pausedLogged = false;
+                }
+
                 var surface = await _meetingController.FindActiveMeetingAsync(session);
                 if (surface == null)
                 {
@@ -152,6 +207,12 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
             {
                 ConsoleLogger.Warn($"WEB_DOM_RETRY: {ex.Message}");
             }
+            catch (PlaywrightException ex)
+            {
+                // A blocked click or a timed-out lookup is one bad poll, not a reason to leave the
+                // meeting. The monitor keeps watching and tries again on the next pass.
+                ConsoleLogger.Warn($"WEB_POLL_FAILED: {FirstLine(ex.Message)}");
+            }
 
             await DelayAsync(options.WebPollIntervalMilliseconds, linked.Token);
         }
@@ -171,16 +232,20 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
         ConsoleLogger.Info("WEB_AUTO_ADMIT_STOPPED");
     }
 
+    // Zoom's web client names these controls by what pressing them does, and the wording has
+    // grown: the microphone button reads "unmute my microphone" rather than "Unmute". Matching
+    // only the short forms found neither button, so the host joined a class unmuted.
+    // "Mute all" in the participants panel is deliberately excluded from the mute patterns.
     public Task<bool> DisableMicrophoneAsync(CancellationToken cancellationToken = default) =>
         EnsureMeetingControlOffAsync(
-            new Regex(@"^(?:Unmute|Unmute my audio)$", RegexOptions.IgnoreCase),
-            new Regex(@"^(?:Mute|Mute my audio)$", RegexOptions.IgnoreCase),
+            new Regex(@"^unmute(?:\s+my)?(?:\s+(?:audio|microphone|mic))?$", RegexOptions.IgnoreCase),
+            new Regex(@"^mute(?:\s+my)?(?:\s+(?:audio|microphone|mic))?$", RegexOptions.IgnoreCase),
             cancellationToken);
 
     public Task<bool> DisableCameraAsync(CancellationToken cancellationToken = default) =>
         EnsureMeetingControlOffAsync(
-            new Regex(@"^(?:Start Video|Start my video)$", RegexOptions.IgnoreCase),
-            new Regex(@"^(?:Stop Video|Stop my video)$", RegexOptions.IgnoreCase),
+            new Regex(@"^start(?:\s+my)?\s+video$", RegexOptions.IgnoreCase),
+            new Regex(@"^stop(?:\s+my)?\s+video$", RegexOptions.IgnoreCase),
             cancellationToken);
 
     public ValueTask DisposeAsync() => new(StopAsync());
@@ -205,8 +270,18 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
                      new() { NameRegex = turnOffName }).AllAsync())
         {
             if (!await button.IsVisibleAsync()) continue;
-            await button.ClickAsync(new() { Timeout = 3000 });
-            return true;
+            // Zoom floats dialogs over its toolbar, and a blocked pointer must not leave the host
+            // live, so the same DOM press the admission path uses is used here too.
+            try
+            {
+                await button.EvaluateAsync<object?>("element => element.click()");
+                return true;
+            }
+            catch (PlaywrightException)
+            {
+                await button.ClickAsync(new() { Timeout = 2000, Force = true });
+                return true;
+            }
         }
         return false;
     }
@@ -262,6 +337,7 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
             if (verification.Result.IsVerified)
             {
                 ConsoleLogger.Success("WEB_ADMISSION_VERIFIED");
+                ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
                 ConsoleLogger.Success("ADMISSION_CONFIRMED");
                 return;
             }
@@ -318,6 +394,12 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
             }
         }
         return (result, latest);
+    }
+
+    private static string FirstLine(string message)
+    {
+        int newline = message.IndexOf('\n');
+        return newline < 0 ? message : message[..newline].Trim();
     }
 
     private static Task DelayAsync(int milliseconds, CancellationToken cancellationToken) =>

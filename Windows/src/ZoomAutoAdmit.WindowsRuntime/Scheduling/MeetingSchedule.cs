@@ -14,6 +14,19 @@ public enum ScheduleDays
     EveryDay = Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday
 }
 
+public static class ScheduleTiming
+{
+    /// <summary>
+    /// How early a scheduled meeting opens. The room is up and Auto Admit is already watching
+    /// before the time written on the schedule, so the first person to arrive is let in at once.
+    /// </summary>
+    public static readonly TimeSpan StartLead = TimeSpan.FromMinutes(15);
+
+    /// <summary>The moment this schedule should be launched for a given day.</summary>
+    public static DateTime LaunchMoment(this MeetingSchedule schedule, DateOnly date) =>
+        date.ToDateTime(schedule.Time) - StartLead;
+}
+
 public sealed record MeetingSchedule(
     Guid Id,
     string Name,
@@ -22,7 +35,8 @@ public sealed record MeetingSchedule(
     TimeOnly Time,
     ScheduleDays Days,
     bool Enabled,
-    DateOnly? LastTriggeredDate = null);
+    DateOnly? LastTriggeredDate = null,
+    DateOnly? OccurrenceDate = null);
 
 public static class ScheduleDaysExtensions
 {

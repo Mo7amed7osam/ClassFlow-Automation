@@ -30,6 +30,46 @@ public sealed class WindowsRuntimeBootstrapperTests : IDisposable
         Assert.NotNull(bootstrapper.Orchestrator);
         Assert.NotNull(bootstrapper.ScheduleStore);
         Assert.NotNull(bootstrapper.Scheduler);
+        Assert.NotNull(bootstrapper.LifecycleEvents);
+        Assert.NotNull(bootstrapper.Attendance);
+    }
+
+    [Fact]
+    public async Task BootstrapWiresAttendanceAndDisposesItBeforeRuntimeShutdown()
+    {
+        var store = new AttendanceTestStore();
+        var bootstrapper = new WindowsRuntimeBootstrapper(CreateAccountsFile("teacher-1"),
+            Path.Combine(_root, "Profiles"), new AlwaysResolvableCredentialReference(),
+            attendanceSources: _ => new AttendanceTestSource(), attendanceStore: store);
+        var meeting = new ZoomAutoAdmit.Core.Meetings.ScheduledMeeting(
+            new Uri("https://zoom.us/j/12345678901"), "teacher-1", DateTimeOffset.UtcNow);
+        var session = new ZoomAutoAdmit.Core.Meetings.MeetingSession(Guid.NewGuid(), meeting, DateTimeOffset.UtcNow);
+        var context = new ZoomAutoAdmit.Core.Meetings.MeetingLaunchContext(session,
+            new("teacher-1", "Teacher", "reference"), SessionEngineType.Desktop, null);
+        await bootstrapper.LifecycleEvents.PublishAsync(context,
+            ZoomAutoAdmit.Core.Meetings.MeetingLifecycleEventKind.Active);
+        bootstrapper.LifecycleEvents.PublishAdmission(session.SessionId);
+        await bootstrapper.Attendance.CaptureManualAsync(session.SessionId);
+        await bootstrapper.DisposeAsync();
+        Assert.Equal(new[] { "MeetingStart", "AdmitEvent", "Manual", "MeetingEnd" },
+            store.Snapshots.Select(snapshot => snapshot.Reason));
+    }
+
+    private sealed class AttendanceTestSource : ZoomAutoAdmit.Attendance.IAttendanceParticipantSource
+    {
+        public ZoomAutoAdmit.Attendance.AttendanceSource Source => ZoomAutoAdmit.Attendance.AttendanceSource.Desktop;
+        public Task<ZoomAutoAdmit.Attendance.ParticipantReadResult> ReadAsync(CancellationToken token) =>
+            Task.FromResult(new ZoomAutoAdmit.Attendance.ParticipantReadResult([new("Participant")], true));
+    }
+
+    private sealed class AttendanceTestStore : ZoomAutoAdmit.Attendance.IAttendanceSnapshotStore
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<ZoomAutoAdmit.Attendance.AttendanceSnapshot> Snapshots { get; } = new();
+        public Task SaveAsync(ZoomAutoAdmit.Attendance.AttendanceSnapshot snapshot, CancellationToken token)
+        {
+            Snapshots.Enqueue(snapshot);
+            return Task.CompletedTask;
+        }
     }
 
     [Fact]

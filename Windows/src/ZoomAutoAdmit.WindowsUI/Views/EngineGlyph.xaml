@@ -1,0 +1,37 @@
+<UserControl x:Class="ZoomAutoAdmit.WindowsUI.Views.EngineGlyph" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" IsHitTestVisible="False">
+<Viewbox><Grid Width="200" Height="176">
+<Ellipse Fill="{DynamicResource GlowBrush}" Width="200" Height="176"/>
+<Polygon Points="100.0,16.0 121.3,28.0 100.0,40.0 78.7,28.0" Fill="#3F89FF" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="78.7,28.0 100.0,40.0 78.7,52.0 57.3,40.0" Fill="#3F89FF" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="57.3,40.0 78.7,52.0 57.3,64.0 36.0,52.0" Fill="#3F89FF" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="121.3,28.0 142.7,40.0 121.3,52.0 100.0,40.0" Fill="#3F89FF" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="100.0,40.0 121.3,52.0 100.0,64.0 78.7,52.0" Fill="#3F89FF" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="78.7,52.0 100.0,64.0 78.7,76.0 57.3,64.0" Fill="#3F89FF" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="142.7,40.0 164.0,52.0 142.7,64.0 121.3,52.0" Fill="#3F89FF" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="121.3,52.0 142.7,64.0 121.3,76.0 100.0,64.0" Fill="#3F89FF" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="100.0,64.0 121.3,76.0 100.0,88.0 78.7,76.0" Fill="#3F89FF" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="36.0,52.0 57.3,64.0 57.3,87.8 36.0,75.7" Fill="#547AFF" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="36.0,75.7 57.3,87.8 57.3,111.6 36.0,99.3" Fill="#547AFF" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="36.0,99.3 57.3,111.6 57.3,135.3 36.0,123.0" Fill="#547AFF" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="57.3,64.0 78.7,76.0 78.7,99.9 57.3,87.8" Fill="#547AFF" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="57.3,87.8 78.7,99.9 78.7,123.8 57.3,111.6" Fill="#547AFF" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="57.3,111.6 78.7,123.8 78.7,147.7 57.3,135.3" Fill="#547AFF" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="78.7,76.0 100.0,88.0 100.0,112.0 78.7,99.9" Fill="#547AFF" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="78.7,99.9 100.0,112.0 100.0,136.0 78.7,123.8" Fill="#547AFF" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="78.7,123.8 100.0,136.0 100.0,160.0 78.7,147.7" Fill="#547AFF" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="100.0,88.0 121.3,76.0 121.3,99.9 100.0,112.0" Fill="#6B64FA" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="100.0,112.0 121.3,99.9 121.3,123.8 100.0,136.0" Fill="#6B64FA" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="100.0,136.0 121.3,123.8 121.3,147.7 100.0,160.0" Fill="#6B64FA" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="121.3,76.0 142.7,64.0 142.7,87.8 121.3,99.9" Fill="#6B64FA" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="121.3,99.9 142.7,87.8 142.7,111.6 121.3,123.8" Fill="#6B64FA" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="121.3,123.8 142.7,111.6 142.7,135.3 121.3,147.7" Fill="#6B64FA" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="142.7,64.0 164.0,52.0 164.0,75.7 142.7,87.8" Fill="#6B64FA" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="142.7,87.8 164.0,75.7 164.0,99.3 142.7,111.6" Fill="#6B64FA" Opacity="0.28" Stroke="#4F91FF" StrokeThickness="0.6"/>
+<Polygon Points="142.7,111.6 164.0,99.3 164.0,123.0 142.7,135.3" Fill="#6B64FA" Opacity="0.14" Stroke="#4F91FF" StrokeThickness="0.6"/>
+
+<Path Data="M100,52 L133,70 133,109 100,127 67,109 67,70 Z" Fill="#754933F5"/>
+<Path Data="M100,52 L133,70 100,89 67,70 Z" Fill="#A23E53FF"/>
+<Path Data="M67,70 L100,89 100,127 67,109 Z" Fill="#9C559FFF"/>
+<Path Data="M100,89 L133,70 133,109 100,127 Z" Fill="#904A5EED"/>
+<Path Data="M100,72 L116,81 116,101 100,110 84,101 84,81 Z" Fill="#BF559FFF"/>
+</Grid></Viewbox></UserControl>

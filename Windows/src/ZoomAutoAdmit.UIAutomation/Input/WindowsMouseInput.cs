@@ -9,6 +9,15 @@ public interface IMouseInput
     void ScrollWheelPreservingCursor(int x, int y, int wheelDelta);
 }
 
+/// <summary>
+/// Sends one left click and then refuses, so a single decision to admit can never turn into a
+/// burst of clicks if the caller retries.
+/// </summary>
+/// <remarks>
+/// The refusal lasts for the lifetime of the instance, so one belongs to one admit attempt.
+/// Keeping an instance in a field makes a watcher click for the first participant only and
+/// silently ignore everyone after them - build a new one per attempt.
+/// </remarks>
 public sealed class SingleClickExecutor
 {
     private readonly IMouseInput _mouseInput;

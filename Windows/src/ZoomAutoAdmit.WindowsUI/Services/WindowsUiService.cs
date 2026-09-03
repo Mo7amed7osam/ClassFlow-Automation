@@ -10,22 +10,66 @@ using ZoomAutoAdmit.WindowsUI.Infrastructure;
 
 namespace ZoomAutoAdmit.WindowsUI.Services;
 
-public sealed class WindowsUiService : IWindowsUiService, IAsyncDisposable
+public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, IMeetingActivitySource, IAsyncDisposable
 {
     private readonly WindowsRuntimeBootstrapper _bootstrapper;
+    private readonly MeetingActivityFeed _activity;
     private readonly ConcurrentDictionary<Guid, MeetingSession> _sessions = new();
+    // Starts in flight. A session spends a minute or more in Starting, and Stop has to reach it
+    // there: until the run returns there is no MeetingSession to end.
+    private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _starting = new();
     private readonly object _statusSync = new();
     private UiActionStatus _currentStatus = new("Application startup", "Ready", string.Empty, false, DateTimeOffset.Now);
 
     public WindowsUiService(WindowsRuntimeBootstrapper bootstrapper)
     {
         _bootstrapper = bootstrapper ?? throw new ArgumentNullException(nameof(bootstrapper));
+        _activity = new MeetingActivityFeed(bootstrapper.LifecycleEvents);
         _bootstrapper.Scheduler.SessionStarted += OnScheduledSessionStarted;
+        _bootstrapper.LifecycleEvents.Lifecycle += OnMeetingLifecycleAsync;
         ConsoleLogger.EntryWritten += OnRuntimeLogEntry;
         _bootstrapper.Scheduler.Start();
     }
 
     public event Action<UiActionStatus>? StatusChanged;
+    public event Action<LiveMeeting>? MeetingBecameLive;
+
+    /// <summary>
+    /// The runtime raises Active for a meeting started from the window and for one the scheduler
+    /// opened, which is why this is the place to notice a class has begun.
+    /// </summary>
+    private Task OnMeetingLifecycleAsync(MeetingLifecycleEvent message)
+    {
+        if (message.Kind != MeetingLifecycleEventKind.Active) return Task.CompletedTask;
+        var session = message.Context.Session;
+        try { MeetingBecameLive?.Invoke(new LiveMeeting(session.AccountId, session.StartTime)); }
+        catch (Exception ex) { WindowsUiRuntimeLog.Write("LMS", $"Meeting-live observer failed: {ex.Message}"); }
+        return Task.CompletedTask;
+    }
+    public IReadOnlyList<MeetingActivity> GetMeetingActivity() => _activity.GetMeetingActivity();
+    public async Task<UiOperationResult> CaptureAttendanceAsync(Guid sessionId, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        if (!_bootstrapper.SessionCoordinator.ActiveSessions.Any(s => s.SessionId == sessionId))
+            return new(false, "Session has ended. Its saved snapshots remain available.");
+        await _bootstrapper.Attendance.CaptureManualAsync(sessionId).WaitAsync(token);
+        return new(true, "Capture request completed. Refresh snapshots; check the latest timestamp and capture status in logs.");
+    }
+    public Task<IReadOnlyList<Guid>> GetActiveSessionIdsAsync(CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        return Task.FromResult<IReadOnlyList<Guid>>(
+            _bootstrapper.SessionCoordinator.ActiveSessions.Select(session => session.SessionId).ToArray());
+    }
+    /// <summary>Lets the session-role module ask the AI to confirm names the local rules cannot settle.</summary>
+    public void EnableSessionRoleAi(ZoomAutoAdmit.SessionRoles.IRoleAiMatcher matcher) =>
+        _bootstrapper.SessionRoles.AiMatcher = matcher;
+    /// <summary>Co-host outcomes worth showing on the desktop. Raised off the UI thread.</summary>
+    public event Action<ZoomAutoAdmit.SessionRoles.SessionRoleNotice>? SessionRoleNotice
+    {
+        add => _bootstrapper.SessionRoles.Notice += value;
+        remove => _bootstrapper.SessionRoles.Notice -= value;
+    }
     public UiActionStatus CurrentStatus { get { lock (_statusSync) return _currentStatus; } }
 
     public Task<IReadOnlyList<WindowsMeetingAccountMetadata>> GetAccountsAsync(
@@ -87,18 +131,51 @@ public sealed class WindowsUiService : IWindowsUiService, IAsyncDisposable
             EnginePreference.Web => SessionEngineType.Web,
             _ => null
         };
-        var session = await _bootstrapper.Orchestrator.RunAsync(
-            new ScheduledMeeting(url, accountId, DateTimeOffset.UtcNow, PreferredEngine: engine),
-            cancellationToken);
+        // Choosing the id here, rather than letting the orchestrator invent one, is what lets Stop
+        // find and cancel this run while it is still starting.
+        Guid sessionId = Guid.NewGuid();
+        var startCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _starting[sessionId] = startCancellation;
+        MeetingSession session;
+        try
+        {
+            // The orchestration contains synchronous UI Automation and keyboard work (account
+            // switch, join checks, mic/camera) that can take tens of seconds. Awaiting it directly
+            // resumes every step on the WPF dispatcher thread and freezes the window ("not
+            // responding"), so the whole run stays on the thread pool, like SwitchAccountAsync.
+            session = await Task.Run(
+                () => _bootstrapper.Orchestrator.RunAsync(
+                    new ScheduledMeeting(
+                        url,
+                        accountId,
+                        DateTimeOffset.UtcNow,
+                        SessionId: sessionId,
+                        PreferredEngine: engine),
+                    startCancellation.Token),
+                startCancellation.Token);
+        }
+        catch (OperationCanceledException) when (startCancellation.IsCancellationRequested)
+        {
+            _bootstrapper.SessionCoordinator.Release(sessionId);
+            Report("Start meeting", "Meeting start was stopped before it finished.", string.Empty, false);
+            throw new OperationCanceledException("Meeting start was stopped before it finished.");
+        }
+        finally
+        {
+            _starting.TryRemove(sessionId, out _);
+            startCancellation.Dispose();
+        }
+
         if (session.State == MeetingState.Failed)
         {
             string reason = session.FailureReason ?? "Meeting startup failed.";
+            _bootstrapper.SessionCoordinator.Release(session.SessionId);
             Fail("Start meeting", reason);
             throw new InvalidOperationException(reason);
         }
         _sessions[session.SessionId] = session;
         var display = await ToDisplayInfoAsync(session, cancellationToken);
-        Report("Start meeting", $"Meeting started using {display.EngineType}.", string.Empty, false);
+        Report("Start meeting", $"{accountId}: meeting started using {display.EngineType}.", string.Empty, false);
         return display;
     }
 
@@ -106,9 +183,35 @@ public sealed class WindowsUiService : IWindowsUiService, IAsyncDisposable
         Guid sessionId,
         CancellationToken cancellationToken = default)
     {
-        if (!_sessions.TryGetValue(sessionId, out var session)) return false;
-        bool stopped = await _bootstrapper.Orchestrator.EndAsync(session, cancellationToken);
+        // A run that has not finished starting owns no MeetingSession yet. Cancelling it is the
+        // only way to stop it; its own cleanup releases the engine reservation.
+        if (_starting.TryGetValue(sessionId, out var startCancellation))
+        {
+            Report("Stop meeting", "Stopping a meeting that is still starting...", string.Empty, true);
+            try { startCancellation.Cancel(); } catch (ObjectDisposedException) { }
+            for (int attempt = 0; attempt < 40 && _starting.ContainsKey(sessionId); attempt++)
+                await Task.Delay(250, cancellationToken);
+            _bootstrapper.SessionCoordinator.Release(sessionId);
+            _sessions.TryRemove(sessionId, out _);
+            Report("Stop meeting", "The starting meeting was stopped.", string.Empty, false);
+            return true;
+        }
+
+        if (!_sessions.TryGetValue(sessionId, out var session))
+        {
+            // The reservation can outlive its MeetingSession (a scheduled run, or a start that
+            // failed after allocating). Releasing it is what frees the Desktop engine again.
+            bool released = _bootstrapper.SessionCoordinator.Release(sessionId);
+            if (released) Report("Stop meeting", "Released a session reservation with no live monitor.", string.Empty, false);
+            return released;
+        }
+
+        Report("Stop meeting", "Stopping the meeting...", string.Empty, true);
+        bool stopped = await Task.Run(
+            () => _bootstrapper.Orchestrator.EndAsync(session, cancellationToken),
+            cancellationToken);
         if (stopped) _sessions.TryRemove(sessionId, out _);
+        Report("Stop meeting", stopped ? "Meeting stopped." : "The meeting could not be stopped.", string.Empty, false);
         return stopped;
     }
 
@@ -156,6 +259,9 @@ public sealed class WindowsUiService : IWindowsUiService, IAsyncDisposable
         Report("Scheduled meeting", "Meeting started successfully.", string.Empty, false);
     }
 
+    private static readonly string[] RuntimeLogCategories =
+        ["ATTENDANCE", "ROLE", "COHOST", "AUTO_ADMIT", "MEETING", "SESSION", "ALLOCATOR", "PREPARE", "MATCHING", "LMS", "ADMISSION", "ERROR"];
+
     private void OnRuntimeLogEntry(LogEntry entry)
     {
         string message = entry.Message;
@@ -167,6 +273,14 @@ public sealed class WindowsUiService : IWindowsUiService, IAsyncDisposable
         }
         if (message.StartsWith("[DEBUG_SWITCH]", StringComparison.Ordinal))
             WindowsUiRuntimeLog.Write("DEBUG_SWITCH", message);
+        // These ran only on the console before. Without them in the runtime log, a meeting that
+        // silently admits nobody or assigns no co-host leaves no evidence at all.
+        foreach (var category in RuntimeLogCategories)
+            if (message.StartsWith($"[{category}]", StringComparison.Ordinal))
+            {
+                WindowsUiRuntimeLog.Write(category, message);
+                break;
+            }
         if (message.StartsWith("[SCHEDULER] Triggering:", StringComparison.Ordinal))
             Report("Scheduled meeting", $"Schedule detected: {message["[SCHEDULER] Triggering:".Length..].Trim()}", string.Empty, true);
         else if (message.StartsWith("[ACCOUNT] Loaded:", StringComparison.Ordinal) && CurrentStatus.LastAction == "Scheduled meeting")
@@ -219,7 +333,9 @@ public sealed class WindowsUiService : IWindowsUiService, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _activity.Dispose();
         _bootstrapper.Scheduler.SessionStarted -= OnScheduledSessionStarted;
+        _bootstrapper.LifecycleEvents.Lifecycle -= OnMeetingLifecycleAsync;
         ConsoleLogger.EntryWritten -= OnRuntimeLogEntry;
         await _bootstrapper.Scheduler.StopAsync();
         foreach (var sessionId in _sessions.Keys.ToArray())

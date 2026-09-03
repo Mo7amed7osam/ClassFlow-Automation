@@ -24,6 +24,24 @@ public class CliOptions
     public string? TargetEmail { get; set; }
     public Guid? ScheduleId { get; set; }
     public bool WebHeaded { get; set; }
+    /// <summary>The dashboard group whose session should be started, e.g. CAI5_AIS4_S7.</summary>
+    public string? LmsGroup { get; set; }
+    /// <summary>Ask for the LMS email and password and keep them for later runs.</summary>
+    public bool SaveLmsLogin { get; set; }
+    /// <summary>Walk every step but never press Run Session.</summary>
+    public bool DryRun { get; set; }
+    /// <summary>Write over a recording link the session already carries.</summary>
+    public bool ReplaceExisting { get; set; }
+    /// <summary>Mark every student the dashboard lists as Joined.</summary>
+    public bool AllPresent { get; set; }
+    /// <summary>The students who were present, separated by ';'.</summary>
+    public string? PresentNames { get; set; }
+    /// <summary>Correct an attendance already taken, through "View details".</summary>
+    public bool CorrectAttendance { get; set; }
+    /// <summary>Which day of sessions to look at. Today when it is not given.</summary>
+    public DateOnly? LmsDay { get; set; }
+    /// <summary>The session's own start time, which separates two classes on the same day.</summary>
+    public TimeOnly? LmsTime { get; set; }
     public int WebPollIntervalMilliseconds { get; set; } = 750;
 
     private static readonly HashSet<string> KnownCommands = new(StringComparer.OrdinalIgnoreCase)
@@ -45,7 +63,12 @@ public class CliOptions
         "waiting-room-auto-admit",
         "background-zoom-test",
         "meeting-start",
-        "diagnose-zoom"
+        "diagnose-zoom",
+        "roles-probe",
+        "web-dom-probe",
+        "lms-run-session",
+        "lms-record-link",
+        "lms-attendance"
     };
 
     public static CliOptions Parse(string[] args)
@@ -99,6 +122,14 @@ public class CliOptions
                     options.WebProfile = args[++index].Trim();
                 }
             }
+            // web-dom-probe: open one thing before dumping, named by its accessible label.
+            else if (arg.Equals("--click", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 < args.Length)
+                {
+                    options.Query = args[++index].Trim();
+                }
+            }
             else if (arg.Equals("--meeting-url", StringComparison.OrdinalIgnoreCase))
             {
                 if (index + 1 < args.Length)
@@ -132,6 +163,51 @@ public class CliOptions
             else if (arg.Equals("--headed", StringComparison.OrdinalIgnoreCase))
             {
                 options.WebHeaded = true;
+            }
+            else if (arg.Equals("--group", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 < args.Length) options.LmsGroup = args[++index].Trim();
+            }
+            else if (arg.Equals("--save-login", StringComparison.OrdinalIgnoreCase))
+            {
+                options.SaveLmsLogin = true;
+            }
+            else if (arg.Equals("--dry-run", StringComparison.OrdinalIgnoreCase))
+            {
+                options.DryRun = true;
+            }
+            // lms-record-link: write over a recording link the session already has.
+            else if (arg.Equals("--replace", StringComparison.OrdinalIgnoreCase))
+            {
+                options.ReplaceExisting = true;
+            }
+            else if (arg.Equals("--all-present", StringComparison.OrdinalIgnoreCase))
+            {
+                options.AllPresent = true;
+            }
+            else if (arg.Equals("--present", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 < args.Length) options.PresentNames = args[++index];
+            }
+            else if (arg.Equals("--correct", StringComparison.OrdinalIgnoreCase))
+            {
+                options.CorrectAttendance = true;
+            }
+            else if (arg.Equals("--day", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 < args.Length && DateOnly.TryParse(args[index + 1], out var day))
+                {
+                    options.LmsDay = day;
+                    index++;
+                }
+            }
+            else if (arg.Equals("--time", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 < args.Length && TimeOnly.TryParse(args[index + 1], out var time))
+                {
+                    options.LmsTime = time;
+                    index++;
+                }
             }
             else if (arg.Equals("--poll-ms", StringComparison.OrdinalIgnoreCase))
             {

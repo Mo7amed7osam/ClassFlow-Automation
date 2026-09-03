@@ -29,6 +29,29 @@ public class PanelHoverAdmitTests
     }
 
     [Fact]
+    public void WaitingRowHoverPathEntersInsideRowBeforeMovingToParticipantName()
+    {
+        var row = new WaitingParticipantRowCandidate
+        {
+            ParticipantName = "Mohab Mohamed (Guest)",
+            RowBounds = new(200, 103, 353, 42),
+            TextBounds = new(239, 112, 162, 22),
+            SafeHoverPoint = (271, 123)
+        };
+
+        var entry = WaitingRowHoverPath.GetEntryPoint(row);
+        var cursor = new FakeCursorController((10, 10));
+        var trace = new SyntheticHoverActivator(cursor, _ => { })
+            .Activate(entry, ((int)row.SafeHoverPoint.X, (int)row.SafeHoverPoint.Y));
+
+        Assert.True(row.RowBounds.Contains(entry.X, entry.Y));
+        Assert.True(entry.X < row.SafeHoverPoint.X);
+        Assert.Equal(entry, trace.MovementPoints[0]);
+        Assert.All(trace.MovementPoints, point => Assert.True(row.RowBounds.Contains(point.X, point.Y)));
+        Assert.Equal(((int)row.SafeHoverPoint.X, (int)row.SafeHoverPoint.Y), cursor.GetPosition());
+    }
+
+    [Fact]
     public void CursorLeavesRowBeforeCapture_DetectsCursorLoss()
     {
         var row = new WaitingParticipantRowCandidate

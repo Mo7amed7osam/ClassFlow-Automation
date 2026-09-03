@@ -51,6 +51,26 @@ public sealed record SyntheticHoverTrace(
     IReadOnlyList<(int X, int Y)> MovementPoints,
     (int X, int Y) FinalPoint);
 
+public static class WaitingRowHoverPath
+{
+    public static (int X, int Y) GetEntryPoint(
+        ZoomAutoAdmit.Core.Models.WaitingParticipantRowCandidate row)
+    {
+        if (row == null) throw new ArgumentNullException(nameof(row));
+        int left = checked((int)Math.Round(row.RowBounds.X));
+        int right = checked((int)Math.Round(row.RowBounds.X + row.RowBounds.Width));
+        int top = checked((int)Math.Round(row.RowBounds.Y));
+        int bottom = checked((int)Math.Round(row.RowBounds.Y + row.RowBounds.Height));
+        int inset = checked((int)Math.Round(Math.Clamp(row.RowBounds.Width * 0.04, 8, 18)));
+        int x = Math.Clamp(left + inset, left + 1, Math.Max(left + 1, right - 1));
+        int y = Math.Clamp(
+            checked((int)Math.Round(row.SafeHoverPoint.Y)),
+            top + 1,
+            Math.Max(top + 1, bottom - 1));
+        return (x, y);
+    }
+}
+
 public sealed class SyntheticHoverActivator
 {
     private readonly ICursorController _cursor;

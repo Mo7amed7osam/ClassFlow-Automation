@@ -49,6 +49,7 @@ public sealed class WindowsMeetingScheduleStore
                 if (existing.Enabled == schedule.Enabled &&
                     existing.Time == schedule.Time &&
                     existing.Days == schedule.Days &&
+                    existing.OccurrenceDate == schedule.OccurrenceDate &&
                     existing.MeetingUrl == schedule.MeetingUrl &&
                     existing.AccountId == schedule.AccountId &&
                     existing.Name == schedule.Name)
@@ -133,7 +134,7 @@ public sealed class WindowsMeetingScheduleStore
         if (schedule.Id == Guid.Empty) throw new ArgumentException("Schedule ID is required.");
         if (string.IsNullOrWhiteSpace(schedule.Name)) throw new ArgumentException("Schedule name is required.");
         if (string.IsNullOrWhiteSpace(schedule.AccountId)) throw new ArgumentException("Account is required.");
-        if (schedule.Days == ScheduleDays.None) throw new ArgumentException("Select at least one day.");
+        if (!schedule.OccurrenceDate.HasValue && schedule.Days == ScheduleDays.None) throw new ArgumentException("Select at least one day.");
         if (!Uri.TryCreate(schedule.MeetingUrl, UriKind.Absolute, out var url) ||
             url.Scheme != Uri.UriSchemeHttps)
             throw new ArgumentException("A valid HTTPS meeting URL is required.");

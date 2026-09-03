@@ -122,9 +122,23 @@ public sealed class ZoomWaitingRoomDom
             await HoverParticipantRowAsync(row);
             var button = await FindVisibleRowAdmitButtonAsync(row);
             if (button == null) continue;
-            await button.ClickAsync(new() { Timeout = 3000 });
+            if (!await ClickThroughOverlaysAsync(button)) continue;
             ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Success("ADMISSION_CLICKED");
             return true;
+        }
+        return false;
+    }
+
+    /// <summary>A visible "... entered the waiting room" notification in this frame.</summary>
+    public static async Task<bool> HasVisibleArrivalNotificationAsync(IFrame frame)
+    {
+        foreach (var layer in await frame.Locator(NotificationLayerSelector).AllAsync())
+        {
+            if (!await layer.IsVisibleAsync()) continue;
+            string text;
+            try { text = await layer.Locator(NotificationTextSelector).First.InnerTextAsync(); }
+            catch (PlaywrightException) { continue; }
+            if (ArrivalToastPattern.IsMatch(text.Trim())) return true;
         }
         return false;
     }
@@ -276,8 +290,57 @@ public sealed class ZoomWaitingRoomDom
 
     private static async Task HoverParticipantRowAsync(ILocator participantRow)
     {
-        await participantRow.HoverAsync(new() { Timeout = 3000 });
-        ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Info("PARTICIPANT_HOVERED");
+        // Hovering only reveals the row's buttons. Zoom often floats a dialog over the panel, and
+        // a blocked hover must not end the meeting's monitor: the click path handles overlays.
+        try
+        {
+            await participantRow.HoverAsync(new() { Timeout = 1500 });
+            ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Info("PARTICIPANT_HOVERED");
+        }
+        catch (PlaywrightException)
+        {
+            try { await participantRow.EvaluateAsync<object?>(HoverScript); }
+            catch (PlaywrightException) { }
+        }
+    }
+
+    private const string HoverScript =
+        "row => { const fire = type => row.dispatchEvent(new MouseEvent(type, { bubbles: true }));" +
+        " fire('mouseover'); fire('mouseenter'); fire('mousemove'); }";
+
+    /// <summary>
+    /// Presses a button that Zoom may have covered with a modal or permission dialog. A real
+    /// mouse click is refused by pointer hit-testing in that case, so the DOM click comes first;
+    /// it is what the console tool always used, and it reaches the button Zoom is showing.
+    /// </summary>
+    private static async Task<bool> ClickThroughOverlaysAsync(ILocator button)
+    {
+        try
+        {
+            await button.EvaluateAsync<object?>("element => element.click()");
+            return true;
+        }
+        catch (PlaywrightException ex)
+        {
+            ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Debug($"DOM click failed: {ex.Message}");
+        }
+
+        try
+        {
+            await button.ClickAsync(new() { Timeout = 2000, Force = true });
+            return true;
+        }
+        catch (PlaywrightException ex)
+        {
+            ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Warn($"WEB_CLICK_BLOCKED: {FirstLine(ex.Message)}");
+            return false;
+        }
+    }
+
+    private static string FirstLine(string message)
+    {
+        int newline = message.IndexOf('\n');
+        return newline < 0 ? message : message[..newline].Trim();
     }
 
     private static async Task<ILocator?> FindVisibleRowAdmitButtonAsync(ILocator participantRow)
@@ -345,7 +408,7 @@ public sealed class ZoomWaitingRoomDom
             var button = await FindVisibleNotificationAdmitButtonAsync(notification);
             if (button == null) continue;
             if (!await button.IsVisibleAsync()) continue;
-            await ClickNotificationAdmitAsync(button);
+            if (!await ClickNotificationAdmitAsync(button)) continue;
             ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Success("NOTIFICATION_ADMIT_CLICKED");
             ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Success("ADMISSION_CLICKED");
             return true;
@@ -387,29 +450,8 @@ public sealed class ZoomWaitingRoomDom
         return null;
     }
 
-    private static async Task ClickNotificationAdmitAsync(ILocator button)
-    {
-        try
-        {
-            await button.ClickAsync(new() { Timeout = 3000 });
-            return;
-        }
-        catch (PlaywrightException ex) when (
-            ex.Message.Contains("intercepts pointer events", StringComparison.OrdinalIgnoreCase))
-        {
-            // Zoom can leave a ReactModalPortal header above the visible toast. A DOM click
-            // preserves the scoped notification target without depending on pointer hit-testing.
-        }
-
-        try
-        {
-            await button.EvaluateAsync<object?>("element => element.click()");
-        }
-        catch (PlaywrightException)
-        {
-            await button.ClickAsync(new() { Timeout = 3000, Force = true });
-        }
-    }
+    private static Task<bool> ClickNotificationAdmitAsync(ILocator button) =>
+        ClickThroughOverlaysAsync(button);
 
     private static async Task<IReadOnlyList<string>> ReadJoinedParticipantIdentitiesAsync(IFrame frame)
     {
@@ -470,8 +512,7 @@ public sealed class ZoomWaitingRoomDom
         foreach (var button in await buttons.AllAsync())
         {
             if (!await button.IsVisibleAsync()) continue;
-            await button.ClickAsync(new() { Timeout = 3000 });
-            return true;
+            if (await ClickThroughOverlaysAsync(button)) return true;
         }
         return false;
     }

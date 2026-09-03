@@ -1,0 +1,68 @@
+{
+  "groups": [
+    {
+      "groupId": "CAI4_AIS4_S7",
+      "displayName": "CAI4_AIS4_S7",
+      "students": [
+        { "order": 1, "fullName": "Abdelrahman Ahmed Mohamed Ahmed" },
+        { "order": 2, "fullName": "Ahmed Alaa leDin Jaber Shaaban" },
+        { "order": 3, "fullName": "Ahmed Ashraf Hafez Khedr" },
+        { "order": 4, "fullName": "Ahmed Hammouda Korany Salama" },
+        { "order": 5, "fullName": "Ahmed Ramy Rihan Mohamed" },
+        { "order": 6, "fullName": "Ahmed Refaat Mohmed Mahmoud" },
+        { "order": 7, "fullName": "Ahmed Saber Abdulmonem Mohamed" },
+        { "order": 8, "fullName": "Ahmed Wael Abd Elgaber Abd ELsamie" },
+        { "order": 9, "fullName": "Hager Hamdy Abdelsamea Elwakil" },
+        { "order": 10, "fullName": "Haya Mahmoud Mohamed Elnagdy" },
+        { "order": 11, "fullName": "Khairy Mohamed Khairy Abo saidah" },
+        { "order": 12, "fullName": "Kyrillos Saeed Milad Saeed" },
+        { "order": 13, "fullName": "Mahmoud Eslam Zaki Fahim Noamany" },
+        { "order": 14, "fullName": "Marwan Abdelhameed Mohamed Abdelaziz" },
+        { "order": 15, "fullName": "menna allah mohammed mohammed mashhout" },
+        { "order": 16, "fullName": "Mohamed Ashraf Mohamed Abdelmotalb" },
+        { "order": 17, "fullName": "Mohamed Farag Mansour Khamis" },
+        { "order": 18, "fullName": "Moustafa Mahmoud Elsayed" },
+        { "order": 19, "fullName": "Muhannad Ahmed AbdelBadie Ibrahim" },
+        { "order": 20, "fullName": "Nada Ahmed Mahmoud Mohammed" },
+        { "order": 21, "fullName": "Nooreldin Mahmoud Shehata Mohamed" },
+        { "order": 22, "fullName": "Omar Essam Mohamed Mohamed" },
+        { "order": 23, "fullName": "rawan essam abdalmoaty mohamad" },
+        { "order": 24, "fullName": "Rowida Amr Ali Abdelhafiz" },
+        { "order": 25, "fullName": "Samiha Mohamed Alhady Ahmad Abo Alala" },
+        { "order": 26, "fullName": "sayed ayman sayed ghazal" },
+        { "order": 27, "fullName": "Youssef Mohamed Diab Ghanem" }
+      ]
+    },
+    {
+      "groupId": "CAI4_AIS4_S8",
+      "displayName": "CAI4_AIS4_S8",
+      "students": [
+        { "order": 1, "fullName": "Abdelrahman Emad Gaber Aboelezz" },
+        { "order": 2, "fullName": "Ahmed Gamal Abdelaziz Elgendy" },
+        { "order": 3, "fullName": "ahmed hamed abdelazim mohamed" },
+        { "order": 4, "fullName": "Ahmed Mohamed Ahmed Soliman" },
+        { "order": 5, "fullName": "Ahmed Tarek Mohamed Abdalalim" },
+        { "order": 6, "fullName": "ali mohamed ali esmail" },
+        { "order": 7, "fullName": "Alyaa Abdelrhman Tolba Ragab" },
+        { "order": 8, "fullName": "Atef Esaam Ahmed Atia" },
+        { "order": 9, "fullName": "farah amr samy mahmoud" },
+        { "order": 10, "fullName": "Hassan Ahmed Hassan Elbrolosy" },
+        { "order": 11, "fullName": "Mark Tamer Ezzat Kamel" },
+        { "order": 12, "fullName": "Mina Samaan Zakaria Nassief" },
+        { "order": 13, "fullName": "Mohab Osama Sayed Mohamed" },
+        { "order": 14, "fullName": "mohamed Ahmed Mohamed Helal" },
+        { "order": 15, "fullName": "mohamed Ashraf ahmed abdeltwab" },
+        { "order": 16, "fullName": "Mohamed Nader Galal Khaled" },
+        { "order": 17, "fullName": "Mohanad Yasser Ahmed Khairy" },
+        { "order": 18, "fullName": "Mostafa Ahmed Hassan Mohammed" },
+        { "order": 19, "fullName": "Omar Ahmed Ahmed Hafez" },
+        { "order": 20, "fullName": "Raafat Mohamed Younes Soliman" },
+        { "order": 21, "fullName": "Steven Wael Karam Habib" },
+        { "order": 22, "fullName": "tasneem khaled saad gomaa" },
+        { "order": 23, "fullName": "Youssef Alfred Adeeb Gohar" },
+        { "order": 24, "fullName": "youssef Samir Zali Abdelmalk" },
+        { "order": 25, "fullName": "Ziad Waleed Fekry Ibrahim" }
+      ]
+    }
+  ]
+}

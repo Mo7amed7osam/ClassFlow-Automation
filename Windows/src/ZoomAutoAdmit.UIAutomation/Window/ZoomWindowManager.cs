@@ -56,6 +56,15 @@ public sealed class ZoomWindowManager
             return ZoomWindowRole.NotificationToast;
         }
 
+        // Current Zoom Workplace embeds the full meeting in these native content windows
+        // while keeping the generic "Zoom Workplace" title. Treat them as meeting surfaces;
+        // otherwise discovery falls through to a tiny hidden floating-video helper.
+        if (className.Equals("ConfMultiTabContentWndClass", StringComparison.OrdinalIgnoreCase) ||
+            className.Equals("ZPContentViewWndClass", StringComparison.OrdinalIgnoreCase))
+        {
+            return ZoomWindowRole.MeetingWindow;
+        }
+
         // CptHost is the dedicated Zoom meeting host process
         if (process.Equals("cptHost", StringComparison.OrdinalIgnoreCase) ||
             process.Equals("airhost", StringComparison.OrdinalIgnoreCase))
@@ -68,7 +77,7 @@ public sealed class ZoomWindowManager
         // Zoom Workplace Home screen has title "Zoom Workplace" or "Zoom", which is NOT an active meeting.
         if (title.Contains("Zoom Meeting", StringComparison.OrdinalIgnoreCase) ||
             title.Contains("Zoom Webinar", StringComparison.OrdinalIgnoreCase) ||
-            (title.Contains("Meeting", StringComparison.OrdinalIgnoreCase) && !title.Equals("Zoom Workplace", StringComparison.OrdinalIgnoreCase)))
+            title.StartsWith("Meeting ID:", StringComparison.OrdinalIgnoreCase))
         {
             return ZoomWindowRole.MeetingWindow;
         }
@@ -187,17 +196,30 @@ public sealed class ZoomWindowManager
 
     public static IntPtr FindMainZoomMeetingWindow()
     {
-        IntPtr found = IntPtr.Zero;
+        var candidates = new List<(IntPtr Handle, int Score, long Area)>();
         NativeMethods.EnumWindows((hWnd, _) =>
         {
             if (ClassifyZoomWindow(hWnd) == ZoomWindowRole.MeetingWindow)
             {
-                found = hWnd;
-                return false;
+                string className = NativeMethods.GetClassNameSafe(hWnd);
+                int score = NativeMethods.IsWindowVisible(hWnd) ? 100 : 0;
+                if (className.Equals("ConfMultiTabContentWndClass", StringComparison.OrdinalIgnoreCase) ||
+                    className.Equals("ZPContentViewWndClass", StringComparison.OrdinalIgnoreCase))
+                    score += 50;
+                if (className.Equals("ZPFloatVideoWndClass", StringComparison.OrdinalIgnoreCase))
+                    score -= 20;
+                long area = 0;
+                if (NativeMethods.GetWindowRect(hWnd, out var rect))
+                    area = Math.Max(0, rect.Right - rect.Left) * (long)Math.Max(0, rect.Bottom - rect.Top);
+                candidates.Add((hWnd, score, area));
             }
             return true;
         }, IntPtr.Zero);
-        return found;
+        return candidates
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenByDescending(candidate => candidate.Area)
+            .Select(candidate => candidate.Handle)
+            .FirstOrDefault();
     }
 
     public static IntPtr FindActiveZoomWindow()

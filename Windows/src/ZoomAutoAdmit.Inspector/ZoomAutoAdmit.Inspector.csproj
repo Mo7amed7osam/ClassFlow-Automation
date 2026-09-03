@@ -7,11 +7,17 @@
     <Nullable>enable</Nullable>
     <RootNamespace>ZoomAutoAdmit.Inspector</RootNamespace>
     <AssemblyName>ZoomAutoAdmit.Inspector</AssemblyName>
+    <!-- Per-monitor DPI awareness. See PerMonitorV2.manifest: without it the screen capture
+         and every Admit click land on the wrong coordinates on a mixed-scaling desktop. -->
+    <ApplicationManifest>..\PerMonitorV2.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\ZoomAutoAdmit.Attendance\ZoomAutoAdmit.Attendance.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.Core\ZoomAutoAdmit.Core.csproj" />
+    <ProjectReference Include="..\ZoomAutoAdmit.SessionRoles\ZoomAutoAdmit.SessionRoles.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.UIAutomation\ZoomAutoAdmit.UIAutomation.csproj" />
+    <ProjectReference Include="..\ZoomAutoAdmit.WaitingRoomAutomation\ZoomAutoAdmit.WaitingRoomAutomation.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.WebAutomation\ZoomAutoAdmit.WebAutomation.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.WindowsRuntime\ZoomAutoAdmit.WindowsRuntime.csproj" />
   </ItemGroup>

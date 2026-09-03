@@ -18,6 +18,12 @@ public partial class App : Application
         base.OnStartup(e);
         WindowsUiRuntimeLog.Initialize();
         WindowsUiRuntimeLog.Write("STARTUP", "Application startup entered.");
+        // Tier 2 means the GPU draws the window. Tier 0 is software rendering, where every
+        // shadow and gradient is paid for on the CPU and the whole app feels slow.
+        WindowsUiRuntimeLog.Write("STARTUP",
+            $"Render tier: {System.Windows.Media.RenderCapability.Tier >> 16} " +
+            $"({(System.Windows.Media.RenderCapability.Tier >> 16 == 0 ? "software" : "hardware")}).");
+        SmoothScrolling.Enable();
         RegisterExceptionHandlers();
 
         // Do not let a service/configuration failure terminate the application before
@@ -26,7 +32,9 @@ public partial class App : Application
         Window window;
         try
         {
-            window = new MainWindow();
+            var main = new MainWindow();
+            main.RestoreSavedDesign();
+            window = main;
             WindowsUiRuntimeLog.Write("STARTUP", "MainWindow created.");
         }
         catch (Exception ex)
@@ -54,8 +62,15 @@ public partial class App : Application
         try
         {
             _service = new WindowsUiService(new WindowsRuntimeBootstrapper());
+            _service.EnableSessionRoleAi(new AiRoleMatcher(new AiCredentialStore(), new AiMatchingService()));
+            _service.SessionRoleNotice += notice =>
+                Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show(notice); } catch { } });
             WindowsUiRuntimeLog.Write("SERVICES", "Windows runtime services initialized.");
             _viewModel = new MainViewModel(_service);
+            // Saving a profile says so on the desktop, naming the group it was saved for: with one
+            // type set up per group, seeing which one was written is the whole confirmation.
+            _viewModel.SessionRoles.ProfileSaved += (title, message) =>
+                Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show(title, message, "#2ED9A0"); } catch { } });
             WindowsUiRuntimeLog.Write("VIEWMODELS", "Main view model graph created.");
             window.DataContext = _viewModel;
             await _viewModel.InitializeAsync();

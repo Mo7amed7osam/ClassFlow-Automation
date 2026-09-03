@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Groups & Students · Zoom Auto Admit AI</title>
+<meta name="description" content="Manage cohorts and the alias dictionary used for matching.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+/* ==========================================================================
+   Zoom Auto Admit AI — Design System
+   Dark + Light themes. Toggle with  <html data-theme="dark|light">
+   ========================================================================== */
+
+/* ---------- 1. Tokens ---------- */
+:root {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --r-full: 999px;
+
+  --sidebar-w: 264px;
+  --topbar-h: 76px;
+  --gap: 18px;
+
+  --ease: cubic-bezier(.4, 0, .2, 1);
+}
+
+/* ---------- Dark theme (Image 1) ---------- */
+[data-theme="dark"] {
+  --bg: #05080f;
+  --bg-image:
+    radial-gradient(900px 500px at 8% -8%, rgba(59, 124, 246, .20), transparent 60%),
+    radial-gradient(700px 420px at 92% 0%, rgba(122, 92, 245, .16), transparent 60%),
+    radial-gradient(600px 400px at 60% 100%, rgba(46, 217, 160, .06), transparent 60%);
+
+  --sidebar: rgba(8, 13, 26, .92);
+  --sidebar-border: rgba(255, 255, 255, .06);
+
+  --card: #0b1220;
+  --card-grad: linear-gradient(160deg, rgba(255, 255, 255, .055), rgba(255, 255, 255, .012));
+  --card-inset: rgba(255, 255, 255, .035);
+  --card-inset-2: rgba(255, 255, 255, .055);
+  --border: rgba(255, 255, 255, .08);
+  --border-strong: rgba(255, 255, 255, .14);
+  --shadow: 0 22px 60px rgba(0, 0, 0, .45);
+  --shadow-sm: 0 8px 24px rgba(0, 0, 0, .3);
+
+  --text: #e8edf7;
+  --text-2: #9aa6bd;
+  --text-3: #66738c;
+
+  --primary: #3b7cf6;
+  --primary-soft: rgba(59, 124, 246, .16);
+  --primary-grad: linear-gradient(135deg, #3b7cf6 0%, #6d5cf6 55%, #8b5cf6 100%);
+  --primary-text: #6f9dff;
+
+  --cyan: #38bdf8;
+  --cyan-soft: rgba(56, 189, 248, .15);
+  --green: #2ed9a0;
+  --green-soft: rgba(46, 217, 160, .14);
+  --orange: #f5a524;
+  --orange-soft: rgba(245, 165, 36, .15);
+  --red: #f4525f;
+  --red-soft: rgba(244, 82, 95, .15);
+  --purple: #a78bfa;
+  --purple-soft: rgba(167, 139, 250, .15);
+
+  --track: rgba(255, 255, 255, .08);
+  --hover: rgba(255, 255, 255, .05);
+  --scroll: rgba(255, 255, 255, .12);
+  --glow: 0 0 24px rgba(59, 124, 246, .35);
+  color-scheme: dark;
+}
+
+/* ---------- Light theme (Image 2) ---------- */
+[data-theme="light"] {
+  --bg: #e6effb;
+  --bg-image:
+    radial-gradient(900px 520px at 6% -6%, rgba(255, 255, 255, .95), transparent 60%),
+    radial-gradient(800px 480px at 96% 4%, rgba(197, 221, 253, .85), transparent 62%),
+    linear-gradient(165deg, #dfeafb 0%, #eef4fd 45%, #e3edfc 100%);
+
+  --sidebar: rgba(255, 255, 255, .86);
+  --sidebar-border: rgba(23, 58, 116, .07);
+
+  --card: #ffffff;
+  --card-grad: linear-gradient(160deg, rgba(255, 255, 255, .9), rgba(244, 248, 254, .75));
+  --card-inset: rgba(238, 244, 253, .9);
+  --card-inset-2: rgba(228, 238, 252, .9);
+  --border: rgba(23, 58, 116, .09);
+  --border-strong: rgba(23, 58, 116, .16);
+  --shadow: 0 18px 44px rgba(38, 78, 148, .10);
+  --shadow-sm: 0 6px 18px rgba(38, 78, 148, .08);
+
+  --text: #12233d;
+  --text-2: #5a6b86;
+  --text-3: #8494ac;
+
+  --primary: #2f6fe4;
+  --primary-soft: rgba(47, 111, 228, .10);
+  --primary-grad: linear-gradient(135deg, #4b8bf4 0%, #3a6fe6 100%);
+  --primary-text: #2f6fe4;
+
+  --cyan: #0ea5e9;
+  --cyan-soft: rgba(14, 165, 233, .10);
+  --green: #10b981;
+  --green-soft: rgba(16, 185, 129, .12);
+  --orange: #f59e0b;
+  --orange-soft: rgba(245, 158, 11, .13);
+  --red: #ef4444;
+  --red-soft: rgba(239, 68, 68, .10);
+  --purple: #8b5cf6;
+  --purple-soft: rgba(139, 92, 246, .12);
+
+  --track: rgba(23, 58, 116, .10);
+  --hover: rgba(47, 111, 228, .06);
+  --scroll: rgba(23, 58, 116, .18);
+  --glow: 0 10px 24px rgba(47, 111, 228, .22);
+  color-scheme: light;
+}
+
+/* ---------- 2. Base ---------- */
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  background-color: var(--bg);
+  background-image: var(--bg-image);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color .35s var(--ease), color .35s var(--ease);
+}
+
+h1, h2, h3, h4, p { margin: 0; }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; cursor: pointer; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 99px; }
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Icons: inline SVG sprite, so they render with or without a network. */
+.ic {
+  width: 20px; height: 20px;
+  flex: none;
+  display: inline-block;
+  vertical-align: -.22em;
+  fill: currentColor;
+  pointer-events: none;
+}
+.ic.ico-sm { width: 18px; height: 18px; }
+.ic.ico-xs { width: 15px; height: 15px; }
+
+/* ---------- 3. Shell ---------- */
+.app { display: flex; min-height: 100vh; }
+
+.sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px 16px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--sidebar-border);
+  backdrop-filter: blur(18px);
+  z-index: 60;
+  overflow-y: auto;
+}
+[data-theme="light"] .sidebar {
+  margin: 14px;
+  inset: 14px auto 14px 0;
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-sm);
+}
+
+.brand { display: flex; align-items: center; gap: 11px; padding: 2px 6px 16px; }
+.brand-mark {
+  width: 42px; height: 42px;
+  flex: none;
+  display: grid; place-items: center;
+  border-radius: 13px;
+  background: var(--primary-grad);
+  box-shadow: var(--glow);
+  color: #fff;
+}
+.brand-mark svg { width: 22px; height: 22px; }
+.brand-name { font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+.brand-name em {
+  font-style: normal;
+  background: linear-gradient(90deg, var(--primary-text), var(--cyan));
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+}
+.brand-ver { font-size: 11px; color: var(--text-3); }
+
+.btn-start {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%;
+  padding: 13px 16px;
+  margin-bottom: 18px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--primary-grad);
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: var(--glow);
+  transition: transform .2s var(--ease), box-shadow .2s var(--ease), filter .2s var(--ease);
+}
+.btn-start:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.btn-start:active { transform: translateY(0); }
+
+.nav-group { margin-bottom: 14px; }
+.nav-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 0 10px 8px;
+}
+.nav-item {
+  position: relative;
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 12px;
+  margin-bottom: 2px;
+  border-radius: 11px;
+  color: var(--text-2);
+  font-size: 13.5px;
+  font-weight: 500;
+  transition: background .18s var(--ease), color .18s var(--ease);
+}
+.nav-item:hover { background: var(--hover); color: var(--text); }
+.nav-item.active {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  font-weight: 600;
+}
+.nav-item.active::before {
+  content: "";
+  position: absolute; left: 0; top: 50%;
+  width: 3px; height: 18px;
+  transform: translateY(-50%);
+  border-radius: 0 3px 3px 0;
+  background: var(--primary);
+}
+.nav-item .ic { width: 19px; height: 19px; }
+
+.side-foot { margin-top: auto; padding-top: 14px; display: grid; gap: 9px; }
+.side-card {
+  display: flex; align-items: center; gap: 11px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--card-inset);
+}
+.side-card .t1 { font-size: 12.5px; font-weight: 600; }
+.side-card .t2 { font-size: 11px; color: var(--text-3); }
+.status-dots { display: flex; gap: 3px; }
+.status-dots i {
+  width: 6px; height: 6px; border-radius: 99px; background: var(--green);
+  animation: pulse 1.8s infinite;
+}
+.status-dots i:nth-child(2) { animation-delay: .3s; }
+.status-dots i:nth-child(3) { animation-delay: .6s; opacity: .45; }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+
+/* ---------- 4. Main + topbar ---------- */
+.main {
+  flex: 1;
+  min-width: 0;
+  margin-left: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+}
+[data-theme="light"] .main { margin-left: calc(var(--sidebar-w) + 14px); }
+
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: 20px;
+  min-height: var(--topbar-h);
+  padding: 16px 26px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+}
+.page-title { font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+.page-sub { font-size: 12.5px; color: var(--text-2); margin-top: 2px; }
+
+.search {
+  position: relative;
+  flex: 1;
+  max-width: 420px;
+  margin-left: auto;
+}
+.search .ic {
+  position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 18px; color: var(--text-3); pointer-events: none;
+}
+.search input {
+  display: block;
+  width: 100%;
+  padding: 11px 58px 11px 42px;
+  font: inherit; font-size: 13px;
+  color: var(--text);
+  background: var(--card-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  transition: border-color .2s var(--ease), box-shadow .2s var(--ease);
+}
+.search input::placeholder { color: var(--text-3); }
+.search input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+.kbd {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  padding: 3px 7px;
+  font-size: 10.5px; font-family: var(--font-mono);
+  color: var(--text-3);
+  background: var(--card-inset-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.top-actions { display: flex; align-items: center; gap: 8px; }
+.icon-btn {
+  position: relative;
+  width: 38px; height: 38px;
+  display: grid; place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--card-inset);
+  color: var(--text-2);
+  transition: color .2s var(--ease), border-color .2s var(--ease), background .2s var(--ease);
+}
+.icon-btn:hover { color: var(--text); border-color: var(--border-strong); background: var(--hover); }
+.icon-btn .dot {
+  position: absolute; top: 8px; right: 9px;
+  width: 7px; height: 7px; border-radius: 99px;
+  background: var(--red);
+  border: 2px solid var(--bg);
+}
+
+.user-chip {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 12px 5px 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--card-inset);
+}
+.avatar {
+  width: 32px; height: 32px; flex: none;
+  display: grid; place-items: center;
+  border-radius: 99px;
+  background: var(--primary-grad);
+  color: #fff;
+  font-size: 13px; font-weight: 600;
+}
+.avatar.sq { border-radius: 10px; }
+.avatar.sm { width: 28px; height: 28px; font-size: 11px; }
+.user-chip .t1 { font-size: 12.5px; font-weight: 600; line-height: 1.25; }
+.user-chip .t2 { font-size: 10.5px; color: var(--text-3); line-height: 1.25; }
+
+/* ---------- 5. Content grid ---------- */
+.content { padding: 24px 26px 40px; display: grid; gap: var(--gap); }
+.greeting h2 { font-size: 26px; font-weight: 700; letter-spacing: -.025em; }
+.greeting p { font-size: 13.5px; color: var(--text-2); margin-top: 5px; }
+
+.grid { display: grid; gap: var(--gap); }
+.g-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.g-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.g-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.g-main { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 1fr); }
+.g-side { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.g-qa { grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr) minmax(0, 1.1fr); }
+.span-2 { grid-column: span 2; }
+
+/* ---------- 6. Cards ---------- */
+.card {
+  position: relative;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  background-color: var(--card);
+  background-image: var(--card-grad);
+  box-shadow: var(--shadow);
+}
+.card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 16px;
+}
+.card-title { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.card-sub { font-size: 12px; color: var(--text-2); margin-top: 3px; }
+
+/* Stat card */
+.stat { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; overflow: hidden; }
+.stat-top { display: flex; align-items: flex-start; justify-content: space-between; }
+.stat-label { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); font-weight: 500; }
+.stat-badge {
+  width: 34px; height: 34px; display: grid; place-items: center;
+  border-radius: 11px;
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+.stat-badge.g { background: var(--green-soft); color: var(--green); }
+.stat-badge.o { background: var(--orange-soft); color: var(--orange); }
+.stat-badge.c { background: var(--cyan-soft); color: var(--cyan); }
+.stat-badge.p { background: var(--purple-soft); color: var(--purple); }
+.stat-value { font-size: 30px; font-weight: 700; letter-spacing: -.03em; line-height: 1.1; }
+.stat-value.sm { font-size: 24px; }
+.stat-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+.stat-note { font-size: 11.5px; color: var(--text-3); }
+.trend { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 600; color: var(--green); }
+.trend.down { color: var(--red); }
+.spark { width: 76px; height: 30px; flex: none; opacity: .95; }
+
+/* ---------- 7. Buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  font-size: 13px; font-weight: 600;
+  white-space: nowrap;
+  transition: transform .18s var(--ease), background .18s var(--ease),
+              box-shadow .18s var(--ease), border-color .18s var(--ease), color .18s var(--ease);
+}
+.btn:active { transform: translateY(1px); }
+.btn-primary { background: var(--primary-grad); color: #fff; box-shadow: var(--glow); }
+.btn-primary:hover { filter: brightness(1.07); transform: translateY(-1px); }
+.btn-outline { background: transparent; border-color: var(--border-strong); color: var(--text); }
+.btn-outline:hover { border-color: var(--primary); color: var(--primary-text); background: var(--primary-soft); }
+.btn-ghost { background: var(--card-inset); border-color: var(--border); color: var(--text-2); }
+.btn-ghost:hover { color: var(--text); background: var(--hover); }
+.btn-danger { background: var(--red-soft); color: var(--red); border-color: transparent; }
+.btn-danger:hover { background: var(--red); color: #fff; }
+.btn-sm { padding: 7px 13px; font-size: 12px; border-radius: 10px; }
+.btn-xs { padding: 5px 10px; font-size: 11.5px; border-radius: 9px; }
+.btn-block { width: 100%; }
+
+/* Quick action tile */
+.qa {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--card-inset);
+  text-align: left;
+  transition: border-color .2s var(--ease), background .2s var(--ease), transform .2s var(--ease);
+}
+.qa:hover { border-color: var(--primary); background: var(--primary-soft); transform: translateY(-1px); }
+.qa .qa-ico {
+  width: 34px; height: 34px; flex: none; display: grid; place-items: center;
+  border-radius: 10px; background: var(--primary-soft); color: var(--primary-text);
+}
+.qa-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.qa-txt b { font-size: 13px; font-weight: 600; color: var(--text); }
+.qa-txt small { font-size: 11px; color: var(--text-3); }
+.qa .go { flex: none; color: var(--text-3); opacity: .7; }
+
+/* ---------- 8. Badges / pills ---------- */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--r-full);
+  font-size: 11px; font-weight: 600;
+  background: var(--primary-soft); color: var(--primary-text);
+}
+.pill.g { background: var(--green-soft); color: var(--green); }
+.pill.o { background: var(--orange-soft); color: var(--orange); }
+.pill.r { background: var(--red-soft); color: var(--red); }
+.pill.c { background: var(--cyan-soft); color: var(--cyan); }
+.pill.p { background: var(--purple-soft); color: var(--purple); }
+.pill.n { background: var(--card-inset-2); color: var(--text-2); }
+.pill i { width: 6px; height: 6px; border-radius: 99px; background: currentColor; }
+.pill.live { background: var(--red-soft); color: var(--red); letter-spacing: .06em; }
+.pill.live i { animation: pulse 1.4s infinite; }
+
+/* ---------- 9. Progress + meters ---------- */
+.meter-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-2); margin-bottom: 8px; }
+.meter { height: 7px; border-radius: 99px; background: var(--track); overflow: hidden; }
+.meter > span {
+  display: block; height: 100%;
+  border-radius: 99px;
+  background: var(--primary-grad);
+}
+.meter.g > span { background: linear-gradient(90deg, var(--green), var(--cyan)); }
+.meter.o > span { background: linear-gradient(90deg, var(--orange), #f97316); }
+
+.donut { display: grid; place-items: center; position: relative; }
+.donut svg { transform: rotate(-90deg); }
+.donut .donut-mid { position: absolute; text-align: center; }
+.donut .donut-mid .v { font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+.donut .donut-mid .l { font-size: 10.5px; color: var(--text-3); }
+
+/* ---------- 10. Metric strip (inner boxes) ---------- */
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+.metric {
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--card-inset);
+}
+.metric .l { font-size: 11.5px; color: var(--text-3); margin-bottom: 5px; }
+.metric .v { font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+.metric .v.mono { font-family: var(--font-mono); font-size: 18px; }
+
+/* ---------- 11. Lists / timeline / health ---------- */
+.timeline { display: grid; gap: 2px; }
+.tl-item { position: relative; display: flex; gap: 14px; padding: 9px 0 9px 2px; }
+.tl-item::before {
+  content: ""; position: absolute; left: 5px; top: 24px; bottom: -4px;
+  width: 1px; background: var(--border);
+}
+.tl-item:last-child::before { display: none; }
+.tl-dot {
+  width: 11px; height: 11px; flex: none; margin-top: 5px;
+  border-radius: 99px;
+  background: var(--card);
+  border: 2px solid var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  z-index: 1;
+}
+.tl-dot.g { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.tl-dot.o { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
+.tl-body { flex: 1; min-width: 0; }
+.tl-body .t1 { font-size: 12.5px; font-weight: 600; }
+.tl-body .t2 { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.tl-time { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+
+.hlist { display: grid; gap: 13px; }
+.hrow { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.hrow .n { display: flex; align-items: center; gap: 9px; color: var(--text-2); }
+.hrow .n i { width: 7px; height: 7px; border-radius: 99px; background: var(--green); box-shadow: 0 0 8px var(--green); }
+.hrow .s { font-size: 12px; font-weight: 600; color: var(--green); }
+.hrow.warn .n i, .hrow.warn .s { background: var(--orange); color: var(--orange); box-shadow: 0 0 8px var(--orange); }
+
+.legend { display: grid; gap: 12px; }
+.legend .lrow { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.legend .lrow .n { display: flex; align-items: center; gap: 9px; color: var(--text-2); }
+.legend .lrow .n i { width: 8px; height: 8px; border-radius: 3px; background: var(--primary); }
+.legend .lrow .v { font-size: 12.5px; font-weight: 600; }
+
+/* ---------- 12. Tables ---------- */
+.table-wrap { overflow-x: auto; margin: 0 -20px -20px; padding: 0 4px 4px; }
+table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.tbl th {
+  text-align: left;
+  padding: 11px 16px;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+table.tbl td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+  vertical-align: middle;
+}
+table.tbl tr:last-child td { border-bottom: 0; }
+table.tbl tbody tr { transition: background .18s var(--ease); }
+table.tbl tbody tr:hover { background: var(--hover); }
+table.tbl td.strong { color: var(--text); font-weight: 600; }
+table.tbl td.mono { font-family: var(--font-mono); font-size: 12px; }
+.cell-user { display: flex; align-items: center; gap: 10px; }
+.row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+/* List row (non-table) */
+.lrow-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--card-inset);
+  transition: border-color .2s var(--ease), transform .2s var(--ease);
+}
+.lrow-card:hover { border-color: var(--border-strong); }
+.lrow-card + .lrow-card { margin-top: 10px; }
+.lrow-ico {
+  width: 42px; height: 42px; flex: none; display: grid; place-items: center;
+  border-radius: 12px; background: var(--primary-soft); color: var(--primary-text);
+}
+.lrow-main { flex: 1; min-width: 0; }
+.lrow-main .t1 { font-size: 13.5px; font-weight: 600; }
+.lrow-main .t2 { font-size: 11.5px; color: var(--text-3); margin-top: 3px; display: flex; gap: 12px; flex-wrap: wrap; }
+.lrow-stat { text-align: right; }
+.lrow-stat .l { font-size: 10.5px; color: var(--text-3); }
+.lrow-stat .v { font-size: 13px; font-weight: 700; }
+
+/* ---------- 13. Forms ---------- */
+.field { display: grid; gap: 7px; }
+.field label { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.input, select.input, textarea.input {
+  width: 100%;
+  padding: 11px 14px;
+  font: inherit; font-size: 13px;
+  color: var(--text);
+  background: var(--card-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  transition: border-color .2s var(--ease), box-shadow .2s var(--ease);
+}
+.input::placeholder { color: var(--text-3); }
+.input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+select.input { appearance: none; padding-right: 34px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.hint { font-size: 11.5px; color: var(--text-3); }
+
+.switch { position: relative; width: 42px; height: 24px; flex: none; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 2; }
+.switch span {
+  position: absolute; inset: 0;
+  background: var(--track);
+  border-radius: 99px;
+  transition: background .25s var(--ease);
+}
+.switch span::after {
+  content: ""; position: absolute; top: 3px; left: 3px;
+  width: 18px; height: 18px; border-radius: 99px;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(0,0,0,.3);
+  transition: transform .25s var(--ease);
+}
+.switch input:checked + span { background: var(--primary); }
+.switch input:checked + span::after { transform: translateX(18px); }
+
+.range { width: 100%; appearance: none; height: 5px; border-radius: 99px; background: var(--track); }
+.range::-webkit-slider-thumb {
+  appearance: none; width: 16px; height: 16px; border-radius: 99px;
+  background: var(--primary); border: 2px solid var(--card);
+  box-shadow: var(--glow); cursor: pointer;
+}
+.range::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 99px; border: 2px solid var(--card);
+  background: var(--primary); cursor: pointer;
+}
+
+.set-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--border);
+}
+.set-row:last-child { border-bottom: 0; }
+.set-row .t1 { font-size: 13.5px; font-weight: 600; }
+.set-row .t2 { font-size: 11.5px; color: var(--text-3); margin-top: 3px; }
+.set-ctl { flex: none; display: flex; align-items: center; gap: 12px; justify-content: flex-end; }
+.set-ctl select.input { min-width: 168px; }
+
+/* ---------- 14. Tabs / filters ---------- */
+.tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--card-inset); }
+.tab {
+  padding: 8px 15px;
+  border: 0; border-radius: 10px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px; font-weight: 500;
+  transition: background .2s var(--ease), color .2s var(--ease);
+}
+.tab:hover { color: var(--text); }
+.tab.active { background: var(--primary); color: #fff; font-weight: 600; box-shadow: var(--shadow-sm); }
+[data-theme="light"] .tab.active { background: #fff; color: var(--primary); border: 1px solid var(--border); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--card-inset);
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.chip:hover { border-color: var(--border-strong); color: var(--text); }
+.filter-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+/* ---------- 15. Console / logs ---------- */
+.console {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.85;
+  padding: 16px;
+  border-radius: var(--r-lg);
+  background: var(--card-inset);
+  border: 1px solid var(--border);
+  max-height: 460px; overflow: auto;
+}
+[data-theme="dark"] .console { background: rgba(0,0,0,.35); }
+.log-line { display: flex; gap: 12px; padding: 3px 0; }
+.log-line:hover { background: var(--hover); }
+.log-t { color: var(--text-3); white-space: nowrap; }
+.log-lv { font-weight: 600; width: 52px; flex: none; }
+.log-lv.info { color: var(--cyan); }
+.log-lv.warn { color: var(--orange); }
+.log-lv.err { color: var(--red); }
+.log-lv.ok { color: var(--green); }
+.log-msg { color: var(--text-2); word-break: break-word; }
+.log-msg b { color: var(--text); font-weight: 600; }
+
+/* ---------- 16. AI orb (engine status) ---------- */
+.orb-wrap { display: grid; place-items: center; padding: 14px 0 22px; }
+.orb { position: relative; width: 150px; height: 150px; display: grid; place-items: center; }
+.orb::before {
+  content: ""; position: absolute; inset: -14px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--primary-soft) 0%, transparent 68%);
+  animation: breathe 4.5s ease-in-out infinite;
+}
+.orb svg { position: relative; width: 132px; height: 132px; }
+@keyframes breathe { 0%,100% { transform: scale(1); opacity: .85 } 50% { transform: scale(1.1); opacity: 1 } }
+@keyframes spinslow { to { transform: rotate(360deg) } }
+.orb .rings { position: absolute; inset: 0; animation: spinslow 22s linear infinite; }
+
+/* ---------- 17. Promo card (light mockup) ---------- */
+.promo {
+  position: relative;
+  overflow: hidden;
+  padding: 22px;
+  border-radius: var(--r-xl);
+  border: 1px solid var(--border);
+  background: linear-gradient(160deg, var(--primary-soft), transparent 70%), var(--card);
+  box-shadow: var(--shadow);
+}
+.promo h3 { font-size: 20px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+.promo p { font-size: 12.5px; color: var(--text-2); margin-top: 6px; }
+.promo .promo-art {
+  height: 96px; margin-bottom: 16px;
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(90px 60px at 30% 40%, var(--primary-soft), transparent 70%),
+    radial-gradient(90px 60px at 75% 60%, var(--purple-soft), transparent 70%),
+    var(--card-inset);
+}
+.promo .btn { margin-top: 14px; }
+
+/* ---------- 18. Misc ---------- */
+.sep { height: 1px; background: var(--border); margin: 16px 0; }
+.muted { color: var(--text-2); }
+.faint { color: var(--text-3); }
+.mono { font-family: var(--font-mono); }
+.right { margin-left: auto; }
+.row { display: flex; align-items: center; gap: 10px; }
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.stack { display: grid; gap: 12px; }
+.wrap { display: flex; flex-wrap: wrap; gap: 10px; }
+.tfoot {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 16px; margin-top: 4px;
+  border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--text-3);
+}
+.pager { display: flex; gap: 5px; }
+.pager button {
+  min-width: 30px; height: 30px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 9px;
+  background: transparent; color: var(--text-2); font-size: 12px;
+}
+.pager button.active { background: var(--primary); color: #fff; border-color: transparent; }
+.pager button:hover:not(.active) { background: var(--hover); color: var(--text); }
+
+.notice {
+  display: flex; align-items: center; gap: 11px;
+  padding: 13px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--card-inset);
+  font-size: 12.5px; color: var(--text-2);
+}
+.notice .ic { color: var(--green); }
+
+/* ---------- 19. Responsive ---------- */
+@media (max-width: 1280px) {
+  .g-main { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+  .g-main > :nth-child(3) { grid-column: span 2; }
+}
+@media (max-width: 1280px) {
+  .g-qa { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); }
+}
+@media (max-width: 1080px) {
+  .g-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .g-3, .g-side, .g-main, .g-qa { grid-template-columns: minmax(0, 1fr); }
+  .g-main > :nth-child(3) { grid-column: auto; }
+  .span-2 { grid-column: auto; }
+}
+@media (max-width: 900px) {
+  .sidebar { transform: translateX(-100%); transition: transform .3s var(--ease); }
+  body.nav-open .sidebar { transform: none; }
+  .main, [data-theme="light"] .main { margin-left: 0; }
+  .menu-btn { display: grid !important; }
+  .topbar { padding: 14px 16px; flex-wrap: wrap; }
+  .search { max-width: none; order: 3; flex-basis: 100%; margin-left: 0; }
+  .content { padding: 18px 16px 32px; }
+  .g-2, .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .g-4, .g-2, .metrics { grid-template-columns: minmax(0, 1fr); }
+  .user-chip .who { display: none; }
+  .greeting h2 { font-size: 21px; }
+}
+.menu-btn { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+
+/* ---------- 20. Print ---------- */
+@media print {
+  .sidebar, .topbar { display: none; }
+  .main { margin: 0; }
+  .card { box-shadow: none; }
+}
+
+/* Avatar stack */
+.stack-avatars { display: flex; align-items: center; }
+.stack-avatars .avatar { border: 2px solid var(--card); margin-left: -8px; }
+.stack-avatars .avatar:first-child { margin-left: 0; }
+.stack-avatars .more {
+  margin-left: -8px;
+  display: grid; place-items: center;
+  width: 32px; height: 32px; border-radius: 99px;
+  border: 2px solid var(--card);
+  background: var(--card-inset-2); color: var(--text-2);
+  font-size: 11px; font-weight: 600;
+}
+
+</style>
+<script>
+/* Zoom Auto Admit AI — shared behaviour */
+(function () {
+  var KEY = 'zaa-theme';
+
+  function read() {
+    try { return localStorage.getItem(KEY); } catch (e) { return null; }
+  }
+  function write(v) {
+    try { localStorage.setItem(KEY, v); } catch (e) {}
+  }
+
+  function apply(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.querySelectorAll('[data-theme-toggle] use').forEach(function (u) {
+      u.setAttribute('href', theme === 'dark' ? '#i-light_mode' : '#i-dark_mode');
+    });
+    document.querySelectorAll('[data-theme-toggle]').forEach(function (b) {
+      b.setAttribute('title', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+      b.setAttribute('aria-label', b.getAttribute('title'));
+    });
+  }
+
+  // Run before paint to avoid a flash.
+  var saved = read();
+  if (!saved) {
+    saved = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  apply(saved);
+
+  document.addEventListener('DOMContentLoaded', function () {
+    apply(document.documentElement.getAttribute('data-theme'));
+
+    document.querySelectorAll('[data-theme-toggle]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        apply(next);
+        write(next);
+      });
+    });
+
+    var menu = document.querySelector('.menu-btn');
+    if (menu) {
+      menu.addEventListener('click', function () {
+        document.body.classList.toggle('nav-open');
+      });
+    }
+    document.addEventListener('click', function (e) {
+      if (!document.body.classList.contains('nav-open')) return;
+      if (e.target.closest('.sidebar') || e.target.closest('.menu-btn')) return;
+      document.body.classList.remove('nav-open');
+    });
+
+    // Copy-to-clipboard helpers (meeting IDs, keys)
+    document.querySelectorAll('[data-copy]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var text = el.getAttribute('data-copy');
+        if (navigator.clipboard) navigator.clipboard.writeText(text);
+        var use = el.querySelector('use');
+        if (!use) return;
+        var old = use.getAttribute('href');
+        use.setAttribute('href', '#i-check');
+        setTimeout(function () { use.setAttribute('href', old); }, 1400);
+      });
+    });
+
+    // Simple tab groups: [data-tabs] wrapper, .tab children
+    document.querySelectorAll('[data-tabs]').forEach(function (group) {
+      group.addEventListener('click', function (e) {
+        var t = e.target.closest('.tab');
+        if (!t) return;
+        group.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('active'); });
+        t.classList.add('active');
+        var panelName = t.getAttribute('data-panel');
+        if (!panelName) return;
+        document.querySelectorAll('[data-panel-for]').forEach(function (p) {
+          p.hidden = p.getAttribute('data-panel-for') !== panelName;
+        });
+      });
+    });
+
+    // Keyboard shortcut for search
+    document.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        var input = document.querySelector('.search input');
+        if (input) { e.preventDefault(); input.focus(); }
+      }
+    });
+
+    // Live clock for the duration counters
+    document.querySelectorAll('[data-timer]').forEach(function (el) {
+      var parts = el.textContent.trim().split(':').map(Number);
+      var secs = parts[0] * 3600 + parts[1] * 60 + parts[2];
+      setInterval(function () {
+        secs++;
+        var h = String(Math.floor(secs / 3600)).padStart(2, '0');
+        var m = String(Math.floor(secs / 60) % 60).padStart(2, '0');
+        var s = String(secs % 60).padStart(2, '0');
+        el.textContent = h + ':' + m + ':' + s;
+      }, 1000);
+    });
+  });
+})();
+
+</script>
+</head>
+<body>
+<script>
+/* Material Symbols sprite (Apache-2.0). Injected inline so icons work offline. */
+document.currentScript.insertAdjacentHTML('afterend', "<svg xmlns=\"http://www.w3.org/2000/svg\" style=\"display:none\" aria-hidden=\"true\"><symbol id=\"i-add\" viewBox=\"0 -960 960 960\"><path d=\"M450-450H200v-60h250v-250h60v250h250v60H510v250h-60v-250Z\"/></symbol><symbol id=\"i-api\" viewBox=\"0 -960 960 960\"><path d=\"M480-375 375-480l105-105 105 105-105 105Zm-85-294-83-83 168-168 168 168-83 83-85-85-85 85ZM208-312 40-480l168-168 83 83-85 85 85 85-83 83Zm544 0-83-83 85-85-85-85 83-83 168 168-168 168ZM480-40 312-208l83-83 85 85 85-85 83 83L480-40Z\"/></symbol><symbol id=\"i-arrow_forward\" viewBox=\"0 -960 960 960\"><path d=\"M686-450H160v-60h526L438-758l42-42 320 320-320 320-42-42 248-248Z\"/></symbol><symbol id=\"i-auto_fix_high\" viewBox=\"0 -960 960 960\"><path d=\"M341-656 215-781l43-43 126 126-43 42Zm149-90v-170h60v170h-60Zm291 530L655-341l43-43 126 126-43 42Zm-73-449-43-43 106-106 43 43-106 106Zm38 175v-60h170v60H746ZM212-85 85-212q-9-9-9-21t9-21l370-371q35-35 85-35t85 35q35 35 35 85t-35 85L254-85q-9 9-21 9t-21-9Zm300-342-21-21-21-21-21.5-21-21.5-21 43 42 42 42ZM233-148l279-279-85-84-278 278 84 85Z\"/></symbol><symbol id=\"i-bolt\" viewBox=\"0 -960 960 960\"><path d=\"m393-165 279-335H492l36-286-253 366h154l-36 255Zm-73 85 40-280H160l360-520h80l-40 320h240L400-80h-80Zm154-396Z\"/></symbol><symbol id=\"i-bug_report\" viewBox=\"0 -960 960 960\"><path d=\"M480-180q72 0 123-50.5T654-353v-167q0-72-51-122.5T480-693q-72 0-123 50.5T306-520v167q0 72 51 122.5T480-180Zm-80-140h160v-60H400v60Zm0-173h160v-60H400v60Zm80.5 57h-.5.5-.5.5-.5.5-.5.5Zm-.5 316q-65 0-121-31t-83-89H160v-60h92q-7-26-7-52.5V-406h-85v-60h85q0-29 .5-57.5T254-580h-94v-60h120q14-28 37-49t51-35l-77-76 40-40 94 94q28-10 56.5-10t56.5 10l94-94 40 40-76 76q28 14 49.5 35.5T683-640h117v60h-94q9 28 8.5 56.5T714-466h86v60h-86q0 27 .5 53.5T708-300h92v60H685q-26 59-82.5 89.5T480-120Z\"/></symbol><symbol id=\"i-calendar_month\" viewBox=\"0 -960 960 960\"><path d=\"M180-80q-24 0-42-18t-18-42v-620q0-24 18-42t42-18h65v-60h65v60h340v-60h65v60h65q24 0 42 18t18 42v620q0 24-18 42t-42 18H180Zm0-60h600v-430H180v430Zm0-490h600v-130H180v130Zm0 0v-130 130Zm300 230q-17 0-28.5-11.5T440-440q0-17 11.5-28.5T480-480q17 0 28.5 11.5T520-440q0 17-11.5 28.5T480-400Zm-188.5-11.5Q280-423 280-440t11.5-28.5Q303-480 320-480t28.5 11.5Q360-457 360-440t-11.5 28.5Q337-400 320-400t-28.5-11.5ZM640-400q-17 0-28.5-11.5T600-440q0-17 11.5-28.5T640-480q17 0 28.5 11.5T680-440q0 17-11.5 28.5T640-400ZM480-240q-17 0-28.5-11.5T440-280q0-17 11.5-28.5T480-320q17 0 28.5 11.5T520-280q0 17-11.5 28.5T480-240Zm-188.5-11.5Q280-263 280-280t11.5-28.5Q303-320 320-320t28.5 11.5Q360-297 360-280t-11.5 28.5Q337-240 320-240t-28.5-11.5ZM640-240q-17 0-28.5-11.5T600-280q0-17 11.5-28.5T640-320q17 0 28.5 11.5T680-280q0 17-11.5 28.5T640-240Z\"/></symbol><symbol id=\"i-cancel\" viewBox=\"0 -960 960 960\"><path d=\"m330-288 150-150 150 150 42-42-150-150 150-150-42-42-150 150-150-150-42 42 150 150-150 150 42 42ZM480-80q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-83 31.5-156t86-127Q252-817 325-848.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 82-31.5 155T763-197.5q-54 54.5-127 86T480-80Zm0-60q142 0 241-99.5T820-480q0-142-99-241t-241-99q-141 0-240.5 99T140-480q0 141 99.5 240.5T480-140Zm0-340Z\"/></symbol><symbol id=\"i-check\" viewBox=\"0 -960 960 960\"><path d=\"M378-246 154-470l43-43 181 181 384-384 43 43-427 427Z\"/></symbol><symbol id=\"i-check_circle\" viewBox=\"0 -960 960 960\"><path d=\"m421-298 283-283-46-45-237 237-120-120-45 45 165 166Zm59 218q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-83 31.5-156t86-127Q252-817 325-848.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 82-31.5 155T763-197.5q-54 54.5-127 86T480-80Zm0-60q142 0 241-99.5T820-480q0-142-99-241t-241-99q-141 0-240.5 99T140-480q0 141 99.5 240.5T480-140Zm0-340Z\"/></symbol><symbol id=\"i-chevron_right\" viewBox=\"0 -960 960 960\"><path d=\"M530-481 332-679l43-43 241 241-241 241-43-43 198-198Z\"/></symbol><symbol id=\"i-close\" viewBox=\"0 -960 960 960\"><path d=\"m249-207-42-42 231-231-231-231 42-42 231 231 231-231 42 42-231 231 231 231-42 42-231-231-231 231Z\"/></symbol><symbol id=\"i-content_copy\" viewBox=\"0 -960 960 960\"><path d=\"M300-200q-24 0-42-18t-18-42v-560q0-24 18-42t42-18h440q24 0 42 18t18 42v560q0 24-18 42t-42 18H300Zm0-60h440v-560H300v560ZM180-80q-24 0-42-18t-18-42v-620h60v620h500v60H180Zm120-180v-560 560Z\"/></symbol><symbol id=\"i-dark_mode\" viewBox=\"0 -960 960 960\"><path d=\"M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q8 0 17 .5t23 1.5q-36 32-56 79t-20 99q0 90 63 153t153 63q52 0 99-18.5t79-51.5q1 12 1.5 19.5t.5 14.5q0 150-105 255T480-120Zm0-60q109 0 190-67.5T771-406q-25 11-53.67 16.5Q688.67-384 660-384q-114.69 0-195.34-80.66Q384-545.31 384-660q0-24 5-51.5t18-62.5q-98 27-162.5 109.5T180-480q0 125 87.5 212.5T480-180Zm-4-297Z\"/></symbol><symbol id=\"i-delete\" viewBox=\"0 -960 960 960\"><path d=\"M261-120q-24.75 0-42.37-17.63Q201-155.25 201-180v-570h-41v-60h188v-30h264v30h188v60h-41v570q0 24-18 42t-42 18H261Zm438-630H261v570h438v-570ZM367-266h60v-399h-60v399Zm166 0h60v-399h-60v399ZM261-750v570-570Z\"/></symbol><symbol id=\"i-delete_sweep\" viewBox=\"0 -960 960 960\"><path d=\"M600-230v-60h145v60H600Zm0-368v-60h280v60H600Zm0 184v-60h235v60H600ZM125-675H80v-60h170v-45h135v45h170v60h-45v415q0 24-18 42t-42 18H185q-24 0-42-18t-18-42v-415Zm60 0v415h265v-415H185Zm0 0v415-415Z\"/></symbol><symbol id=\"i-description\" viewBox=\"0 -960 960 960\"><path d=\"M319-250h322v-60H319v60Zm0-170h322v-60H319v60ZM220-80q-24 0-42-18t-18-42v-680q0-24 18-42t42-18h361l219 219v521q0 24-18 42t-42 18H220Zm331-554v-186H220v680h520v-494H551ZM220-820v186-186 680-680Z\"/></symbol><symbol id=\"i-done_all\" viewBox=\"0 -960 960 960\"><path d=\"M294-242 70-466l43-43 181 181 43 43-43 43Zm170 0L240-466l43-43 181 181 384-384 43 43-427 427Zm0-170-43-43 257-257 43 43-257 257Z\"/></symbol><symbol id=\"i-download\" viewBox=\"0 -960 960 960\"><path d=\"M480-313 287-506l43-43 120 120v-371h60v371l120-120 43 43-193 193ZM220-160q-24 0-42-18t-18-42v-143h60v143h520v-143h60v143q0 24-18 42t-42 18H220Z\"/></symbol><symbol id=\"i-edit\" viewBox=\"0 -960 960 960\"><path d=\"M180-180h44l472-471-44-44-472 471v44Zm-60 60v-128l575-574q8-8 19-12.5t23-4.5q11 0 22 4.5t20 12.5l44 44q9 9 13 20t4 22q0 11-4.5 22.5T823-694L248-120H120Zm659-617-41-41 41 41Zm-105 64-22-22 44 44-22-22Z\"/></symbol><symbol id=\"i-edit_calendar\" viewBox=\"0 -960 960 960\"><path d=\"M180-80q-24 0-42-18t-18-42v-620q0-24 18-42t42-18h65v-60h65v60h340v-60h65v60h65q24 0 42 18t18 42v260h-60v-70H180v430h320v60H180Zm0-550h600v-130H180v130Zm0 0v-130 130ZM560-80v-123l221-220q9-9 20-13t22-4q12 0 23 4.5t20 13.5l37 37q9 9 13 20t4 22q0 11-4.5 22.5T902.09-300L683-80H560Zm300-263-37-37 37 37ZM620-140h38l121-122-18-19-19-18-122 121v38Zm141-141-19-18 37 37-18-19Z\"/></symbol><symbol id=\"i-error\" viewBox=\"0 -960 960 960\"><path d=\"M503.5-289.48q9.5-9.48 9.5-23.5t-9.48-23.52q-9.48-9.5-23.5-9.5t-23.52 9.48q-9.5 9.48-9.5 23.5t9.48 23.52q9.48 9.5 23.5 9.5t23.52-9.48ZM453-433h60v-253h-60v253Zm27.27 353q-82.74 0-155.5-31.5Q252-143 197.5-197.5t-86-127.34Q80-397.68 80-480.5t31.5-155.66Q143-709 197.5-763t127.34-85.5Q397.68-880 480.5-880t155.66 31.5Q709-817 763-763t85.5 127Q880-563 880-480.27q0 82.74-31.5 155.5Q817-252 763-197.68q-54 54.31-127 86Q563-80 480.27-80Zm.23-60Q622-140 721-239.5t99-241Q820-622 721.19-721T480-820q-141 0-240.5 98.81T140-480q0 141 99.5 240.5t241 99.5Zm-.5-340Z\"/></symbol><symbol id=\"i-event\" viewBox=\"0 -960 960 960\"><path d=\"M528-248.18q-28-28.19-28-69Q500-358 528.18-386q28.19-28 69-28Q638-414 666-385.82q28 28.19 28 69Q694-276 665.82-248q-28.19 28-69 28Q556-220 528-248.18ZM180-80q-24 0-42-18t-18-42v-620q0-24 18-42t42-18h65v-60h65v60h340v-60h65v60h65q24 0 42 18t18 42v620q0 24-18 42t-42 18H180Zm0-60h600v-430H180v430Zm0-490h600v-130H180v130Zm0 0v-130 130Z\"/></symbol><symbol id=\"i-event_available\" viewBox=\"0 -960 960 960\"><path d=\"M433-228 295-365l42-42 96 94 184-184 42 43-226 226ZM180-80q-24 0-42-18t-18-42v-620q0-24 18-42t42-18h65v-60h65v60h340v-60h65v60h65q24 0 42 18t18 42v620q0 24-18 42t-42 18H180Zm0-60h600v-430H180v430Zm0-490h600v-130H180v130Zm0 0v-130 130Z\"/></symbol><symbol id=\"i-expand_more\" viewBox=\"0 -960 960 960\"><path d=\"M480-344 240-584l43-43 197 197 197-197 43 43-240 240Z\"/></symbol><symbol id=\"i-fact_check\" viewBox=\"0 -960 960 960\"><path d=\"M132-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h696q24 0 42 18t18 42v600q0 24-18 42t-42 18H132Zm0-60h696v-600H132v600Zm68-100h200v-80H200v80Zm382-80 198-198-57-57-141 142-57-57-56 57 113 113Zm-382-80h200v-80H200v80Zm0-160h200v-80H200v80Zm-68 420v-600 600Z\"/></symbol><symbol id=\"i-filter_list\" viewBox=\"0 -960 960 960\"><path d=\"M400-240v-60h160v60H400ZM240-450v-60h480v60H240ZM120-660v-60h720v60H120Z\"/></symbol><symbol id=\"i-flag\" viewBox=\"0 -960 960 960\"><path d=\"M200-120v-680h343l19 86h238v370H544l-18.93-85H260v309h-60Zm300-452Zm95 168h145v-250H511l-19-86H260v251h316l19 85Z\"/></symbol><symbol id=\"i-folder\" viewBox=\"0 -960 960 960\"><path d=\"M140-160q-24 0-42-18.5T80-220v-520q0-23 18-41.5t42-18.5h281l60 60h339q23 0 41.5 18.5T880-680v460q0 23-18.5 41.5T820-160H140Zm0-60h680v-460H456l-60-60H140v520Zm0 0v-520 520Z\"/></symbol><symbol id=\"i-folder_open\" viewBox=\"0 -960 960 960\"><path d=\"M140-160q-23 0-41.5-18.5T80-220v-520q0-23 18.5-41.5T140-800h281l60 60h339q23 0 41.5 18.5T880-680H455l-60-60H140v520l102-400h698L833-206q-6 24-22 35t-41 11H140Zm63-60h572l84-340H287l-84 340Zm0 0 84-340-84 340Zm-63-460v-60 60Z\"/></symbol><symbol id=\"i-graph_5\" viewBox=\"0 -960 960 960\"><path d=\"M480.06-59Q433-59 400-91.96T367-172q0-39 23.5-69t59.5-40v-90q-14-4-26.5-10.5T400-399l-76 44q2 7 2.5 14.12.5 7.12.5 14.88 0 47.08-32.94 80.04-32.94 32.96-80 32.96T134-245.94q-33-32.94-33-80T133.96-406q32.96-33 80.04-33 23 0 44 8.5t36 23.5l76-44q-2-7-3-14t-1-14.93q0-7.93 1-15.2 1-7.26 3-13.87l-78-45q-15 15-36 23.5t-44 8.5q-47.08 0-80.04-32.94Q99-587.88 99-634.94T131.94-715q32.94-33 80-33T292-715.04q33 32.96 33 80.04 0 8-.5 15t-2.5 14l78 46q11-11 23.5-18t26.5-11v-90q-36-10-59.5-40T367-788q0-47.08 32.94-80.04 32.94-32.96 80-32.96T560-868.04q33 32.96 33 80.04 0 39-23.5 69T510-679v91q14 4 26.31 10.95Q548.63-570.11 559-560l77-44q-2-8-3-15.44-1-7.44-1-15.56 0-47.08 32.94-80.04 32.94-32.96 80-32.96T825-715.06q33 32.94 33 80T825.04-555q-32.96 33-80.04 33-23.37 0-43.19-8.5Q682-539 667-553l-78 45q2 7 2.5 13.5t.5 14.5q0 8-.5 14.5T589-452l77 45q15-15 35.5-23.5T745-439q47.08 0 80.04 32.94 32.96 32.94 32.96 80T825.06-246q-32.94 33-80 33T665-245.96q-33-32.96-33-80.04 0-7.91 1-15.16t3-13.84l-77-45q-10 10-22.5 17.5T510-371v90q36 10 59.5 40t23.5 69q0 47.08-32.94 80.04Q527.12-59 480.06-59Zm1.01-61q22.07 0 37-14.93t14.93-37q0-22.07-14.95-37.57T481-225q-22.95 0-38.48 15.5Q427-194 427-171.93t16 37Q459-120 481.07-120Zm-266-154q22.07 0 37-14.93t14.93-37q0-22.07-14.95-37.57T215-379q-22.95 0-38.48 15.5Q161-348 161-325.93t16 37Q193-274 215.07-274Zm531 0q22.07 0 37-14.93t14.93-37q0-22.07-14.95-37.57T746-379q-22.95 0-38.47 15.5Q692-348 692-325.93t16 37Q724-274 746.07-274Zm-265-154q22.07 0 37-14.93t14.93-37q0-22.07-14.95-37.57T481-533q-22.95 0-38.48 15.5Q427-502 427-479.93t16 37Q459-428 481.07-428Zm-268-155q22.07 0 37-14.93t14.93-37q0-22.07-14.95-37.57T213-688q-22.95 0-38.48 15.5Q159-657 159-634.93t16 37Q191-583 213.07-583Zm533 0q22.07 0 37-14.93t14.93-37q0-22.07-14.95-37.57T746-688q-22.95 0-38.47 15.5Q692-657 692-634.93t16 37Q724-583 746.07-583Zm-265-153q22.07 0 37-14.93t14.93-37q0-22.07-14.95-37.57T481-841q-22.95 0-38.48 15.5Q427-810 427-787.93t16 37Q459-736 481.07-736Z\"/></symbol><symbol id=\"i-group\" viewBox=\"0 -960 960 960\"><path d=\"M38-160v-94q0-35 18-63.5t50-42.5q73-32 131.5-46T358-420q62 0 120 14t131 46q32 14 50.5 42.5T678-254v94H38Zm700 0v-94q0-63-32-103.5T622-423q69 8 130 23.5t99 35.5q33 19 52 47t19 63v94H738ZM250-523q-42-42-42-108t42-108q42-42 108-42t108 42q42 42 42 108t-42 108q-42 42-108 42t-108-42Zm426 0q-42 42-108 42-11 0-24.5-1.5T519-488q24-25 36.5-61.5T568-631q0-45-12.5-79.5T519-774q11-3 24.5-5t24.5-2q66 0 108 42t42 108q0 66-42 108ZM98-220h520v-34q0-16-9.5-31T585-306q-72-32-121-43t-106-11q-57 0-106.5 11T130-306q-14 6-23 21t-9 31v34Zm324.5-346.5Q448-592 448-631t-25.5-64.5Q397-721 358-721t-64.5 25.5Q268-670 268-631t25.5 64.5Q319-541 358-541t64.5-25.5ZM358-220Zm0-411Z\"/></symbol><symbol id=\"i-groups\" viewBox=\"0 -960 960 960\"><path d=\"M0-240v-53q0-38.57 41.5-62.78Q83-380 150.38-380q12.16 0 23.39.5t22.23 2.15q-8 17.35-12 35.17-4 17.81-4 37.18v65H0Zm240 0v-65q0-32 17.5-58.5T307-410q32-20 76.5-30t96.5-10q53 0 97.5 10t76.5 30q32 20 49 46.5t17 58.5v65H240Zm540 0v-65q0-19.86-3.5-37.43T765-377.27q11-1.73 22.17-2.23 11.17-.5 22.83-.5 67.5 0 108.75 23.77T960-293v53H780Zm-480-60h360v-6q0-37-50.5-60.5T480-390q-79 0-129.5 23.5T300-305v5ZM149.57-410q-28.57 0-49.07-20.56Q80-451.13 80-480q0-29 20.56-49.5Q121.13-550 150-550q29 0 49.5 20.5t20.5 49.93q0 28.57-20.5 49.07T149.57-410Zm660 0q-28.57 0-49.07-20.56Q740-451.13 740-480q0-29 20.56-49.5Q781.13-550 810-550q29 0 49.5 20.5t20.5 49.93q0 28.57-20.5 49.07T809.57-410ZM480-480q-50 0-85-35t-35-85q0-51 35-85.5t85-34.5q51 0 85.5 34.5T600-600q0 50-34.5 85T480-480Zm.35-60Q506-540 523-557.35t17-43Q540-626 522.85-643t-42.5-17q-25.35 0-42.85 17.15t-17.5 42.5q0 25.35 17.35 42.85t43 17.5ZM480-300Zm0-300Z\"/></symbol><symbol id=\"i-help\" viewBox=\"0 -960 960 960\"><path d=\"M511-258q11-11 11-27t-11-27q-11-11-27-11t-27 11q-11 11-11 27t11 27q11 11 27 11t27-11Zm-62-135h59q0-26 6.5-47.5T555-490q31-26 44-51t13-55q0-53-34.5-85T486-713q-49 0-86.5 24.5T345-621l53 20q11-28 33-43.5t52-15.5q34 0 55 18.5t21 47.5q0 22-13 41.5T508-512q-30 26-44.5 51.5T449-393Zm31 313q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-83 31.5-156t86-127Q252-817 325-848.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 82-31.5 155T763-197.5q-54 54.5-127 86T480-80Zm0-60q142 0 241-99.5T820-480q0-142-99-241t-241-99q-141 0-240.5 99T140-480q0 141 99.5 240.5T480-140Zm0-340Z\"/></symbol><symbol id=\"i-hourglass_top\" viewBox=\"0 -960 960 960\"><path d=\"M308-140h344v-127q0-72-50-121.5T480-438q-72 0-122 49.5T308-267v127ZM160-80v-60h88v-127q0-71 40-129t106-84q-66-27-106-85t-40-129v-126h-88v-60h640v60h-88v126q0 71-40 129t-106 85q66 26 106 84t40 129v127h88v60H160Z\"/></symbol><symbol id=\"i-how_to_reg\" viewBox=\"0 -960 960 960\"><path d=\"M80-160v-94q0-34 17-62.5t51-43.5q72-32 132-46t120-14q29 0 61.5 3.5T528-404l-49 49q-20-2-39.5-3.5T400-360q-58 0-105.5 10.5T172-306q-17 8-24.5 23t-7.5 29v34h319l60 60H80Zm545 16L484-285l42-42 99 99 213-213 42 42-255 255ZM292-524q-42-42-42-108t42-108q42-42 108-42t108 42q42 42 42 108t-42 108q-42 42-108 42t-108-42Zm167 304Zm5.5-347.5Q490-593 490-632t-25.5-64.5Q439-722 400-722t-64.5 25.5Q310-671 310-632t25.5 64.5Q361-542 400-542t64.5-25.5ZM400-632Z\"/></symbol><symbol id=\"i-hub\" viewBox=\"0 -960 960 960\"><path d=\"M153-73q-33-33-33-81t33.25-81q33.25-33 80.75-33 14 0 24.5 2.5T280-258l85-106q-19-23-29-52.5t-5-61.5l-121-41q-15 25-39.5 39T114-466q-47.5 0-80.75-33.25T0-580q0-47.5 33.25-80.75T114-694q47.5 0 80.75 33.25T228-580v4l122 42q18-32 43.5-49t56.5-24v-129q-39-11-61.5-43T366-846q0-47.5 33-80.75T480-960q48 0 81 33.25T594-846q0 35-23 67t-61 43v129q31 7 57 24t44 49l121-42v-4q0-47.5 33.25-80.75T846-694q47.5 0 80.75 33T960-580q0 48-33.25 81T846-466q-32 0-57-14t-39-39l-121 41q5 32-4.5 61.5T595-364l85 106q11-5 21.5-7.5t24.06-2.5Q774-268 807-235t33 81q0 48-33 81t-81 33q-48 0-81-33.25T612-154q0-20 5.5-36t15.5-31l-85-106q-32.13 17-68.56 17Q443-310 411-327l-84 107q10 15 15.5 30.5T348-154q0 47.5-33 80.75T234-40q-48 0-81-33Zm-38.96-453q22.96 0 38.46-15.54 15.5-15.53 15.5-38.5 0-22.96-15.54-38.46-15.53-15.5-38.5-15.5Q91-634 75.5-618.46 60-602.93 60-579.96 60-557 75.54-541.5q15.53 15.5 38.5 15.5ZM272.5-115.54q15.5-15.53 15.5-38.5 0-22.96-15.54-38.46-15.53-15.5-38.5-15.5-22.96 0-38.46 15.54-15.5 15.53-15.5 38.5 0 22.96 15.54 38.46 15.53 15.5 38.5 15.5 22.96 0 38.46-15.54Zm246-692q15.5-15.53 15.5-38.5 0-22.96-15.54-38.46-15.53-15.5-38.5-15.5-22.96 0-38.46 15.54-15.5 15.53-15.5 38.5 0 22.96 15.54 38.46 15.53 15.5 38.5 15.5 22.96 0 38.46-15.54ZM480.5-370q37.5 0 63.5-26.5t26-64q0-37.5-26.1-63.5T480-550q-37 0-63.5 26.1T390-460q0 37 26.5 63.5t64 26.5Zm284 254.46q15.5-15.53 15.5-38.5 0-22.96-15.54-38.46-15.53-15.5-38.5-15.5-22.96 0-38.46 15.54-15.5 15.53-15.5 38.5 0 22.96 15.54 38.46 15.53 15.5 38.5 15.5 22.96 0 38.46-15.54Zm120-426q15.5-15.53 15.5-38.5 0-22.96-15.54-38.46-15.53-15.5-38.5-15.5-22.96 0-38.46 15.54-15.5 15.53-15.5 38.5 0 22.96 15.54 38.46 15.53 15.5 38.5 15.5 22.96 0 38.46-15.54ZM480-846ZM114-580Zm366 120Zm366-120ZM234-154Zm492 0Z\"/></symbol><symbol id=\"i-insights\" viewBox=\"0 -960 960 960\"><path d=\"M120-120v-76l60-60v136h-60Zm165 0v-236l60-60v296h-60Zm165 0v-296l60 61v235h-60Zm165 0v-235l60-60v295h-60Zm165 0v-396l60-60v456h-60ZM120-356v-85l280-278 160 160 280-281v85L560-474 400-634 120-356Z\"/></symbol><symbol id=\"i-join_inner\" viewBox=\"0 -960 960 960\"><path d=\"M320-200q-117 0-198.5-81.5T40-480q0-117 81.5-198.5T320-760q36 0 69.5 8.5T452-727q-13 10-24 21t-22 23q-20-8-41.5-12.5T320-700q-91 0-155.5 64T100-480q0 91 64.5 155.5T320-260q23 0 44.5-4.5T406-277q11 12 22 23t24 21q-29 16-62.5 24.5T320-200Zm320 0q-36 0-69.5-8.5T508-233q13-10 24-21t22-23q20 8 41.5 12.5T640-260q92 0 156-64.5T860-480q0-92-64-156t-156-64q-23 0-44.5 4.5T554-683q-11-12-22-23t-24-21q29-16 62.5-24.5T640-760q117 0 198.5 81.5T920-480q0 117-81.5 198.5T640-200Zm-160-50q-57-39-88.5-100T360-480q0-69 31.5-130T480-710q57 39 88.5 100T600-480q0 69-31.5 130T480-250Z\"/></symbol><symbol id=\"i-light_mode\" viewBox=\"0 -960 960 960\"><path d=\"M579-381q41-41 41-99t-41-99q-41-41-99-41t-99 41q-41 41-41 99t41 99q41 41 99 41t99-41Zm-240.5 42.5Q280-397 280-480t58.5-141.5Q397-680 480-680t141.5 58.5Q680-563 680-480t-58.5 141.5Q563-280 480-280t-141.5-58.5ZM200-450H40v-60h160v60Zm720 0H760v-60h160v60ZM450-760v-160h60v160h-60Zm0 720v-160h60v160h-60ZM262-658l-100-97 43-44 96 100-39 41Zm494 496-98-100 41-41 99 98-42 43Zm-99-537 98-99 44 42-99 98-43-41ZM162-205l99-98 42 42-98 99-43-43Zm318-275Z\"/></symbol><symbol id=\"i-link\" viewBox=\"0 -960 960 960\"><path d=\"M450-280H280q-83 0-141.5-58.5T80-480q0-83 58.5-141.5T280-680h170v60H280q-58.33 0-99.17 40.76-40.83 40.77-40.83 99Q140-422 180.83-381q40.84 41 99.17 41h170v60ZM325-450v-60h310v60H325Zm185 170v-60h170q58.33 0 99.17-40.76 40.83-40.77 40.83-99Q820-538 779.17-579q-40.84-41-99.17-41H510v-60h170q83 0 141.5 58.5T880-480q0 83-58.5 141.5T680-280H510Z\"/></symbol><symbol id=\"i-list_alt\" viewBox=\"0 -960 960 960\"><path d=\"M321-295q9-9 9-21t-9-21q-9-9-21-9t-21 9q-9 9-9 21t9 21q9 9 21 9t21-9Zm0-164q9-9 9-21t-9-21q-9-9-21-9t-21 9q-9 9-9 21t9 21q9 9 21 9t21-9Zm0-164q9-9 9-21t-9-21q-9-9-21-9t-21 9q-9 9-9 21t9 21q9 9 21 9t21-9Zm111 337h244v-60H432v60Zm0-164h244v-60H432v60Zm0-164h244v-60H432v60ZM180-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h600q24 0 42 18t18 42v600q0 24-18 42t-42 18H180Zm0-60h600v-600H180v600Zm0-600v600-600Z\"/></symbol><symbol id=\"i-lock\" viewBox=\"0 -960 960 960\"><path d=\"M220-80q-24.75 0-42.37-17.63Q160-115.25 160-140v-434q0-24.75 17.63-42.38Q195.25-634 220-634h70v-96q0-78.85 55.61-134.42Q401.21-920 480.11-920q78.89 0 134.39 55.58Q670-808.85 670-730v96h70q24.75 0 42.38 17.62Q800-598.75 800-574v434q0 24.75-17.62 42.37Q764.75-80 740-80H220Zm0-60h520v-434H220v434Zm314.5-162.03Q557-324.06 557-355q0-30-22.67-54.5t-54.5-24.5q-31.83 0-54.33 24.5t-22.5 55q0 30.5 22.67 52.5t54.5 22q31.83 0 54.33-22.03ZM350-634h260v-96q0-54.17-37.88-92.08-37.88-37.92-92-37.92T388-822.08q-38 37.91-38 92.08v96ZM220-140v-434 434Z\"/></symbol><symbol id=\"i-manage_accounts\" viewBox=\"0 -960 960 960\"><path d=\"M292-527q-42-42-42-108t42-108q42-42 108-42t108 42q42 42 42 108t-42 108q-42 42-108 42t-108-42ZM80-164v-94q0-35 17.5-63t50.5-43q72-32 133.5-46T400-424h23q-6 14-9 27.5t-5 32.5h-9q-58 0-113.5 12.5T172-310q-16 8-24 22.5t-8 29.5v34h269q5 18 12 32.5t17 27.5H80Zm587 44-10-66q-17-5-34.5-14.5T593-222l-55 12-25-42 47-44q-2-9-2-25t2-25l-47-44 25-42 55 12q12-12 29.5-21.5T657-456l10-66h54l10 66q17 5 34.5 14.5T795-420l55-12 25 42-47 44q2 9 2 25t-2 25l47 44-25 42-55-12q-12 12-29.5 21.5T731-186l-10 66h-54Zm85-143q22-22 22-58t-22-58q-22-22-58-22t-58 22q-22 22-22 58t22 58q22 22 58 22t58-22ZM464.5-570.5Q490-596 490-635t-25.5-64.5Q439-725 400-725t-64.5 25.5Q310-674 310-635t25.5 64.5Q361-545 400-545t64.5-25.5ZM400-635Zm9 411Z\"/></symbol><symbol id=\"i-meeting_room\" viewBox=\"0 -960 960 960\"><path d=\"M120-120v-60h92v-660h390v45h147v615h91v60H689v-615h-87v615H120Zm152-660v600-600Zm207.5 328.5Q491-463 491-480t-11.5-28.5Q468-520 451-520t-28.5 11.5Q411-497 411-480t11.5 28.5Q434-440 451-440t28.5-11.5ZM272-180h270v-600H272v600Z\"/></symbol><symbol id=\"i-memory\" viewBox=\"0 -960 960 960\"><path d=\"M377-377v-205h205v205H377Zm60-60h85v-85h-85v85Zm-77 317v-80H260q-24 0-42-18t-18-42v-100h-80v-60h80v-124h-80v-60h80v-100q0-24 18-42t42-18h100v-76h60v76h124v-76h60v76h100q24 0 42 18t18 42v100h76v60h-76v124h76v60h-76v100q0 24-18 42t-42 18H604v80h-60v-80H420v80h-60Zm344-140v-444H260v444h444ZM480-480Z\"/></symbol><symbol id=\"i-menu\" viewBox=\"0 -960 960 960\"><path d=\"M120-240v-60h720v60H120Zm0-210v-60h720v60H120Zm0-210v-60h720v60H120Z\"/></symbol><symbol id=\"i-more_horiz\" viewBox=\"0 -960 960 960\"><path d=\"M207.86-432Q188-432 174-446.14t-14-34Q160-500 174.14-514t34-14Q228-528 242-513.86t14 34Q256-460 241.86-446t-34 14Zm272 0Q460-432 446-446.14t-14-34Q432-500 446.14-514t34-14Q500-528 514-513.86t14 34Q528-460 513.86-446t-34 14Zm272 0Q732-432 718-446.14t-14-34Q704-500 718.14-514t34-14Q772-528 786-513.86t14 34Q800-460 785.86-446t-34 14Z\"/></symbol><symbol id=\"i-more_vert\" viewBox=\"0 -960 960 960\"><path d=\"M479.86-160Q460-160 446-174.14t-14-34Q432-228 446.14-242t34-14Q500-256 514-241.86t14 34Q528-188 513.86-174t-34 14Zm0-272Q460-432 446-446.14t-14-34Q432-500 446.14-514t34-14Q500-528 514-513.86t14 34Q528-460 513.86-446t-34 14Zm0-272Q460-704 446-718.14t-14-34Q432-772 446.14-786t34-14Q500-800 514-785.86t14 34Q528-732 513.86-718t-34 14Z\"/></symbol><symbol id=\"i-network_intelligence\" viewBox=\"0 -960 960 960\"><path d=\"M317-160q-8 0-15-4t-11-11l-84-150h71l42 80h90v-30h-72l-42-80H191l-63-110q-2-4-3-7.5t-1-7.5q0-2 4-15l63-110h105l42-80h72v-30h-90l-42 80h-71l84-150q4-7 11-11t15-4h118q13 0 21.5 8.5T465-770v175h-85l-30 30h115v130h-98l-39-80h-98l-30 30h108l40 80h117v215q0 13-8.5 21.5T435-160H317Zm208 0q-13 0-21.5-8.5T495-190v-215h117l40-80h108l-30-30h-98l-39 80h-98v-130h115l-30-30h-85v-175q0-13 8.5-21.5T525-800h118q8 0 15 4t11 11l84 150h-71l-42-80h-90v30h72l42 80h105l63 110q2 4 3 7.5t1 7.5q0 2-4 15l-63 110H664l-42 80h-72v30h90l42-80h71l-84 150q-4 7-11 11t-15 4H525Z\"/></symbol><symbol id=\"i-notifications\" viewBox=\"0 -960 960 960\"><path d=\"M160-200v-60h80v-304q0-84 49.5-150.5T420-798v-22q0-25 17.5-42.5T480-880q25 0 42.5 17.5T540-820v22q81 17 130.5 83.5T720-564v304h80v60H160Zm320-302Zm0 422q-33 0-56.5-23.5T400-160h160q0 33-23.5 56.5T480-80ZM300-260h360v-304q0-75-52.5-127.5T480-744q-75 0-127.5 52.5T300-564v304Z\"/></symbol><symbol id=\"i-pause\" viewBox=\"0 -960 960 960\"><path d=\"M525-200v-560h235v560H525Zm-325 0v-560h235v560H200Zm385-60h115v-440H585v440Zm-325 0h115v-440H260v440Zm0-440v440-440Zm325 0v440-440Z\"/></symbol><symbol id=\"i-pause_circle\" viewBox=\"0 -960 960 960\"><path d=\"M370-320h60v-320h-60v320Zm160 0h60v-320h-60v320ZM480-80q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-83 31.5-156t86-127Q252-817 325-848.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 82-31.5 155T763-197.5q-54 54.5-127 86T480-80Zm0-60q142 0 241-99.5T820-480q0-142-99-241t-241-99q-141 0-240.5 99T140-480q0 141 99.5 240.5T480-140Zm0-340Z\"/></symbol><symbol id=\"i-pending\" viewBox=\"0 -960 960 960\"><path d=\"M301.5-444.62q14.5-14.62 14.5-35.5 0-20.88-14.62-35.38-14.62-14.5-35.5-14.5-20.88 0-35.38 14.62-14.5 14.62-14.5 35.5 0 20.88 14.62 35.38 14.62 14.5 35.5 14.5 20.88 0 35.38-14.62Zm214 0q14.5-14.62 14.5-35.5 0-20.88-14.62-35.38-14.62-14.5-35.5-14.5-20.88 0-35.38 14.62-14.5 14.62-14.5 35.5 0 20.88 14.62 35.38 14.62 14.5 35.5 14.5 20.88 0 35.38-14.62Zm213 0q14.5-14.62 14.5-35.5 0-20.88-14.62-35.38-14.62-14.5-35.5-14.5-20.88 0-35.38 14.62-14.5 14.62-14.5 35.5 0 20.88 14.62 35.38 14.62 14.5 35.5 14.5 20.88 0 35.38-14.62ZM480.27-80q-82.74 0-155.5-31.5Q252-143 197.5-197.5t-86-127.34Q80-397.68 80-480.5t31.5-155.66Q143-709 197.5-763t127.34-85.5Q397.68-880 480.5-880t155.66 31.5Q709-817 763-763t85.5 127Q880-563 880-480.27q0 82.74-31.5 155.5Q817-252 763-197.68q-54 54.31-127 86Q563-80 480.27-80Zm.23-60Q622-140 721-239.5t99-241Q820-622 721.19-721T480-820q-141 0-240.5 98.81T140-480q0 141 99.5 240.5t241 99.5Zm-.5-340Z\"/></symbol><symbol id=\"i-pending_actions\" viewBox=\"0 -960 960 960\"><path d=\"M557.5-135.5Q502-191 502-269t55.5-133.5Q613-458 691-458t133.5 55.5Q880-347 880-269t-55.5 133.5Q769-80 691-80t-133.5-55.5ZM749.24-168 777-196l-75-75v-112h-39v126l86.24 89ZM180-120q-24.75 0-42.37-17.63Q120-155.25 120-180v-600q0-26 17-43t43-17h202q7-35 34.5-57.5T480-920q36 0 63.5 22.5T578-840h202q26 0 43 17t17 43v308q-15-9-29.52-15.48Q795.97-493.96 780-499v-281h-60v90H240v-90h-60v600h280q5 15 12 29.5t17 30.5H180Zm328.5-671.5Q520-803 520-820t-11.5-28.5Q497-860 480-860t-28.5 11.5Q440-837 440-820t11.5 28.5Q463-780 480-780t28.5-11.5Z\"/></symbol><symbol id=\"i-person_add\" viewBox=\"0 -960 960 960\"><path d=\"M730-400v-130H600v-60h130v-130h60v130h130v60H790v130h-60ZM252-523q-42-42-42-108t42-108q42-42 108-42t108 42q42 42 42 108t-42 108q-42 42-108 42t-108-42ZM40-160v-94q0-35 17.5-63.5T108-360q75-33 133.5-46.5T360-420q60 0 118 13.5T611-360q33 15 51 43t18 63v94H40Zm60-60h520v-34q0-16-9-30.5T587-306q-71-33-120-43.5T360-360q-58 0-107.5 10.5T132-306q-15 7-23.5 21.5T100-254v34Zm324.5-346.5Q450-592 450-631t-25.5-64.5Q399-721 360-721t-64.5 25.5Q270-670 270-631t25.5 64.5Q321-541 360-541t64.5-25.5ZM360-631Zm0 411Z\"/></symbol><symbol id=\"i-person_off\" viewBox=\"0 -960 960 960\"><path d=\"m813-61-99-99H160v-94q0-38 19-65t49-41q60-27 115.5-42T455-419L61-813l43-43 752 752-43 43ZM220-220h434L515-359q-8-1-17-1h-18q-57 0-111 11.5T252-306q-14 7-23 21.5t-9 30.5v34Zm511-140q31 14 50 41t19 65v8L657-389q18 6 36.5 13.5T731-360ZM550-496l-48-48q30-7 49-31t19-56q0-38-26-64t-64-26q-32 0-56 19t-31 49l-48-48q19-38 55.5-59t79.5-21q63 0 106.5 43.5T630-631q0 43-21 79.5T550-496Zm104 276H220h434ZM448-599Z\"/></symbol><symbol id=\"i-play_arrow\" viewBox=\"0 -960 960 960\"><path d=\"M320-203v-560l440 280-440 280Z\"/></symbol><symbol id=\"i-power_settings_new\" viewBox=\"0 -960 960 960\"><path d=\"M480-80q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-84 32-156.5T198-763l42 42q-47 46-73.5 108T140-480q0 141 99.5 240.5T480-140q142 0 241-99.5T820-480q0-71-26-133t-73-108l42-42q54 54 85.5 126.5T880-480q0 82-31.5 155T763-197.5q-54 54.5-127 86T480-80Zm-30-360v-440h60v440h-60Z\"/></symbol><symbol id=\"i-precision_manufacturing\" viewBox=\"0 -960 960 960\"><path d=\"M166-120v-94h127L187-576q-32-15-50-40.5T119-684q0-47 34.5-81.5T235-800q44 0 73 23.5t39 62.5h146v-59q0-12 9-21t21-9q11 0 18.5 8.5T549-775l75-72q8-8 20.5-10.5T670-854l158 76q9 5 12.5 14t-1.5 19q-5 10-14.5 12t-18.5-3l-155-75-98 99v52l98 103 155-76q10-5 19-2.5t14 12.5q5 10 1.5 20T827-588l-153 72q-14 7-27 6.5T624-520l-75-72q0 14-7.5 21t-18.5 7q-12 0-21-9t-9-21v-60H345q0 12-6.5 24.5T323-609l205 395h158v94H166Zm109-524q16-16 16-40t-16-40q-16-16-40-16t-40 16q-16 16-16 40t16 40q16 16 40 16t40-16Zm84 430h102L272-581q-3 2-10 4t-11 3l108 360Zm102 0Z\"/></symbol><symbol id=\"i-radar\" viewBox=\"0 -960 960 960\"><path d=\"M324-111.5Q251-143 197-197t-85.5-127Q80-397 80-480t31.5-156Q143-709 197-763t127-85.5Q397-880 480-880t156 31.5Q709-817 763-763t85.5 127Q880-563 880-480t-31.5 156Q817-251 763-197t-127 85.5Q563-80 480-80t-156-31.5ZM480-140q63 0 118.5-20.5T699-219l-72-71q-31 23-68 36.5T480-240q-100 0-170-70t-70-170q0-100 70-170t170-70q100 0 170 70t70 170q0 42-13.5 79T670-333l71 71q37-45 58-100t21-118q0-142-99-241t-241-99q-142 0-241 99t-99 241q0 142 99 241t241 99Zm0-160q29 0 55.5-8.5T584-333l-74-73q-7 3-14.5 4.5T480-400q-33 0-56.5-23.5T400-480q0-33 23.5-56.5T480-560q33 0 56.5 23.5T560-480q0 8-2 16t-5 16l74 72q16-22 24.5-48.5T660-480q0-75-52.5-127.5T480-660q-75 0-127.5 52.5T300-480q0 75 52.5 127.5T480-300Z\"/></symbol><symbol id=\"i-receipt_long\" viewBox=\"0 -960 960 960\"><path d=\"M222-80q-43.75 0-74.37-30.63Q117-141.25 117-185v-125h127v-570l59.8 60 59.8-60 59.8 60 59.8-60 59.8 60 60-60 60 60 60-60 60 60 60-60v695q0 43.75-30.62 74.37Q781.75-80 738-80H222Zm516-60q20 0 32.5-12.5T783-185v-595H304v470h389v125q0 20 12.5 32.5T738-140ZM357-622v-60h240v60H357Zm0 134v-60h240v60H357Zm333-134q-12 0-21-9t-9-21q0-12 9-21t21-9q12 0 21 9t9 21q0 12-9 21t-21 9Zm0 129q-12 0-21-9t-9-21q0-12 9-21t21-9q12 0 21 9t9 21q0 12-9 21t-21 9ZM221-140h412v-110H177v65q0 20 12.65 32.5T221-140Zm-44 0v-110 110Z\"/></symbol><symbol id=\"i-refresh\" viewBox=\"0 -960 960 960\"><path d=\"M480-160q-133 0-226.5-93.5T160-480q0-133 93.5-226.5T480-800q85 0 149 34.5T740-671v-129h60v254H546v-60h168q-38-60-97-97t-137-37q-109 0-184.5 75.5T220-480q0 109 75.5 184.5T480-220q83 0 152-47.5T728-393h62q-29 105-115 169t-195 64Z\"/></symbol><symbol id=\"i-report\" viewBox=\"0 -960 960 960\"><path d=\"M480-281q14 0 24.5-10.5T515-316q0-14-10.5-24.5T480-351q-14 0-24.5 10.5T445-316q0 14 10.5 24.5T480-281Zm-30-144h60v-263h-60v263ZM330-120 120-330v-300l210-210h300l210 210v300L630-120H330Zm25-60h250l175-175v-250L605-780H355L180-605v250l175 175Zm125-300Z\"/></symbol><symbol id=\"i-robot_2\" viewBox=\"0 -960 960 960\"><path d=\"M160-120v-220q0-24.75 17.63-42.38Q195.25-400 220-400h520q24.75 0 42.38 17.62Q800-364.75 800-340v220H160Zm200-320q-83 0-141.5-58.5T160-640q0-83 58.5-141.5T360-840h240q83 0 141.5 58.5T800-640q0 83-58.5 141.5T600-440H360ZM220-180h520v-160H220v160Zm140-320h240q58.33 0 99.17-40.76 40.83-40.77 40.83-99Q740-698 699.17-739q-40.84-41-99.17-41H360q-58.33 0-99.17 40.76-40.83 40.77-40.83 99Q220-582 260.83-541q40.84 41 99.17 41Zm21.5-118.68q8.5-8.67 8.5-21.5 0-12.82-8.68-21.32-8.67-8.5-21.5-8.5-12.82 0-21.32 8.68-8.5 8.67-8.5 21.5 0 12.82 8.68 21.32 8.67 8.5 21.5 8.5 12.82 0 21.32-8.68Zm240 0q8.5-8.67 8.5-21.5 0-12.82-8.68-21.32-8.67-8.5-21.5-8.5-12.82 0-21.32 8.68-8.5 8.67-8.5 21.5 0 12.82 8.68 21.32 8.67 8.5 21.5 8.5 12.82 0 21.32-8.68ZM480-180Zm0-460Z\"/></symbol><symbol id=\"i-rule\" viewBox=\"0 -960 960 960\"><path d=\"m576-160-42-42 111-111-111-111 42-42 111 111 111-111 42 42-111 111 111 111-42 42-111-111-111 111Zm83-374L517-676l42-42 100 99 179-179 42 43-221 221ZM80-290v-60h360v60H80Zm0-320v-60h360v60H80Z\"/></symbol><symbol id=\"i-save\" viewBox=\"0 -960 960 960\"><path d=\"M840-683v503q0 24-18 42t-42 18H180q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h503l157 157Zm-60 27L656-780H180v600h600v-476ZM553.5-275.26q30.5-30.27 30.5-73.5 0-43.24-30.26-73.74-30.27-30.5-73.5-30.5-43.24 0-73.74 30.26-30.5 30.27-30.5 73.5 0 43.24 30.26 73.74 30.27 30.5 73.5 30.5 43.24 0 73.74-30.26ZM233-584h358v-143H233v143Zm-53-72v476-600 124Z\"/></symbol><symbol id=\"i-schedule\" viewBox=\"0 -960 960 960\"><path d=\"m627-287 45-45-159-160v-201h-60v225l174 181ZM480-80q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-82 31.5-155t86-127.5Q252-817 325-848.5T480-880q82 0 155 31.5t127.5 86Q817-708 848.5-635T880-480q0 82-31.5 155t-86 127.5Q708-143 635-111.5T480-80Zm0-400Zm0 340q140 0 240-100t100-240q0-140-100-240T480-820q-140 0-240 100T140-480q0 140 100 240t240 100Z\"/></symbol><symbol id=\"i-school\" viewBox=\"0 -960 960 960\"><path d=\"M479-120 189-279v-240L40-600l439-240 441 240v317h-60v-282l-91 46v240L479-120Zm0-308 315-172-315-169-313 169 313 172Zm0 240 230-127v-168L479-360 249-485v170l230 127Zm1-240Zm-1 74Zm0 0Z\"/></symbol><symbol id=\"i-search\" viewBox=\"0 -960 960 960\"><path d=\"M796-121 533-384q-30 26-70 40.5T378-329q-108 0-183-75t-75-181q0-106 75-181t182-75q106 0 180.5 75T632-585q0 43-14 83t-42 75l264 262-44 44ZM377-389q81 0 138-57.5T572-585q0-81-57-138.5T377-781q-82 0-139.5 57.5T180-585q0 81 57.5 138.5T377-389Z\"/></symbol><symbol id=\"i-sensors\" viewBox=\"0 -960 960 960\"><path d=\"M197-197q-54-54-85.5-126.5T80-480q0-84 31.5-156.5T197-763l43 43q-46 46-73 107.5T140-480q0 71 26.5 132T240-240l-43 43Zm113-113q-32-32-51-75.5T240-480q0-51 19-94.5t51-75.5l43 43q-24 24-38.5 56.5T300-480q0 38 14 70t39 57l-43 43Zm113.5-113.5Q400-447 400-480t23.5-56.5Q447-560 480-560t56.5 23.5Q560-513 560-480t-23.5 56.5Q513-400 480-400t-56.5-23.5ZM650-310l-43-43q24-24 38.5-56.5T660-480q0-38-14-70t-39-57l43-43q32 32 51 75.5t19 94.5q0 50-19 93.5T650-310Zm113 113-43-43q46-46 73-107.5T820-480q0-71-26.5-132T720-720l43-43q54 55 85.5 127.5T880-480q0 83-31.5 155.5T763-197Z\"/></symbol><symbol id=\"i-settings\" viewBox=\"0 -960 960 960\"><path d=\"m388-80-20-126q-19-7-40-19t-37-25l-118 54-93-164 108-79q-2-9-2.5-20.5T185-480q0-9 .5-20.5T188-521L80-600l93-164 118 54q16-13 37-25t40-18l20-127h184l20 126q19 7 40.5 18.5T669-710l118-54 93 164-108 77q2 10 2.5 21.5t.5 21.5q0 10-.5 21t-2.5 21l108 78-93 164-118-54q-16 13-36.5 25.5T592-206L572-80H388Zm48-60h88l14-112q33-8 62.5-25t53.5-41l106 46 40-72-94-69q4-17 6.5-33.5T715-480q0-17-2-33.5t-7-33.5l94-69-40-72-106 46q-23-26-52-43.5T538-708l-14-112h-88l-14 112q-34 7-63.5 24T306-642l-106-46-40 72 94 69q-4 17-6.5 33.5T245-480q0 17 2.5 33.5T254-413l-94 69 40 72 106-46q24 24 53.5 41t62.5 25l14 112Zm44-210q54 0 92-38t38-92q0-54-38-92t-92-38q-54 0-92 38t-38 92q0 54 38 92t92 38Zm0-130Z\"/></symbol><symbol id=\"i-shield\" viewBox=\"0 -960 960 960\"><path d=\"M480-81q-140-35-230-162.5T160-523v-238l320-120 320 120v238q0 152-90 279.5T480-81Zm0-62q115-38 187.5-143.5T740-523v-196l-260-98-260 98v196q0 131 72.5 236.5T480-143Zm0-337Z\"/></symbol><symbol id=\"i-smart_toy\" viewBox=\"0 -960 960 960\"><path d=\"M147-376q-45 0-76-31.21T40-483q0-44.58 31.21-75.79Q102.42-590 147-590v-123q0-24 18-42t42-18h166q0-45 31-76t76-31q45 0 76 31.21T587-773h166q24 0 42 18t18 42v123q45 0 76 31.21T920-483q0 44.58-31.21 75.79Q857.58-376 813-376v196q0 24-18 42t-42 18H207q-24 0-42-18t-18-42v-196Zm224.5-111.74q11.5-11.73 11.5-28.5 0-16.76-11.74-28.26-11.73-11.5-28.5-11.5-16.76 0-28.26 11.74-11.5 11.73-11.5 28.5 0 16.76 11.74 28.26 11.73 11.5 28.5 11.5 16.76 0 28.26-11.74Zm274 0q11.5-11.73 11.5-28.5 0-16.76-11.74-28.26-11.73-11.5-28.5-11.5-16.76 0-28.26 11.74-11.5 11.73-11.5 28.5 0 16.76 11.74 28.26 11.73 11.5 28.5 11.5 16.76 0 28.26-11.74ZM312-285h336v-60H312v60ZM207-180h546v-533H207v533Zm273-267Z\"/></symbol><symbol id=\"i-space_dashboard\" viewBox=\"0 -960 960 960\"><path d=\"M180-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h600q24 0 42 18t18 42v600q0 24-18 42t-42 18H180Zm0-60h270v-600H180v600Zm330 0h270v-301H510v301Zm0-361h270v-239H510v239Z\"/></symbol><symbol id=\"i-storage\" viewBox=\"0 -960 960 960\"><path d=\"M120-160v-148h720v148H120Zm60-38h72v-72h-72v72Zm-60-454v-148h720v148H120Zm60-38h72v-72h-72v72Zm-60 284v-148h720v148H120Zm60-38h72v-72h-72v72Z\"/></symbol><symbol id=\"i-swap_vert\" viewBox=\"0 -960 960 960\"><path d=\"M323-450v-316L202-645l-42-42 193-193 193 193-42 42-121-121v316h-60ZM607-80 414-273l42-42 121 121v-316h60v316l121-121 42 42L607-80Z\"/></symbol><symbol id=\"i-sync\" viewBox=\"0 -960 960 960\"><path d=\"M167-160v-60h130l-15-12q-64-51-93-111t-29-134q0-106 62.5-190.5T387-784v62q-75 29-121 96.5T220-477q0 63 23.5 109.5T307-287l30 21v-124h60v230H167Zm407-15v-63q76-29 121-96.5T740-483q0-48-23.5-97.5T655-668l-29-26v124h-60v-230h230v60H665l15 14q60 56 90 120t30 123q0 106-62 191T574-175Z\"/></symbol><symbol id=\"i-task_alt\" viewBox=\"0 -960 960 960\"><path d=\"M480-80q-85 0-158-30.5T195-195q-54-54-84.5-127T80-480q0-84 30.5-157T195-764q54-54 127-85t158-31q75 0 140 24t117 66l-43 43q-44-35-98-54t-116-19q-145 0-242.5 97.5T140-480q0 145 97.5 242.5T480-140q145 0 242.5-97.5T820-480q0-30-4.5-58.5T802-594l46-46q16 37 24 77t8 83q0 85-31 158t-85 127q-54 54-127 84.5T480-80Zm-59-218L256-464l45-45 120 120 414-414 46 45-460 460Z\"/></symbol><symbol id=\"i-terminal\" viewBox=\"0 -960 960 960\"><path d=\"M140-160q-24 0-42-18t-18-42v-520q0-24 18-42t42-18h680q24 0 42 18t18 42v520q0 24-18 42t-42 18H140Zm0-60h680v-436H140v436Zm160-72-42-42 103-104-104-104 43-42 146 146-146 146Zm190 4v-60h220v60H490Z\"/></symbol><symbol id=\"i-timer\" viewBox=\"0 -960 960 960\"><path d=\"M360-860v-60h240v60H360Zm90 447h60v-230h-60v230ZM340.5-109.5Q275-138 226-187t-77.5-114.5Q120-367 120-441t28.5-139.5Q177-646 226-695t114.5-77.5Q406-801 480-801q67 0 126 22.5T711-716l51-51 42 42-51 51q36 40 61.5 97T840-441q0 74-28.5 139.5T734-187q-49 49-114.5 77.5T480-81q-74 0-139.5-28.5Zm352-119Q780-316 780-441t-87.5-212.5Q605-741 480-741t-212.5 87.5Q180-566 180-441t87.5 212.5Q355-141 480-141t212.5-87.5ZM480-440Z\"/></symbol><symbol id=\"i-today\" viewBox=\"0 -960 960 960\"><path d=\"M284-338.18q-28-28.19-28-69Q256-448 284.18-476q28.19-28 69-28Q394-504 422-475.82q28 28.19 28 69Q450-366 421.82-338q-28.19 28-69 28Q312-310 284-338.18ZM180-80q-24 0-42-18t-18-42v-620q0-24 18-42t42-18h65v-60h65v60h340v-60h65v60h65q24 0 42 18t18 42v620q0 24-18 42t-42 18H180Zm0-60h600v-430H180v430Zm0-490h600v-130H180v130Zm0 0v-130 130Z\"/></symbol><symbol id=\"i-toggle_on\" viewBox=\"0 -960 960 960\"><path d=\"M280-240q-100 0-170-70T40-480q0-100 70-170t170-70h400q100 0 170 70t70 170q0 100-70 170t-170 70H280Zm0-60h400q75 0 127.5-52.5T860-480q0-75-52.5-127.5T680-660H280q-75 0-127.5 52.5T100-480q0 75 52.5 127.5T280-300Zm472.5-108.5Q782-438 782-480t-29.5-71.5Q723-581 681-581t-71.5 29.5Q580-522 580-480t29.5 71.5Q639-379 681-379t71.5-29.5ZM480-480Z\"/></symbol><symbol id=\"i-trending_up\" viewBox=\"0 -960 960 960\"><path d=\"m123-240-43-43 292-291 167 167 241-241H653v-60h227v227h-59v-123L538-321 371-488 123-240Z\"/></symbol><symbol id=\"i-tune\" viewBox=\"0 -960 960 960\"><path d=\"M427-120v-225h60v83h353v60H487v82h-60Zm-307-82v-60h247v60H120Zm187-166v-82H120v-60h187v-84h60v226h-60Zm120-82v-60h413v60H427Zm166-165v-225h60v82h187v60H653v83h-60Zm-473-83v-60h413v60H120Z\"/></symbol><symbol id=\"i-unfold_more\" viewBox=\"0 -960 960 960\"><path d=\"M480-120 300-300l44-44 136 136 136-136 44 44-180 180ZM344-612l-44-44 180-180 180 180-44 44-136-136-136 136Z\"/></symbol><symbol id=\"i-upload_file\" viewBox=\"0 -960 960 960\"><path d=\"M452-202h60v-201l82 82 42-42-156-152-154 154 42 42 84-84v201ZM220-80q-24 0-42-18t-18-42v-680q0-24 18-42t42-18h361l219 219v521q0 24-18 42t-42 18H220Zm331-554v-186H220v680h520v-494H551ZM220-820v186-186 680-680Z\"/></symbol><symbol id=\"i-verified\" viewBox=\"0 -960 960 960\"><path d=\"m346-60-76-130-151-31 17-147-96-112 96-111-17-147 151-31 76-131 134 62 134-62 77 131 150 31-17 147 96 111-96 112 17 147-150 31-77 130-134-62-134 62Zm27-79 107-45 110 45 67-100 117-30-12-119 81-92-81-94 12-119-117-28-69-100-108 45-110-45-67 100-117 28 12 119-81 94 81 92-12 121 117 28 70 100Zm107-341Zm-43 133 227-225-45-41-182 180-95-99-46 45 141 140Z\"/></symbol><symbol id=\"i-videocam\" viewBox=\"0 -960 960 960\"><path d=\"M140-160q-24 0-42-18t-18-42v-520q0-24 18-42t42-18h520q24 0 42 18t18 42v215l160-160v410L720-435v215q0 24-18 42t-42 18H140Zm0-60h520v-520H140v520Zm0 0v-520 520Z\"/></symbol><symbol id=\"i-visibility\" viewBox=\"0 -960 960 960\"><path d=\"M600.5-379.5Q650-429 650-500t-49.5-120.5Q551-670 480-670t-120.5 49.5Q310-571 310-500t49.5 120.5Q409-330 480-330t120.5-49.5Zm-200-41Q368-453 368-500t32.5-79.5Q433-612 480-612t79.5 32.5Q592-547 592-500t-32.5 79.5Q527-388 480-388t-79.5-32.5ZM216-283Q98-366 40-500q58-134 176-217t264-83q146 0 264 83t176 217q-58 134-176 217t-264 83q-146 0-264-83Zm264-217Zm222.5 174.5Q804-391 857-500q-53-109-154.5-174.5T480-740q-121 0-222.5 65.5T102-500q54 109 155.5 174.5T480-260q121 0 222.5-65.5Z\"/></symbol><symbol id=\"i-warning\" viewBox=\"0 -960 960 960\"><path d=\"m40-120 440-760 440 760H40Zm104-60h672L480-760 144-180Zm361.5-65.68q8.5-8.67 8.5-21.5 0-12.82-8.68-21.32-8.67-8.5-21.5-8.5-12.82 0-21.32 8.68-8.5 8.67-8.5 21.5 0 12.82 8.68 21.32 8.67 8.5 21.5 8.5 12.82 0 21.32-8.68ZM454-348h60v-224h-60v224Zm26-122Z\"/></symbol><symbol id=\"i-wifi_tethering\" viewBox=\"0 -960 960 960\"><path d=\"M204-150q-57-55-90.5-129.5T80-440q0-83 31.5-156T197-723q54-54 127-85.5T480-840q83 0 156 31.5T763-723q54 54 85.5 127T880-440q0 86-33.5 160.5T756-150l-43-43q50-47 78.5-110T820-440q0-142-99-241t-241-99q-142 0-241 99t-99 241q0 74 28.5 137T247-193l-43 43Zm113-113q-35-33-56-78.5T240-440q0-100 70-170t170-70q100 0 170 70t70 170q0 53-21 98.5T643-263l-43-43q28-25 44-59t16-75q0-75-52.5-127.5T480-620q-75 0-127.5 52.5T300-440q0 41 16 75t44 59l-43 43Zm106.5-120.5Q400-407 400-440t23.5-56.5Q447-520 480-520t56.5 23.5Q560-473 560-440t-23.5 56.5Q513-360 480-360t-56.5-23.5Z\"/></symbol></svg>");
+
+</script>
+<div class="app">
+<aside class="sidebar">
+<div class="brand"><div class="brand-mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+<path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h7A2.5 2.5 0 0 1 15 8.5v7A2.5 2.5 0 0 1 12.5 18h-7A2.5 2.5 0 0 1 3 15.5v-7Z" fill="currentColor" opacity=".95"/>
+<path d="m16.5 10.4 3.2-2.2c.7-.5 1.6 0 1.6.8v6c0 .8-.9 1.3-1.6.8l-3.2-2.2v-3.2Z" fill="currentColor" opacity=".65"/>
+</svg></div><div><div class="brand-name">Zoom Auto Admit <em>AI</em></div><div class="brand-ver">v2.4.0 · Stable</div></div></div>
+<button class="btn-start" type="button"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-play_arrow"></use></svg>Start Automation</button>
+<div class="nav-group"><div class="nav-label">MAIN</div>
+<a class="nav-item" href="index.html"><svg class="ic" aria-hidden="true"><use href="#i-space_dashboard"></use></svg>Overview</a>
+<a class="nav-item" href="meetings.html"><svg class="ic" aria-hidden="true"><use href="#i-videocam"></use></svg>Meetings</a>
+<a class="nav-item" href="ai-engine.html"><svg class="ic" aria-hidden="true"><use href="#i-network_intelligence"></use></svg>AI Engine</a>
+</div>
+<div class="nav-group"><div class="nav-label">AUTOMATION</div>
+<a class="nav-item" href="schedules.html"><svg class="ic" aria-hidden="true"><use href="#i-calendar_month"></use></svg>Schedules</a>
+<a class="nav-item" href="waiting-room.html"><svg class="ic" aria-hidden="true"><use href="#i-meeting_room"></use></svg>Waiting Room</a>
+<a class="nav-item" href="ai-matching.html"><svg class="ic" aria-hidden="true"><use href="#i-join_inner"></use></svg>AI Matching</a>
+</div>
+<div class="nav-group"><div class="nav-label">RECORDS</div>
+<a class="nav-item" href="attendance.html"><svg class="ic" aria-hidden="true"><use href="#i-fact_check"></use></svg>Attendance</a>
+<a class="nav-item active" href="groups.html" aria-current="page"><svg class="ic" aria-hidden="true"><use href="#i-groups"></use></svg>Groups & Students</a>
+</div>
+<div class="nav-group"><div class="nav-label">SYSTEM</div>
+<a class="nav-item" href="accounts.html"><svg class="ic" aria-hidden="true"><use href="#i-manage_accounts"></use></svg>Accounts</a>
+<a class="nav-item" href="logs.html"><svg class="ic" aria-hidden="true"><use href="#i-terminal"></use></svg>Logs</a>
+<a class="nav-item" href="settings.html"><svg class="ic" aria-hidden="true"><use href="#i-settings"></use></svg>Settings</a>
+</div>
+<div class="side-foot"><div class="side-card"><span class="status-dots"><i></i><i></i><i></i></span><div><div class="t1">Connected</div><div class="t2">System is online</div></div><svg class="ic ico-xs right faint" aria-hidden="true"><use href="#i-bolt"></use></svg></div><div class="side-card"><span class="avatar">A</span><div><div class="t1">Admin</div><div class="t2">Super Admin</div></div><svg class="ic ico-xs right faint" aria-hidden="true"><use href="#i-unfold_more"></use></svg></div></div>
+</aside><main class="main">
+<header class="topbar">
+<button class="icon-btn menu-btn" type="button" aria-label="Open navigation"><svg class="ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
+<div>
+  <h1 class="page-title">Groups & Students</h1>
+  <p class="page-sub">Manage cohorts and the alias dictionary used for matching.</p>
+</div>
+<div class="search">
+  <svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>
+  <input type="search" placeholder="Search anything..." aria-label="Search">
+  <span class="kbd">⌘K</span>
+</div>
+<div class="top-actions">
+  <button class="icon-btn" data-theme-toggle type="button"><svg class="ic" aria-hidden="true"><use href="#i-light_mode"></use></svg></button>
+  <button class="icon-btn" type="button" aria-label="Sync now"><svg class="ic" aria-hidden="true"><use href="#i-sync"></use></svg></button>
+  <button class="icon-btn" type="button" aria-label="Help"><svg class="ic" aria-hidden="true"><use href="#i-help"></use></svg></button>
+  <button class="icon-btn" type="button" aria-label="Notifications"><svg class="ic" aria-hidden="true"><use href="#i-notifications"></use></svg><span class="dot"></span></button>
+  <div class="user-chip">
+    <span class="avatar">A</span>
+    <div class="who"><div class="t1">Admin</div><div class="t2">Super Admin</div></div>
+    <svg class="ic ico-xs faint" aria-hidden="true"><use href="#i-expand_more"></use></svg>
+  </div>
+</div>
+</header><div class="content">
+
+<section class="grid g-side">
+  <div class="stack">
+    <div class="card">
+      <div class="card-head">
+        <div><span class="card-title">CAI4_AIS4_S7</span><div class="card-sub">Last synced today at 08:45 · 27 students</div></div>
+        <div class="wrap">
+          <div class="search" style="max-width:210px;margin:0">
+            <svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>
+            <input type="search" placeholder="Search students" aria-label="Search students">
+          </div>
+          <button class="btn btn-primary btn-sm" type="button"><svg class="ic ico-xs" aria-hidden="true"><use href="#i-person_add"></use></svg>Add student</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th>Primary name</th><th>Known Zoom names</th><th>Match confidence</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody>
+      <tr>
+        <td><div class="cell-user"><span class="avatar sm">AR</span><span style="color:var(--text);font-weight:600">Alex Rivera</span></div></td>
+        <td>Alex R. · a.rivera</td>
+        <td><span class="pill g"><i></i>High</span></td>
+        <td><div class="row-actions">
+          <button class="icon-btn" type="button" aria-label="Edit"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-edit"></use></svg></button>
+          <button class="icon-btn" type="button" aria-label="Remove"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-delete"></use></svg></button>
+        </div></td>
+      </tr>
+      <tr>
+        <td><div class="cell-user"><span class="avatar sm">JC</span><span style="color:var(--text);font-weight:600">Jordan Chen</span></div></td>
+        <td>Jordan C · J.C. iPad</td>
+        <td><span class="pill o"><i></i>Medium</span></td>
+        <td><div class="row-actions">
+          <button class="icon-btn" type="button" aria-label="Edit"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-edit"></use></svg></button>
+          <button class="icon-btn" type="button" aria-label="Remove"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-delete"></use></svg></button>
+        </div></td>
+      </tr>
+      <tr>
+        <td><div class="cell-user"><span class="avatar sm">ST</span><span style="color:var(--text);font-weight:600">Sam Taylor</span></div></td>
+        <td>No aliases mapped</td>
+        <td><span class="pill r"><i></i>Low</span></td>
+        <td><div class="row-actions">
+          <button class="icon-btn" type="button" aria-label="Edit"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-edit"></use></svg></button>
+          <button class="icon-btn" type="button" aria-label="Remove"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-delete"></use></svg></button>
+        </div></td>
+      </tr>
+      <tr>
+        <td><div class="cell-user"><span class="avatar sm">MK</span><span style="color:var(--text);font-weight:600">Mia Kim</span></div></td>
+        <td>MiaK</td>
+        <td><span class="pill g"><i></i>High</span></td>
+        <td><div class="row-actions">
+          <button class="icon-btn" type="button" aria-label="Edit"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-edit"></use></svg></button>
+          <button class="icon-btn" type="button" aria-label="Remove"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-delete"></use></svg></button>
+        </div></td>
+      </tr>
+      <tr>
+        <td><div class="cell-user"><span class="avatar sm">MO</span><span style="color:var(--text);font-weight:600">Mohab Osama</span></div></td>
+        <td>Mo7ab · Mohab O.</td>
+        <td><span class="pill g"><i></i>High</span></td>
+        <td><div class="row-actions">
+          <button class="icon-btn" type="button" aria-label="Edit"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-edit"></use></svg></button>
+          <button class="icon-btn" type="button" aria-label="Remove"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-delete"></use></svg></button>
+        </div></td>
+      </tr></tbody>
+        </table>
+      </div>
+      <div class="tfoot"><span>Showing 5 of 27 students</span>
+        <div class="pager"><button type="button">‹</button><button class="active" type="button">1</button><button type="button">2</button><button type="button">›</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <div class="card-head"><span class="card-title">Groups</span><span class="pill n">4 total</span></div>
+      
+  <div class="lrow-card" style="border-color:var(--primary)">
+    <span class="lrow-ico"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-folder_open"></use></svg></span>
+    <div class="lrow-main"><div class="t1">CAI4_AIS4_S7</div><div class="t2">27 students enrolled</div></div>
+    <button class="icon-btn" type="button" aria-label="Group options"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-more_vert"></use></svg></button>
+  </div>
+  <div class="lrow-card">
+    <span class="lrow-ico"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-folder"></use></svg></span>
+    <div class="lrow-main"><div class="t1">MTH_101_Fall</div><div class="t2">142 students enrolled</div></div>
+    <button class="icon-btn" type="button" aria-label="Group options"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-more_vert"></use></svg></button>
+  </div>
+  <div class="lrow-card">
+    <span class="lrow-ico"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-folder"></use></svg></span>
+    <div class="lrow-main"><div class="t1">CS_304_LabA</div><div class="t2">18 students enrolled</div></div>
+    <button class="icon-btn" type="button" aria-label="Group options"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-more_vert"></use></svg></button>
+  </div>
+  <div class="lrow-card">
+    <span class="lrow-ico"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-folder"></use></svg></span>
+    <div class="lrow-main"><div class="t1">DEPI_AI_S7</div><div class="t2">34 students enrolled</div></div>
+    <button class="icon-btn" type="button" aria-label="Group options"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-more_vert"></use></svg></button>
+  </div>
+      <button class="btn btn-outline btn-block btn-sm" style="margin-top:12px" type="button"><svg class="ic ico-xs" aria-hidden="true"><use href="#i-add"></use></svg>New group</button>
+    </div>
+    <div class="card">
+      <div class="card-head"><span class="card-title">Roster tools</span></div>
+      <div class="stack" style="gap:10px">
+        <button class="qa" type="button"><span class="qa-ico"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-upload_file"></use></svg></span>
+          <span class="qa-txt"><b>Import from Excel</b><small>.xlsx or .csv</small></span>
+          <svg class="ic go" aria-hidden="true"><use href="#i-chevron_right"></use></svg></button>
+        <button class="qa" type="button"><span class="qa-ico"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-download"></use></svg></span>
+          <span class="qa-txt"><b>Export roster</b><small>Includes aliases</small></span>
+          <svg class="ic go" aria-hidden="true"><use href="#i-chevron_right"></use></svg></button>
+        <button class="qa" type="button"><span class="qa-ico"><svg class="ic ico-sm" aria-hidden="true"><use href="#i-auto_fix_high"></use></svg></span>
+          <span class="qa-txt"><b>Rebuild aliases</b><small>Learn from past sessions</small></span>
+          <svg class="ic go" aria-hidden="true"><use href="#i-chevron_right"></use></svg></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>
+</main>
+</div>
+</body>
+</html>

@@ -1,4 +1,5 @@
 using ZoomAutoAdmit.Core.Engines;
+using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.Core.Models;
 using ZoomAutoAdmit.Core.Sessions;
@@ -21,16 +22,19 @@ public sealed class WindowsDesktopMeetingLauncher : IMeetingEngineRuntime, IAsyn
 {
     private readonly IAutoAdmitEngine _autoAdmitEngine;
     private readonly IWindowsDesktopMeetingPlatform _platform;
+    private readonly IWindowsDesktopAutoAdmitPreparation _autoAdmitPreparation;
     private readonly object _monitorSync = new();
     private CancellationTokenSource? _monitorCancellation;
     private Task<int>? _monitorTask;
 
     public WindowsDesktopMeetingLauncher(
         IAutoAdmitEngine autoAdmitEngine,
-        IWindowsDesktopMeetingPlatform platform)
+        IWindowsDesktopMeetingPlatform platform,
+        IWindowsDesktopAutoAdmitPreparation? autoAdmitPreparation = null)
     {
         _autoAdmitEngine = autoAdmitEngine ?? throw new ArgumentNullException(nameof(autoAdmitEngine));
         _platform = platform ?? throw new ArgumentNullException(nameof(platform));
+        _autoAdmitPreparation = autoAdmitPreparation ?? NoOpWindowsDesktopAutoAdmitPreparation.Instance;
         if (!_autoAdmitEngine.Name.Equals("windows", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("The Desktop launcher requires the Windows Auto Admit engine.", nameof(autoAdmitEngine));
     }
@@ -55,22 +59,33 @@ public sealed class WindowsDesktopMeetingLauncher : IMeetingEngineRuntime, IAsyn
     public Task<MeetingOperationResult> DisableMicrophoneAsync(
         MeetingLaunchContext context,
         CancellationToken cancellationToken = default) =>
-        SafeAsync(() => _platform.DisableMicrophoneAsync(cancellationToken));
+        PrepareMediaControlAsync(
+            "microphone",
+            () => _platform.DisableMicrophoneAsync(cancellationToken));
 
     public Task<MeetingOperationResult> DisableCameraAsync(
         MeetingLaunchContext context,
         CancellationToken cancellationToken = default) =>
-        SafeAsync(() => _platform.DisableCameraAsync(cancellationToken));
+        PrepareMediaControlAsync(
+            "camera",
+            () => _platform.DisableCameraAsync(cancellationToken));
 
     public async Task<MeetingOperationResult> StartAutoAdmitAsync(
         MeetingLaunchContext context,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        Task<int> monitorTask;
+        CancellationToken monitorToken;
+
         lock (_monitorSync)
         {
             if (_monitorTask is { IsCompleted: false })
                 return MeetingOperationResult.Success();
-            var monitorCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            // Startup cancellation belongs to RunAsync only. Once monitoring has started, its
+            // lifetime is owned by StopAutoAdmitAsync/DisposeAsync so a completed UI command
+            // cannot silently stop admission for the live meeting.
+            var monitorCancellation = new CancellationTokenSource();
             _monitorCancellation = monitorCancellation;
             var options = new CliOptions
             {
@@ -81,17 +96,46 @@ public sealed class WindowsDesktopMeetingLauncher : IMeetingEngineRuntime, IAsyn
                 TimeoutExplicitlySet = false
             };
             _monitorTask = Task.Run(
-                () => _autoAdmitEngine.RunAsync(options, monitorCancellation.Token),
+                async () =>
+                {
+                    ConsoleLogger.Success("[AUTO_ADMIT] Windows monitor running");
+                    try
+                    {
+                        int exitCode = await _autoAdmitEngine.RunAsync(options, monitorCancellation.Token);
+                        if (!monitorCancellation.IsCancellationRequested)
+                            ConsoleLogger.Error($"[AUTO_ADMIT] Windows monitor stopped unexpectedly; exitCode={exitCode}");
+                        return exitCode;
+                    }
+                    // Queue observer work without extending the engine task's completion time.
+                    finally { _ = MeetingAdmissionScope.NotifyMonitorStoppedAsync(); }
+                },
                 CancellationToken.None);
+            monitorTask = _monitorTask;
+            monitorToken = monitorCancellation.Token;
         }
 
+        // Readiness work (opening the Participants panel once the meeting window exists) runs
+        // beside the monitor, never ahead of it: notifications are handled from the first scan.
+        _ = RunPreparationAsync(monitorToken);
+
         var completed = await Task.WhenAny(
-            _monitorTask,
+            monitorTask,
             Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken));
-        if (!ReferenceEquals(completed, _monitorTask)) return MeetingOperationResult.Success();
-        int exitCode = await _monitorTask;
+        if (!ReferenceEquals(completed, monitorTask)) return MeetingOperationResult.Success();
+        int exitCode = await monitorTask;
         return MeetingOperationResult.Failure(
             $"Windows Auto Admit stopped during startup with exit code {exitCode}.");
+    }
+
+    private async Task RunPreparationAsync(CancellationToken monitorCancellation)
+    {
+        try { await _autoAdmitPreparation.PrepareAsync(monitorCancellation); }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn(
+                $"[AUTO_ADMIT] Participants readiness step failed; notification monitoring continues: {ex.Message}");
+        }
     }
 
     public async Task<MeetingOperationResult> StopAutoAdmitAsync(
@@ -142,5 +186,28 @@ public sealed class WindowsDesktopMeetingLauncher : IMeetingEngineRuntime, IAsyn
         try { return await operation(); }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { return MeetingOperationResult.Failure(ex.Message); }
+    }
+
+    private static async Task<MeetingOperationResult> PrepareMediaControlAsync(
+        string controlLabel,
+        Func<Task<MeetingOperationResult>> operation)
+    {
+        var result = await SafeAsync(operation);
+        if (result.IsSuccess) return result;
+
+        // Zoom frequently hides the meeting toolbar from UI Automation while the controls
+        // are already off (minimized/detached Participants layouts are common examples).
+        // A missing accessibility element is therefore an unknown state, not a meeting
+        // launch failure. Keep real platform failures fatal, but never prevent the safety
+        // monitor from starting solely because Zoom did not expose this optional control.
+        if (result.ErrorMessage?.Contains("control was not found", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            ConsoleLogger.Warn(
+                $"[PREPARE] Zoom Desktop {controlLabel} control is not exposed; " +
+                "continuing so Auto Admit remains active.");
+            return MeetingOperationResult.Success();
+        }
+
+        return result;
     }
 }

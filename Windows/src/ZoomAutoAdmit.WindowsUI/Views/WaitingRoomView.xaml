@@ -1,0 +1,27 @@
+<UserControl x:Class="ZoomAutoAdmit.WindowsUI.Views.WaitingRoomView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:views="clr-namespace:ZoomAutoAdmit.WindowsUI.Views">
+<ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
+<views:AutoAdmitPanel Margin="0,0,0,16"/>
+<Border Style="{DynamicResource Card}" Margin="0,0,0,16"><StackPanel>
+<StackPanel Margin="0,0,0,14"><Border Style="{DynamicResource Badge}" Margin="0,0,0,10"><StackPanel Orientation="Horizontal"><Ellipse Width="6" Height="6" Fill="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/><TextBlock Text="MONITOR" Style="{DynamicResource BadgeText}"/></StackPanel></Border><TextBlock Text="Waiting room" FontSize="19" FontWeight="Bold"/><TextBlock Text="What the monitor is watching while a meeting runs." Style="{DynamicResource PageLead}" FontSize="12" Margin="0,5,0,0"/></StackPanel>
+<TextBlock Text="{Binding WaitingRoom.Status}" Style="{DynamicResource Muted}" Margin="0,8" TextWrapping="Wrap"/>
+<TextBlock Text="Refreshes every five seconds while a meeting runs." Style="{DynamicResource Muted}"/>
+<Button Content="View runtime logs →" Command="{Binding NavigateCommand}" CommandParameter="4" HorizontalAlignment="Left"/>
+</StackPanel></Border>
+<Border Style="{DynamicResource Card}" Margin="0,0,0,16"><StackPanel>
+<TextBlock Text="Active session monitors" Style="{DynamicResource CardTitle}"/>
+<TextBlock Text="{Binding Dashboard.StatusMessage}" Style="{DynamicResource Muted}" Margin="0,6"/>
+<DataGrid ItemsSource="{Binding Dashboard.Sessions}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="70" MaxHeight="140"><DataGrid.Columns>
+<DataGridTextColumn Header="Account" Binding="{Binding AccountName}" Width="*"/><DataGridTextColumn Header="Engine" Binding="{Binding EngineType}" Width="*"/><DataGridTextColumn Header="State" Binding="{Binding State}" Width="*"/><DataGridTextColumn Header="Session" Binding="{Binding SessionId}" Width="2*"/>
+</DataGrid.Columns></DataGrid></StackPanel></Border>
+<Border Style="{DynamicResource Card}" Margin="0,0,0,16"><StackPanel>
+<TextBlock Text="People let in" Style="{DynamicResource CardTitle}"/>
+<DataGrid ItemsSource="{Binding WaitingRoom.Activity}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="90" MaxHeight="190"><DataGrid.Columns>
+<DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat=HH:mm:ss}" Width="80"/><DataGridTextColumn Header="Account" Binding="{Binding AccountId}" Width="*"/><DataGridTextColumn Header="Engine" Binding="{Binding Engine}" Width="70"/><DataGridTextColumn Header="Event" Binding="{Binding Event}" Width="*"/><DataGridTextColumn Header="Session" Binding="{Binding SessionId}" Width="2*"/>
+</DataGrid.Columns></DataGrid></StackPanel></Border>
+<Border Style="{DynamicResource Card}"><StackPanel>
+<TextBlock Text="What the monitor saw" Style="{DynamicResource CardTitle}"/>
+<TextBlock Text="A running account of what the monitor noticed. The confirmed admissions are the list above." Style="{DynamicResource Muted}" Margin="0,8"/>
+<DataGrid ItemsSource="{Binding WaitingRoom.Diagnostics}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="100" MaxHeight="240"><DataGrid.Columns>
+<DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat=HH:mm:ss}" Width="80"/><DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="65"/><DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*"/>
+</DataGrid.Columns></DataGrid></StackPanel></Border>
+</StackPanel></ScrollViewer></UserControl>

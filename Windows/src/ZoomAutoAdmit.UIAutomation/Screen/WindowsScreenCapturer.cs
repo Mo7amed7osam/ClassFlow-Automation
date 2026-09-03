@@ -21,9 +21,16 @@ public static class WindowsScreenCapturer
     private const uint CAPTUREBLT = 0x40000000;
 
     private static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = (IntPtr)(-4);
+    private const int PROCESS_PER_MONITOR_DPI_AWARE = 2;
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetProcessDpiAwarenessContext(IntPtr dpiFlag);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetThreadDpiAwarenessContext();
+
+    [DllImport("user32.dll")]
+    private static extern int GetAwarenessFromDpiAwarenessContext(IntPtr dpiContext);
 
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int nIndex);
@@ -62,16 +69,42 @@ public static class WindowsScreenCapturer
 
     private static bool _dpiAwarenessSet;
 
+    /// <summary>
+    /// Whether the process really ended up per-monitor DPI aware.
+    /// </summary>
+    /// <remarks>
+    /// A process settles its DPI awareness once, before anything reads a DPI, so this call is a
+    /// request that usually fails: WPF has already made the UI app system-aware, and early GDI or
+    /// WinForms use can do the same to a console app. Reporting what the process actually got
+    /// matters, because system awareness on a mixed-scaling desktop makes Windows describe every
+    /// non-primary monitor scaled by the primary's factor - a real 1920x1080 panel is reported as
+    /// 4800x2700, CopyFromScreen reads far outside it, and the frame handed to OCR is mostly
+    /// blank. Callers that click must refuse to run rather than click blind; the manifest
+    /// (src/PerMonitorV2.manifest) is what actually keeps that from happening.
+    /// </remarks>
+    public static bool IsPerMonitorAware { get; private set; }
+
     public static void EnsureDpiAwareness()
     {
         if (_dpiAwarenessSet) return;
         try
         {
+            // The return value is intentionally not trusted as proof: false only means the
+            // awareness was already settled, which is fine when a manifest settled it correctly.
             SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            IsPerMonitorAware =
+                GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()) == PROCESS_PER_MONITOR_DPI_AWARE;
             _dpiAwarenessSet = true;
+            if (!IsPerMonitorAware)
+            {
+                ConsoleLogger.Error(
+                    "DPI_AWARENESS_NOT_PER_MONITOR: this process is not per-monitor DPI aware, so monitor " +
+                    "bounds and click coordinates cannot be trusted on a desktop with mixed display scaling.");
+            }
         }
         catch (Exception ex)
         {
+            IsPerMonitorAware = false;
             ConsoleLogger.Debug($"SetProcessDpiAwarenessContext: {ex.Message}");
         }
     }

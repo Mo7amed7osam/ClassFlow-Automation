@@ -16,6 +16,7 @@ public sealed class AccountsViewModel : ObservableObject
     private string _credentialReference = string.Empty;
     private string _zoomEmail = string.Empty;
     private string _defaultMeetingUrl = string.Empty;
+    private string _webProfileName = string.Empty;
     private EnginePreference _preferredEngine;
     private string _statusMessage = string.Empty;
 
@@ -42,6 +43,7 @@ public sealed class AccountsViewModel : ObservableObject
             CredentialReference = value.CredentialReference;
             ZoomEmail = value.ZoomEmail ?? string.Empty;
             DefaultMeetingUrl = value.DefaultMeetingUrl ?? string.Empty;
+            WebProfileName = value.WebProfileName ?? string.Empty;
             StatusMessage = string.IsNullOrEmpty(ZoomEmail)
                 ? "Legacy account: set Zoom Email explicitly and Save to verify the account mapping."
                 : $"Selected {value.AccountId}: {ZoomEmail}";
@@ -58,6 +60,7 @@ public sealed class AccountsViewModel : ObservableObject
     public string CredentialReference { get => _credentialReference; set => SetProperty(ref _credentialReference, value); }
     public string ZoomEmail { get => _zoomEmail; set => SetProperty(ref _zoomEmail, value); }
     public string DefaultMeetingUrl { get => _defaultMeetingUrl; set => SetProperty(ref _defaultMeetingUrl, value); }
+    public string WebProfileName { get => _webProfileName; set => SetProperty(ref _webProfileName, value); }
     public EnginePreference PreferredEngine { get => _preferredEngine; set => SetProperty(ref _preferredEngine, value); }
     public string StatusMessage { get => _statusMessage; private set => SetProperty(ref _statusMessage, value); }
     public ICommand NewCommand { get; }
@@ -91,7 +94,8 @@ public sealed class AccountsViewModel : ObservableObject
                 DisplayName.Trim(),
                 CredentialReference.Trim(),
                 engine) { ZoomEmail = email,
-                    DefaultMeetingUrl = WindowsMeetingAccountManager.NormalizeDefaultMeetingUrl(DefaultMeetingUrl) });
+                    DefaultMeetingUrl = WindowsMeetingAccountManager.NormalizeDefaultMeetingUrl(DefaultMeetingUrl),
+                    WebProfileName = WindowsMeetingAccountManager.NormalizeWebProfileName(WebProfileName) });
             await RefreshAsync();
             SelectedAccount = Items.First(account => account.AccountId.Equals(AccountId, StringComparison.OrdinalIgnoreCase));
             StatusMessage = "Account saved. Passwords are never stored here.";
@@ -142,6 +146,7 @@ public sealed class AccountsViewModel : ObservableObject
         CredentialReference = string.Empty;
         ZoomEmail = string.Empty;
         DefaultMeetingUrl = string.Empty;
+        WebProfileName = string.Empty;
         PreferredEngine = EnginePreference.Auto;
         StatusMessage = string.Empty;
     }

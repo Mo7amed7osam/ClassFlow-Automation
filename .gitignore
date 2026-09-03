@@ -20,3 +20,8 @@ TestResults/
 *.user_uploaded/
 .user_uploaded/
 
+
+# Debug captures written while the app runs; regenerated, never source.
+diagnostics/
+# A local copy kept while switching branches; not part of the project.
+_local-before-branch-restore/

@@ -74,12 +74,17 @@ public sealed class ViewModelTests
     public async Task MainInitializationContinuesWhenAccountServiceFails()
     {
         var service = new FakeWindowsUiService { ThrowOnGetAccounts = true };
-        using var viewModel = new MainViewModel(service);
-
-        var exception = await Assert.ThrowsAsync<AggregateException>(viewModel.InitializeAsync);
-
-        Assert.NotEmpty(exception.InnerExceptions);
-        Assert.Equal(1, service.GetActiveSessionsCalls);
+        var root = Path.Combine(Path.GetTempPath(), "main-ui-init-tests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var viewModel = new MainViewModel(service,
+                roster: new ZoomAutoAdmit.Roster.StudentRosterStore(Path.Combine(root, "students.json")),
+                groups: new ZoomAutoAdmit.Roster.GroupRosterStore(Path.Combine(root, "groups.json"), seedOnFirstUse: false));
+            var exception = await Assert.ThrowsAsync<AggregateException>(viewModel.InitializeAsync);
+            Assert.NotEmpty(exception.InnerExceptions);
+            Assert.Equal(1, service.GetActiveSessionsCalls);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
     }
 
     [Fact]
@@ -131,6 +136,19 @@ public sealed class ViewModelTests
         Assert.Equal("Meeting start requested.", viewModel.ExecutionStatus);
     }
 
+    [Fact]
+    public void EverySidebarPageIsReachable()
+    {
+        using var model = new MainViewModel(new FakeWindowsUiService());
+        foreach (var item in model.Navigation)
+        {
+            model.SelectedTabIndex = item.Index;
+            Assert.Equal(item.Index, model.SelectedTabIndex);      // A capped index would silently keep the old page.
+            Assert.Equal(item.Title, model.PageTitle);
+            Assert.True(item.Index < MainViewModel.TabCount, $"{item.Title} points past the last page.");
+        }
+    }
+
     private static WindowsMeetingAccountMetadata Account(string id) =>
         new(id, "Teacher One", $"wincred:ZoomAutoAdmit/{id}");
 
@@ -148,6 +166,54 @@ public sealed class ViewModelTests
         Assert.Equal("https://zoom.us/j/987654321", vm.MeetingUrl);
         vm.SelectedAccount = vm.Accounts[2];
         Assert.Empty(vm.MeetingUrl);
+    }
+
+    [Fact]
+    public async Task AddingAnAccountFromStartMeetingSavesItSelectsItAndNotifiesOtherPages()
+    {
+        var service = new FakeWindowsUiService();
+        service.Accounts.Add(Account("S7") with { ZoomEmail = "s7@example.com" });
+        var vm = new StartMeetingViewModel(service);
+        await vm.RefreshAccountsAsync();
+        int notified = 0;
+        vm.AccountsChanged += () => notified++;
+
+        vm.NewAccountId = " S9 ";
+        vm.NewZoomEmail = " S9@Example.com ";
+        vm.NewDefaultMeetingUrl = "https://zoom.us/j/987654321";
+        await vm.AddAccountAsync();
+
+        var saved = service.Accounts.Single(account => account.AccountId == "S9");
+        Assert.Equal("S9", saved.DisplayName); // Empty display name falls back to the ID, never to a blank picker entry.
+        Assert.Equal("s9@example.com", saved.ZoomEmail);
+        Assert.Equal("https://zoom.us/j/987654321", saved.DefaultMeetingUrl);
+        Assert.Empty(saved.CredentialReference);
+        Assert.Equal("S9", vm.SelectedAccount!.AccountId);
+        Assert.Equal("https://zoom.us/j/987654321", vm.MeetingUrl);
+        Assert.Equal(1, notified);
+        Assert.Contains("Saved S9", vm.AddAccountStatus);
+        Assert.Empty(vm.NewAccountId + vm.NewZoomEmail + vm.NewDefaultMeetingUrl + vm.NewDisplayName);
+    }
+
+    [Theory]
+    [InlineData("", "s9@example.com", "Account ID is required")]
+    [InlineData("S 9", "s9@example.com", "single word")]
+    [InlineData("S7", "s9@example.com", "already exists")]
+    [InlineData("S9", "", "Zoom Email is required")]
+    [InlineData("S9", "not-an-email", "complete Zoom email")]
+    public async Task IncompleteQuickAddNeverSavesAnAccount(string id, string email, string expected)
+    {
+        var service = new FakeWindowsUiService();
+        service.Accounts.Add(Account("S7") with { ZoomEmail = "s7@example.com" });
+        var vm = new StartMeetingViewModel(service);
+        await vm.RefreshAccountsAsync();
+
+        vm.NewAccountId = id;
+        vm.NewZoomEmail = email;
+        await vm.AddAccountAsync();
+
+        Assert.Single(service.Accounts);
+        Assert.Contains(expected, vm.AddAccountStatus, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -233,6 +299,7 @@ public sealed class ViewModelTests
         public int GetActiveSessionsCalls { get; private set; }
         public string? SwitchedAccountId { get; private set; }
         public event Action<UiActionStatus>? StatusChanged;
+        public event Action<LiveMeeting>? MeetingBecameLive;
         public UiActionStatus CurrentStatus { get; private set; } =
             new("Application startup", "Ready", string.Empty, false, DateTimeOffset.Now);
 

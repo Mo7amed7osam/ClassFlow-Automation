@@ -37,7 +37,8 @@ public sealed class ZoomBrowserLauncher : IZoomBrowserLauncher
                 new BrowserTypeLaunchPersistentContextOptions
                 {
                     Headless = plan.Headless,
-                    AcceptDownloads = false
+                    AcceptDownloads = false,
+                    Args = plan.Arguments.Count > 0 ? [.. plan.Arguments] : null
                 });
             cancellationToken.ThrowIfCancellationRequested();
             return new ZoomBrowserSession(playwright, context, plan);

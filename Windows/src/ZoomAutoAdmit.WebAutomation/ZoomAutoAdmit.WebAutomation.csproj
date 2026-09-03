@@ -14,6 +14,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ZoomAutoAdmit.Core\ZoomAutoAdmit.Core.csproj" />
+    <!-- Names are compared the same way the matcher compares them, so the dashboard and the
+         app never disagree about whether two spellings are the same student. -->
+    <ProjectReference Include="..\ZoomAutoAdmit.AttendanceMatching\ZoomAutoAdmit.AttendanceMatching.csproj" />
   </ItemGroup>
 
 </Project>

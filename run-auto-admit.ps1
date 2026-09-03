@@ -21,10 +21,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# 1. Verify .NET SDK is installed
-if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+# 1. Resolve a dotnet host that carries the SDK.
+#    Get-Command finds the runtime-only install first on this machine, so checking for `dotnet`
+#    on PATH passes and the build then fails with "No .NET SDKs were found".
+$finder = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Windows\Find-Dotnet.ps1"
+try {
+    $dotnet = & $finder
+}
+catch {
     Write-Host "================================================================================" -ForegroundColor Red
-    Write-Host " [ERROR] .NET SDK is not installed or not in PATH." -ForegroundColor Red
+    Write-Host " [ERROR] No .NET 8 SDK was found." -ForegroundColor Red
     Write-Host " Please install .NET 8.0 SDK from: https://dotnet.microsoft.com/download/dotnet/8.0" -ForegroundColor Yellow
     Write-Host "================================================================================" -ForegroundColor Red
     exit 1
@@ -64,5 +70,5 @@ if ($AppArgs -and $AppArgs.Length -gt 0) {
 }
 
 # 4. Execute application
-& dotnet run --project $projectFile -- $forwardArgs
+& $dotnet run --project $projectFile -- $forwardArgs
 exit $LASTEXITCODE

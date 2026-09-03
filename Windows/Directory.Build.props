@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <!-- Playwright only recognizes 'win' / 'win-x64' (and the Linux/macOS ids). Any other value,
+         including the previous 'windows', falls through to copying the node runtime for EVERY
+         platform (~556 MB) into every project output. 'win-x64' copies only the Windows one.
+         Directory.Build.targets switches the copy off entirely for class libraries. -->
+    <PlaywrightPlatform>win-x64</PlaywrightPlatform>
+  </PropertyGroup>
+</Project>

@@ -29,9 +29,17 @@ public sealed record UiActionStatus(
     bool IsBusy,
     DateTimeOffset UpdatedAt);
 
+/// <summary>A meeting that has just gone live, however it was started.</summary>
+public sealed record LiveMeeting(string AccountId, DateTimeOffset ScheduledStart);
+
 public interface IWindowsUiService
 {
     event Action<UiActionStatus>? StatusChanged;
+    /// <summary>
+    /// Raised once per meeting as it becomes active, for the button and the scheduler alike, so
+    /// anything that has to happen when a class starts is hooked up in one place.
+    /// </summary>
+    event Action<LiveMeeting>? MeetingBecameLive;
     UiActionStatus CurrentStatus { get; }
     Task<IReadOnlyList<WindowsMeetingAccountMetadata>> GetAccountsAsync(CancellationToken cancellationToken = default);
     Task SaveAccountAsync(WindowsMeetingAccountMetadata account, CancellationToken cancellationToken = default);

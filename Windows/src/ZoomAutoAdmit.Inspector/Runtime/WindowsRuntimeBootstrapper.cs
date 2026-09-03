@@ -1,4 +1,6 @@
 using ZoomAutoAdmit.Core.Formatting;
+using ZoomAutoAdmit.Attendance;
+using ZoomAutoAdmit.SessionRoles;
 using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.Core.Sessions;
 using ZoomAutoAdmit.Inspector.Engines;
@@ -19,7 +21,9 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
         string? profilesRoot = null,
         IWindowsCredentialReferenceResolver? credentialResolver = null,
         string? schedulesPath = null,
-        IWindowsTaskScheduler? taskScheduler = null)
+        IWindowsTaskScheduler? taskScheduler = null,
+        Func<MeetingLaunchContext, IAttendanceParticipantSource>? attendanceSources = null,
+        IAttendanceSnapshotStore? attendanceStore = null)
     {
         ProfileMapper = new WindowsAccountWebProfileMapper(profilesRoot);
         AccountManager = new WindowsMeetingAccountManager(
@@ -30,7 +34,8 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
 
         _desktopLauncher = new WindowsDesktopMeetingLauncher(
             new WindowsAutoAdmitEngine(),
-            new WindowsDesktopMeetingPlatform());
+            new WindowsDesktopMeetingPlatform(),
+            new WindowsDesktopAutoAdmitPreparation());
         var webEngine = new WebAutoAdmitEngine(
             profileManager: new ZoomProfileManager(profilesRoot));
         var webLifecycle = new WindowsWebAutoAdmitLifecycle(webEngine);
@@ -38,15 +43,25 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
             webLifecycle,
             new WindowsWebMeetingPreparation(webLifecycle));
         RuntimeFactory = new WindowsMeetingRuntimeFactory(_desktopLauncher, _webLauncher);
+        LifecycleEvents = new MeetingLifecycleEvents();
+        var sources = new RuntimeAttendanceSources(() => webEngine.ActiveMeetingPage);
+        Attendance = new AttendanceLifecycleBridge(LifecycleEvents, attendanceSources ?? sources.Create, attendanceStore);
         Orchestrator = new MeetingOrchestrator(
             AccountManager,
             SessionCoordinator,
-            RuntimeFactory);
+            RuntimeFactory,
+            LifecycleEvents);
         TaskScheduler = taskScheduler ?? new WindowsTaskSchedulerService();
         ScheduleStore = new WindowsMeetingScheduleStore(schedulesPath, TaskScheduler);
         Scheduler = new WindowsMeetingScheduler(
             ScheduleStore,
             new OrchestratedScheduledMeetingRunner(Orchestrator));
+        // Optional observer: grants co-host from the session role profiles. It owns no engine and
+        // never touches admission, attendance or scheduling behaviour.
+        SessionRoles = new SessionRoleBridge(
+            LifecycleEvents,
+            attendanceSources ?? (context => sources.Create(context, mayOpenPanel: false)),
+            new ScheduleNameSource(ScheduleStore));
         ConsoleLogger.Success("[BOOTSTRAP] Services initialized");
     }
 
@@ -55,6 +70,9 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
     public SessionCoordinator SessionCoordinator { get; }
     public WindowsMeetingRuntimeFactory RuntimeFactory { get; }
     public MeetingOrchestrator Orchestrator { get; }
+    public MeetingLifecycleEvents LifecycleEvents { get; }
+    public AttendanceLifecycleBridge Attendance { get; }
+    public SessionRoleBridge SessionRoles { get; }
     public IWindowsTaskScheduler TaskScheduler { get; }
     public WindowsMeetingScheduleStore ScheduleStore { get; }
     public WindowsMeetingScheduler Scheduler { get; }
@@ -62,6 +80,8 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await Scheduler.DisposeAsync();
+        await SessionRoles.DisposeAsync();
+        await Attendance.DisposeAsync();
         await _webLauncher.DisposeAsync();
         await _desktopLauncher.DisposeAsync();
     }

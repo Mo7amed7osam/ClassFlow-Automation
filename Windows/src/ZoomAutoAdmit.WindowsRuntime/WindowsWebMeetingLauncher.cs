@@ -1,4 +1,5 @@
 using ZoomAutoAdmit.Core.Meetings;
+using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Models;
 using ZoomAutoAdmit.Core.Sessions;
 using ZoomAutoAdmit.WebAutomation;
@@ -55,6 +56,7 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
     private readonly IWindowsWebAutoAdmitLifecycle _engine;
     private readonly IWindowsWebMeetingPreparation _preparation;
     private readonly object _sync = new();
+    private CancellationTokenSource? _sessionCancellation;
     private CancellationTokenSource? _monitorCancellation;
     private Task? _monitorTask;
     private CliOptions? _options;
@@ -79,12 +81,21 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
         MeetingLaunchContext context,
         CancellationToken cancellationToken = default)
     {
-        string expectedProfile = AccountWebProfile.ForAccount(context.Account.AccountId);
-        if (!string.Equals(context.WebProfileName, expectedProfile, StringComparison.OrdinalIgnoreCase))
+        // The account's own profile, or one of its per-session copies when the same account runs
+        // several Web meetings at once.
+        string accountProfile = string.IsNullOrWhiteSpace(context.Account.WebProfileName)
+            ? AccountWebProfile.ForAccount(context.Account.AccountId)
+            : context.Account.WebProfileName!.Trim();
+        string? allocated = context.WebProfileName;
+        bool belongsToAccount = string.Equals(allocated, accountProfile, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(AccountWebProfile.BaseProfileOf(allocated ?? string.Empty), accountProfile, StringComparison.OrdinalIgnoreCase);
+        if (!belongsToAccount)
             return MeetingOperationResult.Failure(
                 "The allocated Web profile does not match the meeting account.");
+        string expectedProfile = allocated!;
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _options = new CliOptions
             {
                 Command = "waiting-room-auto-admit",
@@ -93,9 +104,16 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
                 WebProfile = expectedProfile,
                 MeetingUrl = context.Session.MeetingUrl.AbsoluteUri,
                 TimeoutSeconds = 0,
-                TimeoutExplicitlySet = false
+                TimeoutExplicitlySet = false,
+                // Show the browser unless it was deliberately hidden, so a Web meeting is
+                // something you can watch instead of a window that never appears.
+                WebHeaded = AdmissionControl.ShowWebBrowser
             };
-            await _engine.StartAsync(_options, cancellationToken);
+            // Browser/session lifetime is explicitly owned by this launcher. Do not link it to
+            // the short-lived meeting-start command token after startup has been accepted.
+            _sessionCancellation?.Dispose();
+            _sessionCancellation = new CancellationTokenSource();
+            await _engine.StartAsync(_options, _sessionCancellation.Token);
             _joined = true;
             return MeetingOperationResult.Success();
         }
@@ -130,10 +148,23 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
         {
             if (_monitorTask is { IsCompleted: false })
                 return MeetingOperationResult.Success();
-            var monitorCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            // The monitor belongs to the meeting session, not to the short-lived startup call.
+            var monitorCancellation = new CancellationTokenSource();
             _monitorCancellation = monitorCancellation;
             _monitorTask = Task.Run(
-                () => _engine.MonitorAsync(_options, monitorCancellation.Token),
+                async () =>
+                {
+                    ConsoleLogger.Success("[AUTO_ADMIT] Web monitor running");
+                    try
+                    {
+                        await _engine.MonitorAsync(_options, monitorCancellation.Token);
+                        if (!monitorCancellation.IsCancellationRequested)
+                            ConsoleLogger.Error("[AUTO_ADMIT] Web monitor stopped unexpectedly");
+                    }
+                    // Preserve monitor startup/exit timing; the bridge owns and drains this work.
+                    finally { _ = MeetingAdmissionScope.NotifyMonitorStoppedAsync(); }
+                },
                 CancellationToken.None);
         }
         var completed = await Task.WhenAny(
@@ -179,7 +210,11 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
 
     public void Cancel()
     {
-        lock (_sync) _monitorCancellation?.Cancel();
+        lock (_sync)
+        {
+            _monitorCancellation?.Cancel();
+            _sessionCancellation?.Cancel();
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -190,6 +225,8 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
         {
             _monitorCancellation?.Dispose();
             _monitorCancellation = null;
+            _sessionCancellation?.Dispose();
+            _sessionCancellation = null;
             _monitorTask = null;
         }
     }

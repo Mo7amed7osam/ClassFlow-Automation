@@ -75,6 +75,35 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
     private WindowsMeetingScheduleStore Store() =>
         new(Path.Combine(_root, "Schedules", "schedules.json"));
 
+    [Fact]
+    public async Task ImportedExactDateRunsOnlyOnThatDateAndNeverRepeatsWeekly()
+    {
+        var now = DateTimeOffset.Now;
+        var date = DateOnly.FromDateTime(now.LocalDateTime);
+        var store = Store();
+        var schedule = Schedule(true, ScheduleDays.None, TimeOnly.MinValue) with { OccurrenceDate = date };
+        await store.UpsertAsync(schedule);
+        Assert.Equal(date, Assert.Single(await store.ListAsync()).OccurrenceDate);
+        var runner = new FakeScheduledMeetingRunner();
+        await using var scheduler = new WindowsMeetingScheduler(store, runner);
+        Assert.Equal(0, await scheduler.RunDueAsync(now.AddDays(-1)));
+        Assert.Equal(1, await scheduler.RunDueAsync(now));
+        Assert.Equal(0, await scheduler.RunDueAsync(now.AddSeconds(1)));
+        Assert.Equal(0, await scheduler.RunDueAsync(now.AddDays(7)));
+        Assert.Single(runner.Meetings);
+    }
+
+    [Fact]
+    public void OneTimeWindowsTaskUsesExactIsoDateAndNoWeeklyTrigger()
+    {
+        var schedule = Schedule(true, ScheduleDays.None, new TimeOnly(19, 0)) with { OccurrenceDate = new DateOnly(2026, 9, 14) };
+        var xml = WindowsTaskSchedulerService.BuildOneTimeTaskXml(schedule, @"C:\Some Folder\ZoomAutoAdmit.Inspector.exe");
+        Assert.Contains("2026-09-14T19:00:00", xml);
+        Assert.Contains("TimeTrigger", xml); Assert.DoesNotContain("CalendarTrigger", xml);
+        Assert.Contains("InteractiveToken", xml); Assert.Contains(schedule.Id.ToString(), xml);
+        Assert.DoesNotContain("WEEKLY", xml);
+    }
+
     private static MeetingSchedule Schedule(
         bool enabled,
         ScheduleDays days = ScheduleDays.Monday,

@@ -8,6 +8,9 @@ using ZoomAutoAdmit.WindowsUI.Services;
 
 namespace ZoomAutoAdmit.WindowsUI.ViewModels;
 
+/// <summary>One upcoming session as the panel shows it.</summary>
+public sealed record UpcomingMeeting(string Name, string When, string Opens, string Countdown);
+
 public sealed class SchedulesViewModel : ObservableObject, IDisposable
 {
     private readonly IWindowsUiService _service;
@@ -28,18 +31,67 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
     private bool _sunday;
     private string _statusMessage = string.Empty;
     private string _executionStatus = "Scheduler ready.";
+    private readonly IScheduleImportDialogs _dialogs;
+    private bool _idle = true, _enableImported = true;
+    private DateTime? _occurrenceDate;
+    private string _importStatus = "Upload an Excel timetable to preview exact dates. Nothing is saved until you confirm.";
+    private string _importGroup = "";
+    private WindowsMeetingAccountMetadata? _importAccount;
+    private string _importMeetingUrl = "";
+    private string _scheduleFilter = "All";
+    private string _nextMeetingSummary = "No upcoming enabled meeting.";
+    private string _nextMeetingCountdown = "—";
+    private string _todaySummary = "No sessions today.";
+    private readonly System.Threading.Timer? _clock;
 
-    public SchedulesViewModel(IWindowsUiService service)
+    public SchedulesViewModel(IWindowsUiService service, IScheduleImportDialogs? dialogs = null)
     {
         _service = service;
-        NewCommand = new RelayCommand(_ => ClearEditor());
+        _dialogs = dialogs ?? new ScheduleImportDialogs();
+        NewCommand = new RelayCommand(_ => { if (IsIdle) ClearEditor(); });
         SaveCommand = new AsyncRelayCommand(_ => SaveAsync());
         DeleteCommand = new AsyncRelayCommand(_ => DeleteAsync());
-        RefreshCommand = new AsyncRelayCommand(_ => RefreshAsync());
+        RefreshCommand = new AsyncRelayCommand(async _ => { if (IsIdle) await RefreshAsync(); });
+        UploadCommand = new AsyncRelayCommand(async _ => { if (IsIdle) { var path = _dialogs.PickWorkbook(); if (path != null) await PreviewImportAsync(path); } });
+        ConfirmImportCommand = new AsyncRelayCommand(_ => ConfirmImportAsync());
+        SelectAllImportCommand = new RelayCommand(_ => SetAllImportRows(true));
+        ClearImportSelectionCommand = new RelayCommand(_ => SetAllImportRows(false));
+        ToggleEnabledCommand = new AsyncRelayCommand(parameter => ToggleEnabledAsync(parameter as MeetingSchedule));
+        EnableAllShownCommand = new AsyncRelayCommand(_ => SetEnabledForShownAsync(true));
+        DisableAllShownCommand = new AsyncRelayCommand(_ => SetEnabledForShownAsync(false));
         _service.StatusChanged += OnStatusChanged;
+        // The countdown only ticks where there is a UI thread to post to; tests construct without one.
+        if (_context != null)
+            _clock = new System.Threading.Timer(state => _context.Post(posted => UpdateNextMeeting(), null), null,
+                TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     public ObservableCollection<MeetingSchedule> Items { get; } = [];
+    /// <summary>What the grid shows: Items narrowed by the day filter.</summary>
+    public ObservableCollection<MeetingSchedule> FilteredItems { get; } = [];
+    public IReadOnlyList<string> ScheduleFilters { get; } =
+        ["All", "Today", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    public string ScheduleFilter
+    {
+        get => _scheduleFilter;
+        set { if (SetProperty(ref _scheduleFilter, value)) ApplyFilter(); }
+    }
+    public string FilterSummary => $"Showing {FilteredItems.Count} of {Items.Count} schedules.";
+    public string NextMeetingSummary { get => _nextMeetingSummary; private set => SetProperty(ref _nextMeetingSummary, value); }
+    public string NextMeetingCountdown { get => _nextMeetingCountdown; private set => SetProperty(ref _nextMeetingCountdown, value); }
+    /// <summary>Today's enabled sessions and how many of them are still to come.</summary>
+    public string TodaySummary { get => _todaySummary; private set => SetProperty(ref _todaySummary, value); }
+
+    /// <summary>One line per upcoming session: its name, when it starts, and when it opens.</summary>
+    public ObservableCollection<UpcomingMeeting> Upcoming { get; } = [];
+    public bool HasUpcoming => Upcoming.Count > 0;
+    public string UpcomingCount => Upcoming.Count switch
+    {
+        0 => "Nothing scheduled ahead",
+        1 => "1 session ahead",
+        _ => $"{Upcoming.Count} sessions ahead"
+    };
+    public string LeadNote => $"Every meeting opens {ScheduleTiming.StartLead.TotalMinutes:0} minutes before its time.";
     public ObservableCollection<WindowsMeetingAccountMetadata> Accounts { get; } = [];
     public MeetingSchedule? SelectedSchedule
     {
@@ -53,6 +105,7 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
             SelectedAccount = Accounts.FirstOrDefault(account => account.AccountId.Equals(value.AccountId, StringComparison.OrdinalIgnoreCase));
             Time = value.Time.ToString("HH:mm", CultureInfo.InvariantCulture);
             Enabled = value.Enabled;
+            OccurrenceDate = value.OccurrenceDate?.ToDateTime(TimeOnly.MinValue);
             Monday = value.Days.HasFlag(ScheduleDays.Monday);
             Tuesday = value.Days.HasFlag(ScheduleDays.Tuesday);
             Wednesday = value.Days.HasFlag(ScheduleDays.Wednesday);
@@ -64,7 +117,7 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
     }
     public string Name { get => _name; set => SetProperty(ref _name, value); }
     public string MeetingUrl { get => _meetingUrl; set => SetProperty(ref _meetingUrl, value); }
-    public WindowsMeetingAccountMetadata? SelectedAccount { get => _selectedAccount; set => SetProperty(ref _selectedAccount, value); }
+    public WindowsMeetingAccountMetadata? SelectedAccount { get => _selectedAccount; set { if (SetProperty(ref _selectedAccount, value) && value != null && _editingId == Guid.Empty) MeetingUrl = value.DefaultMeetingUrl ?? ""; } }
     public string Time { get => _time; set => SetProperty(ref _time, value); }
     public bool Enabled { get => _enabled; set => SetProperty(ref _enabled, value); }
     public bool Monday { get => _monday; set => SetProperty(ref _monday, value); }
@@ -80,19 +133,58 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
     public ICommand SaveCommand { get; }
     public ICommand DeleteCommand { get; }
     public ICommand RefreshCommand { get; }
+    public ICommand UploadCommand { get; }
+    public ICommand ConfirmImportCommand { get; }
+    public ICommand ToggleEnabledCommand { get; }
+    public ICommand EnableAllShownCommand { get; }
+    public ICommand DisableAllShownCommand { get; }
+    public ICommand SelectAllImportCommand { get; }
+    public ICommand ClearImportSelectionCommand { get; }
+    public bool IsIdle { get => _idle; private set => SetProperty(ref _idle, value); }
+    public DateTime? OccurrenceDate { get => _occurrenceDate; set => SetProperty(ref _occurrenceDate, value); }
+    public bool EnableImported { get => _enableImported; set => SetProperty(ref _enableImported, value); }
+    public string ImportStatus { get => _importStatus; private set => SetProperty(ref _importStatus, value); }
+    public ObservableCollection<ScheduleImportSelection> ImportRows { get; } = [];
+    public string ImportSelectionSummary => ImportRows.Count == 0
+        ? "No timetable loaded yet."
+        : $"{ImportRows.Count(row => row.Include)} of {ImportRows.Count(row => row.CanImport)} importable dates selected — untick any date you do not want.";
+    public WindowsMeetingAccountMetadata? ImportAccount
+    {
+        get => _importAccount;
+        set { if (SetProperty(ref _importAccount, value)) ImportMeetingUrl = value?.DefaultMeetingUrl ?? ""; }
+    }
+    public string ImportMeetingUrl { get => _importMeetingUrl; set => SetProperty(ref _importMeetingUrl, value); }
 
     public async Task RefreshAsync()
     {
-        var accounts = await _service.GetAccountsAsync();
-        var schedules = await _service.GetSchedulesAsync();
-        Accounts.Clear();
-        foreach (var account in accounts) Accounts.Add(account);
-        Items.Clear();
-        foreach (var schedule in schedules) Items.Add(schedule);
+        try
+        {
+            var accounts = await _service.GetAccountsAsync();
+            var schedules = await _service.GetSchedulesAsync();
+            var accountId = SelectedAccount?.AccountId;
+            var draftUrl = MeetingUrl;
+            var importAccountId = ImportAccount?.AccountId;
+            var importUrl = ImportMeetingUrl;
+            Accounts.Clear();
+            foreach (var account in accounts) Accounts.Add(account);
+            SelectedAccount = Accounts.FirstOrDefault(a => a.AccountId == accountId);
+            MeetingUrl = draftUrl;
+            ImportAccount = Accounts.FirstOrDefault(a => a.AccountId == importAccountId);
+            ImportMeetingUrl = importUrl;
+            Items.Clear();
+            foreach (var schedule in schedules) Items.Add(schedule);
+            ApplyFilter();
+            UpdateNextMeeting();
+            StatusMessage = $"Refreshed — {Items.Count} schedules loaded; {FilteredItems.Count} shown.";
+        }
+        catch (Exception ex) { StatusMessage = "Refresh failed: " + ex.Message; }
     }
 
     public async Task SaveAsync()
     {
+        if (!IsIdle) return;
+        IsIdle = false;
+        StatusMessage = "Saving schedule…";
         try
         {
             if (SelectedAccount == null) throw new InvalidOperationException("Select an account.");
@@ -100,28 +192,269 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
                 throw new InvalidOperationException("Time must use HH:mm format.");
             ScheduleDays days = SelectedDays();
             var existing = Items.FirstOrDefault(item => item.Id == _editingId);
+            var id = _editingId == Guid.Empty ? Guid.NewGuid() : _editingId;
             await _service.SaveScheduleAsync(new MeetingSchedule(
-                _editingId == Guid.Empty ? Guid.NewGuid() : _editingId,
+                id,
                 Name.Trim(),
                 MeetingUrl.Trim(),
                 SelectedAccount.AccountId,
                 parsedTime,
                 days,
                 Enabled,
-                existing?.LastTriggeredDate));
+                existing?.LastTriggeredDate,
+                OccurrenceDate.HasValue ? DateOnly.FromDateTime(OccurrenceDate.Value) : null));
+            _editingId = id;
             await RefreshAsync();
-            StatusMessage = "Schedule saved.";
+            StatusMessage = "Done — schedule saved.";
         }
         catch (Exception ex) { StatusMessage = ex.Message; }
+        finally { IsIdle = true; }
     }
 
     public async Task DeleteAsync()
     {
-        if (_editingId == Guid.Empty) return;
-        bool deleted = await _service.DeleteScheduleAsync(_editingId);
-        await RefreshAsync();
-        ClearEditor();
-        StatusMessage = deleted ? "Schedule deleted." : "Schedule was not found.";
+        if (!IsIdle) return;
+        if (_editingId == Guid.Empty) { StatusMessage = "Select a saved schedule to delete."; return; }
+        IsIdle = false; StatusMessage = "Deleting schedule…";
+        try
+        {
+            bool deleted = await _service.DeleteScheduleAsync(_editingId);
+            await RefreshAsync();
+            ClearEditor();
+            StatusMessage = deleted ? "Done — schedule deleted." : "Schedule was not found.";
+        }
+        catch (Exception ex) { StatusMessage = "Delete failed: " + ex.Message; }
+        finally { IsIdle = true; }
+    }
+
+    public async Task PreviewImportAsync(string path)
+    {
+        if (!IsIdle) return;
+        IsIdle = false; ImportRows.Clear(); OnPropertyChanged(nameof(ImportSelectionSummary)); ImportStatus = "Reading workbook…";
+        try
+        {
+            var preview = await Task.Run(() => ScheduleWorkbookReader.Read(path));
+            _importGroup = preview.GroupCode;
+            // Every importable date starts ticked; excluded rows stay off and cannot be ticked.
+            foreach (var row in preview.Rows)
+            {
+                var selection = new ScheduleImportSelection(row);
+                selection.PropertyChanged += (_, _) => OnPropertyChanged(nameof(ImportSelectionSummary));
+                ImportRows.Add(selection);
+            }
+            OnPropertyChanged(nameof(ImportSelectionSummary));
+            ImportStatus = $"{preview.GroupCode}: {ImportRows.Count} rows; {ImportRows.Count(r => r.CanImport)} online (all selected); {ImportRows.Count(r => !r.CanImport)} excluded. Untick anything you do not want, choose the account and meeting URL, then confirm. Past dates will be skipped.";
+            // Exact ID only, never display-name or menu-position matching.
+            var mapped = Accounts.FirstOrDefault(a => a.AccountId.Equals(preview.GroupCode, StringComparison.OrdinalIgnoreCase));
+            if (mapped != null) ImportAccount = mapped;
+        }
+        catch (Exception ex) { ImportStatus = "Import preview failed: " + ex.Message; }
+        finally { IsIdle = true; }
+    }
+
+    public async Task ConfirmImportAsync(DateTime? localNow = null)
+    {
+        if (!IsIdle) return;
+        IsIdle = false;
+        int saved = 0, skipped = 0;
+        try
+        {
+            if (ImportAccount == null) throw new InvalidOperationException("Select the target account first.");
+            string accountId = ImportAccount.AccountId;
+            bool enableImported = EnableImported;
+            string url = ZoomAutoAdmit.WebAutomation.ZoomWebMeetingController.ValidateMeetingUrl(ImportMeetingUrl.Trim()).AbsoluteUri;
+            var now = localNow ?? DateTime.Now;
+            var existing = (await _service.GetSchedulesAsync()).ToList();
+            var candidates = ImportRows.Where(r => r.CanImport && r.Include).Select(r => r.Row).ToArray();
+            if (candidates.Length == 0) throw new InvalidOperationException("Select at least one date to import, or upload a valid timetable first.");
+            foreach (var row in candidates)
+            {
+                if (row.Date!.Value.ToDateTime(row.StartTime!.Value) <= now || existing.Any(s =>
+                    s.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase) && s.OccurrenceDate == row.Date && s.Time == row.StartTime))
+                { skipped++; continue; }
+                ImportStatus = $"Saving exact-date schedules… {saved} saved.";
+                var schedule = new MeetingSchedule(Guid.NewGuid(), $"{_importGroup} • {row.SessionNumber} • {row.Topic}", url,
+                    accountId, row.StartTime.Value, ScheduleDays.None, enableImported, OccurrenceDate: row.Date);
+                await _service.SaveScheduleAsync(schedule);
+                existing.Add(schedule); saved++;
+            }
+            await RefreshAsync();
+            ImportStatus = $"Done — {saved} of {candidates.Length} selected dates saved ({(EnableImported ? "enabled" : "disabled")}); {skipped} past/duplicate online dates skipped. Physical / No Session excluded. Times use this PC's local timezone.";
+        }
+        catch (Exception ex)
+        {
+            ImportStatus = $"Import stopped: {saved} confirmed saved. {ex.Message} Refresh before retrying; existing entries are not overwritten.";
+            await RefreshAsync();
+        }
+        finally { IsIdle = true; }
+    }
+
+    /// <summary>Ticking the Enabled box in the list saves that one schedule; nothing else about it changes.</summary>
+    public async Task ToggleEnabledAsync(MeetingSchedule? schedule)
+    {
+        if (schedule == null || !IsIdle) return;
+        IsIdle = false;
+        try
+        {
+            var updated = schedule with { Enabled = !schedule.Enabled };
+            await _service.SaveScheduleAsync(updated);
+            await RefreshAsync();
+            if (_editingId == updated.Id) Enabled = updated.Enabled;
+            StatusMessage = $"{updated.Name} — {(updated.Enabled ? "enabled" : "disabled")}.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Could not change Enabled: " + ex.Message;
+            await RefreshAsync();
+        }
+        finally { IsIdle = true; }
+    }
+
+    private void ApplyFilter()
+    {
+        var selected = SelectedSchedule;
+        FilteredItems.Clear();
+        foreach (var schedule in Items.Where(MatchesFilter)) FilteredItems.Add(schedule);
+        OnPropertyChanged(nameof(FilterSummary));
+        if (selected != null && !FilteredItems.Contains(selected)) SelectedSchedule = null;
+    }
+
+    private bool MatchesFilter(MeetingSchedule schedule)
+    {
+        if (ScheduleFilter == "All") return true;
+        if (ScheduleFilter == "Today") return OccursOn(schedule, DateOnly.FromDateTime(DateTime.Now));
+        if (!Enum.TryParse<DayOfWeek>(ScheduleFilter, out var day)) return true;
+        return schedule.OccurrenceDate.HasValue ? schedule.OccurrenceDate.Value.DayOfWeek == day : schedule.Days.Includes(day);
+    }
+
+    /// <summary>The next time this schedule would start, or null when it is disabled or already past.</summary>
+    public static DateTime? NextOccurrence(MeetingSchedule schedule, DateTime now)
+    {
+        if (!schedule.Enabled) return null;
+        if (schedule.OccurrenceDate is { } date)
+        {
+            var exact = date.ToDateTime(schedule.Time);
+            return exact > now ? exact : null;
+        }
+        if (schedule.Days == ScheduleDays.None) return null;
+        for (int offset = 0; offset < 8; offset++)
+        {
+            var day = now.Date.AddDays(offset);
+            if (!schedule.Days.Includes(day.DayOfWeek)) continue;
+            var when = day + schedule.Time.ToTimeSpan();
+            if (when > now) return when;
+        }
+        return null;
+    }
+
+    public void UpdateNextMeeting(DateTime? localNow = null)
+    {
+        var now = localNow ?? DateTime.Now;
+        UpdateToday(now);
+
+        // Every upcoming session is listed, not only the first: two meetings an hour apart are
+        // both worth seeing, and both open early.
+        var upcoming = Items
+            .Select(schedule => (Schedule: schedule, When: NextOccurrence(schedule, now)))
+            .Where(item => item.When.HasValue)
+            .Select(item => (item.Schedule, When: item.When!.Value))
+            .OrderBy(item => item.When)
+            .ToArray();
+
+        Upcoming.Clear();
+        foreach (var item in upcoming.Take(6))
+            Upcoming.Add(new UpcomingMeeting(
+                item.Schedule.Name,
+                DescribeMoment(item.When, now),
+                $"opens {item.When - ScheduleTiming.StartLead:HH:mm}",
+                DescribeCountdown(item.When - now)));
+        OnPropertyChanged(nameof(HasUpcoming));
+        OnPropertyChanged(nameof(UpcomingCount));
+
+        if (upcoming.Length == 0)
+        {
+            NextMeetingSummary = Items.Count == 0 ? "No schedules yet." : "No upcoming enabled meeting.";
+            NextMeetingCountdown = "—";
+            return;
+        }
+        var next = upcoming[0];
+        NextMeetingSummary = $"{next.Schedule.Name} — {DescribeMoment(next.When, now)}";
+        NextMeetingCountdown = DescribeCountdown(next.When - ScheduleTiming.StartLead - now);
+    }
+
+    /// <summary>Runs on this date? Exact-date schedules answer for their own date, weekly ones for their ticked days.</summary>
+    public static bool OccursOn(MeetingSchedule schedule, DateOnly date) =>
+        schedule.OccurrenceDate.HasValue ? schedule.OccurrenceDate.Value == date : schedule.Days.Includes(date.DayOfWeek);
+
+    private void UpdateToday(DateTime now)
+    {
+        var date = DateOnly.FromDateTime(now);
+        var sessions = Items.Where(schedule => schedule.Enabled && OccursOn(schedule, date))
+            .Select(schedule => now.Date + schedule.Time.ToTimeSpan())
+            .OrderBy(when => when)
+            .ToArray();
+        if (sessions.Length == 0) { TodaySummary = "No sessions today."; return; }
+        int left = sessions.Count(when => when > now);
+        string times = string.Join(" · ", sessions.Select(when => when.ToString("HH:mm", CultureInfo.InvariantCulture)));
+        string tail = left == 0 ? "all finished" : left == sessions.Length ? $"{left} to come" : $"{left} still to come";
+        TodaySummary = $"{sessions.Length} session{(sessions.Length == 1 ? "" : "s")} today: {times} — {tail}.";
+    }
+
+    /// <summary>Turns every schedule currently shown on (or off) in one pass; the day filter decides the scope.</summary>
+    public async Task SetEnabledForShownAsync(bool enabled)
+    {
+        if (!IsIdle) return;
+        var targets = FilteredItems.Where(schedule => schedule.Enabled != enabled).ToArray();
+        if (targets.Length == 0) { StatusMessage = enabled ? "Every shown schedule is already enabled." : "Every shown schedule is already disabled."; return; }
+        IsIdle = false;
+        int changed = 0;
+        try
+        {
+            foreach (var schedule in targets)
+            {
+                StatusMessage = $"{(enabled ? "Enabling" : "Disabling")} schedules… {changed}/{targets.Length}";
+                await _service.SaveScheduleAsync(schedule with { Enabled = enabled });
+                changed++;
+            }
+            await RefreshAsync();
+            StatusMessage = $"Done — {changed} schedule{(changed == 1 ? "" : "s")} {(enabled ? "enabled" : "disabled")}.";
+        }
+        catch (Exception ex)
+        {
+            await RefreshAsync();
+            StatusMessage = $"Stopped after {changed} of {targets.Length}: {ex.Message}";
+        }
+        finally { IsIdle = true; }
+    }
+
+    private static string DescribeMoment(DateTime when, DateTime now)
+    {
+        string time = when.ToString("HH:mm", CultureInfo.InvariantCulture);
+        int days = (when.Date - now.Date).Days;
+        return days switch
+        {
+            0 => $"today {time}",
+            1 => $"tomorrow {time}",
+            _ => $"{when:ddd dd MMM} {time}"
+        };
+    }
+
+    private static string DescribeCountdown(TimeSpan remaining)
+    {
+        if (remaining <= TimeSpan.Zero) return "starting now";
+        return remaining.Days > 0
+            ? $"in {remaining.Days}d {remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}"
+            : $"in {remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}";
+    }
+
+    private void SetAllImportRows(bool include)
+    {
+        if (!IsIdle) return;
+        foreach (var row in ImportRows) row.Include = include;
+        OnPropertyChanged(nameof(ImportSelectionSummary));
+        ImportStatus = include
+            ? $"All {ImportRows.Count(row => row.CanImport)} importable dates selected."
+            : "All dates unticked. Tick the ones you want before confirming.";
     }
 
     private ScheduleDays SelectedDays()
@@ -146,8 +479,9 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
         SelectedAccount = Accounts.FirstOrDefault();
         Time = "09:00";
         Enabled = true;
+        OccurrenceDate = null;
         Monday = Tuesday = Wednesday = Thursday = Friday = Saturday = Sunday = false;
-        StatusMessage = string.Empty;
+        StatusMessage = "New schedule — fill the details and Save.";
     }
 
     private void OnStatusChanged(UiActionStatus status)
@@ -160,5 +494,9 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
         else _context.Post(_ => ExecutionStatus = text, null);
     }
 
-    public void Dispose() => _service.StatusChanged -= OnStatusChanged;
+    public void Dispose()
+    {
+        _clock?.Dispose();
+        _service.StatusChanged -= OnStatusChanged;
+    }
 }

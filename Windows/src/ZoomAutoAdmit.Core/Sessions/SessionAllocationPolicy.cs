@@ -15,26 +15,37 @@ public sealed record SessionAllocationDecision(
 
 public sealed class SessionAllocationPolicy
 {
+    /// <summary>Simultaneous Web meetings allowed for one account, each with its own profile.</summary>
+    public const int MaxWebInstancesPerAccount = 8;
+
     public SessionAllocationDecision Decide(
         IReadOnlyCollection<ActiveSession> activeSessions,
         string accountWebProfileName)
     {
         bool desktopOccupied = activeSessions.Any(session =>
             session.OccupiesCapacity && session.EngineType == SessionEngineType.Desktop);
-        if (!desktopOccupied)
-            return SessionAllocationDecision.Use(SessionEngineType.Desktop);
+        return desktopOccupied
+            ? SessionAllocationDecision.Use(SessionEngineType.Web)
+            : SessionAllocationDecision.Use(SessionEngineType.Desktop);
+    }
 
-        bool webProfileLocked = activeSessions.Any(session =>
-            session.OccupiesCapacity &&
-            session.EngineType == SessionEngineType.Web &&
-            string.Equals(
-                session.WebProfileName,
-                accountWebProfileName,
-                StringComparison.OrdinalIgnoreCase));
-        return webProfileLocked
-            ? SessionAllocationDecision.Reject(
-                SessionAllocationError.WebProfileLocked,
-                $"Web profile '{accountWebProfileName}' is already locked by another active session.")
-            : SessionAllocationDecision.Use(SessionEngineType.Web);
+    /// <summary>
+    /// First Web profile name for this account that no active session holds. The same account can
+    /// run several Web meetings at once; each simply needs its own browser directory.
+    /// </summary>
+    public static string? NextFreeWebProfile(
+        IReadOnlyCollection<ActiveSession> activeSessions,
+        string baseProfileName)
+    {
+        for (int instance = 1; instance <= MaxWebInstancesPerAccount; instance++)
+        {
+            string candidate = AccountWebProfile.ForProfileInstance(baseProfileName, instance);
+            bool taken = activeSessions.Any(session =>
+                session.OccupiesCapacity &&
+                session.EngineType == SessionEngineType.Web &&
+                string.Equals(session.WebProfileName, candidate, StringComparison.OrdinalIgnoreCase));
+            if (!taken) return candidate;
+        }
+        return null;
     }
 }

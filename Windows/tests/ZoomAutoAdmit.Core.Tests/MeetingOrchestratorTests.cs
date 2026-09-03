@@ -20,7 +20,7 @@ public sealed class MeetingOrchestratorTests
         Assert.Equal(MeetingState.Monitoring, session.State);
         Assert.Equal(SessionEngineType.Desktop, session.Allocation!.EngineType);
         Assert.Equal(
-            ["switch-account", "launch", "verify-joined", "disable-mic", "disable-camera", "start-auto-admit"],
+            ["switch-account", "launch", "start-auto-admit", "verify-joined", "disable-mic", "disable-camera"],
             desktop.Calls);
         Assert.Empty(web.Calls);
         Assert.Equal(SessionStatus.Active,
@@ -48,7 +48,7 @@ public sealed class MeetingOrchestratorTests
         Assert.Equal("web-account", session.Allocation.WebProfileName);
         Assert.DoesNotContain("switch-account", web.Calls);
         Assert.Equal(
-            ["launch", "verify-joined", "disable-mic", "disable-camera", "start-auto-admit"],
+            ["launch", "start-auto-admit", "verify-joined", "disable-mic", "disable-camera"],
             web.Calls);
         Assert.Empty(desktop.Calls);
     }
@@ -74,18 +74,49 @@ public sealed class MeetingOrchestratorTests
         Assert.Equal(SessionEngineType.Web, session.Allocation!.EngineType);
         Assert.Empty(desktop.Calls);
         Assert.Equal(
-            ["launch", "verify-joined", "disable-mic", "disable-camera", "start-auto-admit"],
+            ["launch", "start-auto-admit", "verify-joined", "disable-mic", "disable-camera"],
             web.Calls);
     }
 
     [Fact]
-    public async Task AccountSwitchFailureStopsDesktopFlow()
+    public async Task AccountSwitchFailureMovesTheMeetingToWeb()
+    {
+        // Zoom Desktop not having this account signed in must not cancel the meeting: the Web
+        // engine hosts it from the account's own browser profile instead.
+        var desktop = new FakeRuntime(SessionEngineType.Desktop)
+        {
+            SwitchAccountResult = MeetingOperationResult.Failure("Account switch rejected.")
+        };
+        var web = new FakeRuntime(SessionEngineType.Web);
+        var coordinator = new SessionCoordinator();
+        var orchestrator = Orchestrator(
+            new FakeAccountManager(Account("desktop-account")),
+            coordinator,
+            desktop,
+            web);
+
+        var session = await orchestrator.RunAsync(Meeting("desktop-account"));
+
+        Assert.Equal(MeetingState.Monitoring, session.State);
+        Assert.Equal(SessionEngineType.Web, session.Allocation!.EngineType);
+        Assert.Equal("desktop-account", session.Allocation.WebProfileName);
+        Assert.Equal(["switch-account", "stop-auto-admit"], desktop.Calls);
+        Assert.Equal(
+            ["launch", "start-auto-admit", "verify-joined", "disable-mic", "disable-camera"],
+            web.Calls);
+    }
+
+    [Fact]
+    public async Task WebFallbackIsReportedWhenNoWebEngineCanBeReserved()
     {
         var desktop = new FakeRuntime(SessionEngineType.Desktop)
         {
             SwitchAccountResult = MeetingOperationResult.Failure("Account switch rejected.")
         };
         var coordinator = new SessionCoordinator();
+        // Every Web profile for this account is already taken, so no fallback is possible.
+        for (int i = 0; i < SessionAllocationPolicy.MaxWebInstancesPerAccount; i++)
+            Assert.True(coordinator.AllocateWeb("desktop-account").IsSuccess);
         var orchestrator = Orchestrator(
             new FakeAccountManager(Account("desktop-account")),
             coordinator,
@@ -95,9 +126,7 @@ public sealed class MeetingOrchestratorTests
         var session = await orchestrator.RunAsync(Meeting("desktop-account"));
 
         Assert.Equal(MeetingState.Failed, session.State);
-        Assert.Equal("Account switch rejected.", session.FailureReason);
-        Assert.Equal(["switch-account"], desktop.Calls);
-        Assert.Empty(coordinator.ActiveSessions);
+        Assert.Contains("simultaneous Web meetings", session.FailureReason!, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -105,7 +134,9 @@ public sealed class MeetingOrchestratorTests
     {
         var desktop = new FakeRuntime(SessionEngineType.Desktop)
         {
-            LaunchResult = MeetingOperationResult.Failure("Desktop meeting launch failed.")
+            LaunchResult = MeetingOperationResult.Failure("Desktop meeting launch failed."),
+            // No Zoom Desktop meeting window appeared, so the launch really did fail.
+            VerifyJoinedResult = MeetingOperationResult.Failure("No Zoom Desktop meeting window.")
         };
         var web = new FakeRuntime(SessionEngineType.Web)
         {
@@ -121,8 +152,31 @@ public sealed class MeetingOrchestratorTests
 
         Assert.Equal(MeetingState.Failed, session.State);
         Assert.Equal("Web meeting launch failed.", session.FailureReason);
-        Assert.Equal(["switch-account", "launch", "stop-auto-admit"], desktop.Calls);
+        Assert.Equal(["switch-account", "launch", "verify-joined", "stop-auto-admit"], desktop.Calls);
         Assert.Equal(["launch"], web.Calls);
+    }
+
+    [Fact]
+    public async Task DesktopLaunchFailureIsIgnoredWhenTheMeetingWindowIsAlreadyOpen()
+    {
+        // Zoom reports a failed launch while it is already opening the meeting. Moving to Web then
+        // joins the same meeting twice and leaves the Desktop meeting unwatched.
+        var desktop = new FakeRuntime(SessionEngineType.Desktop)
+        {
+            LaunchResult = MeetingOperationResult.Failure("Zoom changed state before fallback.")
+        };
+        var web = new FakeRuntime(SessionEngineType.Web);
+        var orchestrator = Orchestrator(
+            new FakeAccountManager(Account("desktop-account")),
+            new SessionCoordinator(),
+            desktop,
+            web);
+
+        var session = await orchestrator.RunAsync(Meeting("desktop-account"));
+
+        Assert.Equal(MeetingState.Monitoring, session.State);
+        Assert.Equal(SessionEngineType.Desktop, session.Allocation!.EngineType);
+        Assert.Empty(web.Calls);
     }
 
     [Fact]
@@ -143,8 +197,79 @@ public sealed class MeetingOrchestratorTests
 
         Assert.Equal(MeetingState.Failed, session.State);
         Assert.Equal("Monitor startup failed.", session.FailureReason);
-        Assert.Contains(MeetingState.Active, session.History.Select(item => item.State));
+        // The monitor is started straight after launch, before join verification.
+        Assert.Equal(["switch-account", "launch", "start-auto-admit"], desktop.Calls);
+        Assert.DoesNotContain(MeetingState.Active, session.History.Select(item => item.State));
         Assert.Empty(coordinator.ActiveSessions);
+    }
+
+    [Fact]
+    public async Task AutoAdmitStartsBeforeJoinVerificationAndPreparation()
+    {
+        var desktop = new FakeRuntime(SessionEngineType.Desktop);
+        var orchestrator = Orchestrator(
+            new FakeAccountManager(Account("desktop-account")),
+            new SessionCoordinator(),
+            desktop,
+            new FakeRuntime(SessionEngineType.Web));
+
+        var session = await orchestrator.RunAsync(Meeting("desktop-account"));
+
+        Assert.Equal(MeetingState.Monitoring, session.State);
+        Assert.True(
+            desktop.Calls.IndexOf("start-auto-admit") < desktop.Calls.IndexOf("verify-joined"),
+            "Auto Admit must start as soon as the meeting is launched.");
+        Assert.True(desktop.Calls.IndexOf("start-auto-admit") < desktop.Calls.IndexOf("disable-mic"));
+    }
+
+    [Fact]
+    public async Task JoinVerificationFailureStopsTheRunningMonitor()
+    {
+        var desktop = new FakeRuntime(SessionEngineType.Desktop)
+        {
+            VerifyJoinedResult = MeetingOperationResult.Failure("Meeting window never appeared.")
+        };
+        var coordinator = new SessionCoordinator();
+        var orchestrator = Orchestrator(
+            new FakeAccountManager(Account("desktop-account")),
+            coordinator,
+            desktop,
+            new FakeRuntime(SessionEngineType.Web));
+
+        var session = await orchestrator.RunAsync(Meeting("desktop-account"));
+
+        Assert.Equal(MeetingState.Failed, session.State);
+        Assert.Equal("Meeting window never appeared.", session.FailureReason);
+        Assert.Equal(
+            ["switch-account", "launch", "start-auto-admit", "verify-joined", "stop-auto-admit"],
+            desktop.Calls);
+        Assert.Empty(coordinator.ActiveSessions);
+    }
+
+    [Fact]
+    public async Task MediaPreparationFailuresKeepTheMeetingMonitoring()
+    {
+        var desktop = new FakeRuntime(SessionEngineType.Desktop)
+        {
+            DisableMicrophoneResult = MeetingOperationResult.Failure("Microphone control missing."),
+            DisableCameraResult = MeetingOperationResult.Failure("Camera control missing.")
+        };
+        var coordinator = new SessionCoordinator();
+        var orchestrator = Orchestrator(
+            new FakeAccountManager(Account("desktop-account")),
+            coordinator,
+            desktop,
+            new FakeRuntime(SessionEngineType.Web));
+
+        var session = await orchestrator.RunAsync(Meeting("desktop-account"));
+
+        Assert.Equal(MeetingState.Monitoring, session.State);
+        Assert.Null(session.FailureReason);
+        Assert.Equal(
+            ["switch-account", "launch", "start-auto-admit", "verify-joined", "disable-mic", "disable-camera"],
+            desktop.Calls);
+        Assert.Equal(SessionStatus.Active,
+            coordinator.ActiveSessions.Single(item => item.SessionId == session.SessionId).Status);
     }
 
     private static MeetingOrchestrator Orchestrator(

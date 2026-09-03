@@ -17,6 +17,25 @@ public class SingleClickExecutorTests
         Assert.Equal((100, 200), fake.LastTarget);
     }
 
+    [Fact]
+    public void OneExecutorPerAttemptKeepsAdmittingEveryParticipant()
+    {
+        // A watcher admits one person per detection, so it must build an executor per attempt.
+        // Sharing a single instance across a run - as the desktop watcher used to - clicked for
+        // the first participant and then silently refused every later one, while the toast went
+        // on being detected every few seconds.
+        var mouse = new FakeMouseInput();
+        var targets = new[] { (100, 200), (300, 400), (500, 600) };
+
+        foreach (var (x, y) in targets)
+        {
+            Assert.True(new SingleClickExecutor(mouse).TryClick(x, y));
+        }
+
+        Assert.Equal(targets.Length, mouse.ClickCount);
+        Assert.Equal(targets[^1], mouse.LastTarget);
+    }
+
     private sealed class FakeMouseInput : IMouseInput
     {
         public int ClickCount { get; private set; }

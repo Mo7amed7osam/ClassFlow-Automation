@@ -1,0 +1,53 @@
+<UserControl x:Class="ZoomAutoAdmit.WindowsUI.Views.MatchingView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+<ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
+<Border Style="{DynamicResource StatusPill}" DataContext="{Binding AiMatching}" Margin="0,0,0,14" Padding="14,8">
+<StackPanel Orientation="Horizontal">
+<Ellipse Width="11" Height="11" VerticalAlignment="Center" Margin="0,0,9,0">
+<Ellipse.Style><Style TargetType="Ellipse"><Setter Property="Fill" Value="{DynamicResource ErrorBrush}"/>
+<Style.Triggers><DataTrigger Binding="{Binding IsReady}" Value="True"><Setter Property="Fill" Value="{DynamicResource SuccessBrush}"/></DataTrigger></Style.Triggers></Style></Ellipse.Style>
+</Ellipse>
+<TextBlock Text="{Binding ConnectionLabel}" FontWeight="SemiBold" VerticalAlignment="Center" AutomationProperties.Name="AI connection state">
+<TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{DynamicResource ErrorBrush}"/><Setter Property="FontSize" Value="13"/>
+<Style.Triggers><DataTrigger Binding="{Binding IsReady}" Value="True"><Setter Property="Foreground" Value="{DynamicResource SuccessBrush}"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+</TextBlock>
+</StackPanel></Border>
+<UniformGrid Columns="3" Margin="0,0,-18,18"><Border Style="{DynamicResource Card}" Margin="0,0,18,0"><StackPanel><TextBlock Text="MATCH CONFIDENCE" Style="{DynamicResource Muted}"/><TextBlock Text="{Binding AiMatching.ConfidenceSummary}" Style="{DynamicResource Metric}"/><TextBlock Text="Latest batch: present matches" Style="{DynamicResource Muted}"/></StackPanel></Border><Border Style="{DynamicResource Card}" Margin="0,0,18,0"><StackPanel><TextBlock Text="ROSTER RESULTS" Style="{DynamicResource Muted}"/><TextBlock Text="{Binding AiMatching.Results.Count}" Style="{DynamicResource Metric}"/><TextBlock Text="In original student order" Style="{DynamicResource Muted}"/></StackPanel></Border><Border Style="{DynamicResource Card}" Margin="0,0,18,0"><StackPanel><TextBlock Text="PENDING REVIEW" Style="{DynamicResource Muted}"/><TextBlock Text="{Binding AiMatching.Review.Count}" Style="{DynamicResource Metric}" Foreground="{DynamicResource WarningBrush}"/><TextBlock Text="Uncertain matches" Style="{DynamicResource Muted}"/></StackPanel></Border></UniformGrid>
+<Border Style="{DynamicResource Card}" Margin="0,0,0,16" DataContext="{Binding AiMatching}"><StackPanel>
+<StackPanel Margin="0,0,0,14"><Border Style="{DynamicResource Badge}" Margin="0,0,0,10"><StackPanel Orientation="Horizontal"><Ellipse Width="6" Height="6" Fill="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/><TextBlock Text="PROVIDER" Style="{DynamicResource BadgeText}"/></StackPanel></Border><TextBlock Text="AI connection" FontSize="19" FontWeight="Bold"/><TextBlock Text="The provider and model asked about names the rules cannot settle." Style="{DynamicResource PageLead}" FontSize="12" Margin="0,5,0,0"/></StackPanel>
+<TextBlock Text="Your key is kept in Windows Credential Manager, never in a file or a log." Style="{DynamicResource Muted}" Margin="0,8,0,12"/>
+<TextBlock Text="AI provider" Style="{DynamicResource FieldLabel}"/><ComboBox ItemsSource="{Binding Providers}" SelectedItem="{Binding Provider}" IsEnabled="{Binding IsIdle}" SelectionChanged="ProviderChanged" AutomationProperties.Name="AI provider"/><TextBlock Text="{Binding ProviderHelp}" Style="{DynamicResource Muted}" Margin="0,2,0,12"/>
+<Grid IsEnabled="{Binding IsIdle}"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+<StackPanel><TextBlock Text="API key" Style="{DynamicResource FieldLabel}"/><PasswordBox PasswordChanged="KeyChanged" x:Name="ApiKey" MaxLength="1800" Padding="10" Margin="0,5,12,8" Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource LineBrush}" AutomationProperties.Name="AI API key"/></StackPanel>
+<StackPanel Grid.Column="1"><TextBlock Text="Model" Style="{DynamicResource FieldLabel}"/><ComboBox IsEditable="True" ItemsSource="{Binding Models}" Text="{Binding Model, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="AI model"/><WrapPanel Margin="0,4,0,0"><Button Content="Add model" Command="{Binding AddModelCommand}" Padding="12,6" AutomationProperties.Name="Add AI model"/><Button Content="Remove model" Command="{Binding RemoveModelCommand}" IsEnabled="{Binding CanRemoveModel}" Padding="12,6" AutomationProperties.Name="Remove AI model"/></WrapPanel><TextBlock Text="Pick one, or type any model name and add it. Models you add are kept on this computer." Style="{DynamicResource Muted}" Margin="3,4,0,0"/></StackPanel></Grid>
+<WrapPanel IsEnabled="{Binding IsIdle}"><Button Content="Test &amp; save securely" Click="TestAndSave" Style="{DynamicResource PrimaryButton}"/><Button Content="Test connection" Click="TestAndSave"/><Button Content="Remove saved key" Command="{Binding RemoveKeyCommand}" IsEnabled="{Binding HasSavedKey}"/></WrapPanel>
+<TextBlock Text="Both test buttons use the typed key first; leave the field empty to test the securely saved key." Style="{DynamicResource Muted}" Margin="0,6"/>
+<TextBlock Text="{Binding HasSavedKey, StringFormat=Selected provider saved: {0}}" Style="{DynamicResource Muted}"/>
+<TextBlock Text="Test sends a synthetic name only. Provider API usage may be billed to your account." Style="{DynamicResource Muted}" Margin="0,8"/>
+<DockPanel><Button DockPanel.Dock="Right" Content="Cancel operation" Command="{Binding CancelCommand}"/>
+<TextBlock Text="{Binding Status}" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite">
+<TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/><Setter Property="FontSize" Value="13"/>
+<Style.Triggers>
+<DataTrigger Binding="{Binding Severity}" Value="Success"><Setter Property="Foreground" Value="{DynamicResource SuccessBrush}"/></DataTrigger>
+<DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="{DynamicResource WarningBrush}"/></DataTrigger>
+<DataTrigger Binding="{Binding Severity}" Value="Error"><Setter Property="Foreground" Value="{DynamicResource ErrorBrush}"/></DataTrigger>
+</Style.Triggers></Style></TextBlock.Style>
+</TextBlock></DockPanel>
+</StackPanel></Border>
+<Border Style="{DynamicResource Card}" Margin="0,0,0,16"><StackPanel IsEnabled="{Binding AiMatching.IsIdle}">
+<TextBlock Text="Run attendance matching" Style="{DynamicResource CardTitle}"/>
+<TextBlock Text="Choose a roster group and paste the observed Zoom names, one per line. This does not start a meeting or mark anyone absent." Style="{DynamicResource Muted}" Margin="0,8"/>
+<Button Content="Use real attendance snapshots →" Command="{Binding NavigateCommand}" CommandParameter="8" HorizontalAlignment="Left"/>
+<ComboBox ItemsSource="{Binding Roster.Groups}" SelectedItem="{Binding AiMatching.SelectedGroup}" DisplayMemberPath="DisplayName" AutomationProperties.Name="Matching roster group"/>
+<TextBox Text="{Binding AiMatching.ObservedNames, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" MinHeight="80" MaxHeight="140" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Observed Zoom names"/>
+<CheckBox Content="{Binding AiMatching.ConsentText}" IsChecked="{Binding AiMatching.AllowExternalMatching}" Margin="4,10"/>
+<Button Content="Run matching" Command="{Binding AiMatching.MatchCommand}" HorizontalAlignment="Left" Style="{DynamicResource PrimaryButton}"/>
+</StackPanel></Border>
+<Border Style="{DynamicResource Card}" DataContext="{Binding AiMatching}"><StackPanel>
+<TextBlock Text="Results — roster order preserved" Style="{DynamicResource CardTitle}"/>
+<DataGrid ItemsSource="{Binding Results}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserSortColumns="False" MinHeight="100" MaxHeight="250" Margin="0,12,0,0"><DataGrid.Columns>
+<DataGridTextColumn Header="Student" Binding="{Binding StudentName}" Width="2*"/><DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*"/><DataGridTextColumn Header="Confidence" Binding="{Binding Confidence}" Width="*"/><DataGridTextColumn Header="Source" Binding="{Binding MatchSource}" Width="*"/>
+</DataGrid.Columns></DataGrid>
+<TextBlock Text="Needs review" Style="{DynamicResource CardTitle}" Margin="0,14,0,8"/>
+<DataGrid ItemsSource="{Binding Review}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="80" MaxHeight="200"><DataGrid.Columns><DataGridTextColumn Header="Observed name" Binding="{Binding ObservedName}" Width="*"/><DataGridTextColumn Header="Reason" Binding="{Binding Reason}" Width="3*"/></DataGrid.Columns></DataGrid>
+</StackPanel></Border>
+</StackPanel></ScrollViewer></UserControl>

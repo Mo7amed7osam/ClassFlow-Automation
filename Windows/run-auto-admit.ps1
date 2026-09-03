@@ -22,5 +22,6 @@ if (-not (Test-Path $projectFile)) {
 }
 
 $forwardArgs = if ($AppArgs -and $AppArgs.Length -gt 0) { $AppArgs } else { @("waiting-room-auto-admit") }
-& dotnet run --project $projectFile -- $forwardArgs
+$dotnet = & (Join-Path $scriptDir "Find-Dotnet.ps1")
+& $dotnet run --project $projectFile -- $forwardArgs
 exit $LASTEXITCODE

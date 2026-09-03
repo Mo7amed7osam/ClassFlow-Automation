@@ -5,8 +5,13 @@ namespace ZoomAutoAdmit.WebAutomation;
 
 public sealed class ZoomWebMeetingLocator : IZoomWebMeetingLocator
 {
+    // Accessible names of controls only a joined meeting shows. Zoom's web client labels them by
+    // purpose rather than by the visible word, so the participants button reads
+    // "open the manage participants list pane,N particpants" and a host leaves through "End".
+    // Matching the visible words alone made a joined meeting look like it never joined.
     private static readonly Regex MeetingControlPattern = new(
-        @"^(?:Leave(?: Meeting)?|Participants)$",
+        @"^(?:End(?:\s+Meeting)?|Leave(?:\s+Meeting)?|Participants|Host\s+tools)$" +
+        @"|manage\s+participants|participants\s+list|participants\s+pane|security\s+options",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public async Task<ZoomMeetingSurface?> FindAsync(IBrowserContext context)
@@ -53,6 +58,20 @@ public sealed class ZoomWebMeetingLocator : IZoomWebMeetingLocator
             {
                 // Zoom replaces frames during SPA updates. The next poll reacquires
                 // the current frame while retaining this same page.
+            }
+        }
+
+        // A visible arrival notification is proof of a live meeting even when Zoom has hidden the
+        // toolbar, and it is the surface admission would act on anyway.
+        foreach (var frame in meetingFrames)
+        {
+            try
+            {
+                if (await ZoomWaitingRoomDom.HasVisibleArrivalNotificationAsync(frame))
+                    return new ZoomMeetingSurface(page, frame);
+            }
+            catch (PlaywrightException ex) when (PlaywrightNavigationFailurePolicy.IsTransient(ex))
+            {
             }
         }
 

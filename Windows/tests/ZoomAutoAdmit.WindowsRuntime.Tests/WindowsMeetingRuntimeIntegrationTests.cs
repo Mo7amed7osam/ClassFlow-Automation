@@ -73,7 +73,9 @@ public sealed class WindowsMeetingRuntimeIntegrationTests : IDisposable
         var coordinator = new SessionCoordinator();
         var desktopPlatform = new FakeDesktopPlatform
         {
-            LaunchResult = MeetingOperationResult.Failure("Zoom Desktop launch failed.")
+            LaunchResult = MeetingOperationResult.Failure("Zoom Desktop launch failed."),
+            // Nothing opened on the desktop, so there is no meeting to stay with.
+            VerifyResult = MeetingOperationResult.Failure("No Zoom Desktop meeting window.")
         };
         await using var desktop = new WindowsDesktopMeetingLauncher(
             new BlockingAutoAdmitEngine("windows"),
@@ -138,6 +140,67 @@ public sealed class WindowsMeetingRuntimeIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task MeetingMonitorsOutliveStartupCancellationAndDesktopRunsInitialSweep()
+    {
+        var desktopEngine = new BlockingAutoAdmitEngine("windows");
+        var preparation = new FakeDesktopAutoAdmitPreparation();
+        await using var desktop = new WindowsDesktopMeetingLauncher(
+            desktopEngine,
+            new FakeDesktopPlatform(),
+            preparation);
+        var webEngine = new FakeWebLifecycle();
+        await using var web = new WindowsWebMeetingLauncher(webEngine, new FakeWebPreparation());
+        var desktopContext = Context(SessionEngineType.Desktop, "desktop-account", null);
+        var webContext = Context(SessionEngineType.Web, "web-account", "web-account");
+        using var desktopStartup = new CancellationTokenSource();
+        using var webStartup = new CancellationTokenSource();
+
+        Assert.True((await desktop.StartAutoAdmitAsync(desktopContext, desktopStartup.Token)).IsSuccess);
+        Assert.True((await web.LaunchAsync(webContext, webStartup.Token)).IsSuccess);
+        Assert.True((await web.StartAutoAdmitAsync(webContext, webStartup.Token)).IsSuccess);
+        desktopStartup.Cancel();
+        webStartup.Cancel();
+        await Task.Delay(100);
+
+        Assert.Equal(1, preparation.CallCount);
+        Assert.False(desktopEngine.CancellationObserved);
+        Assert.False(webEngine.CancellationObserved);
+        Assert.False(webEngine.StartCancellationObserved);
+
+        Assert.True((await desktop.StopAutoAdmitAsync(desktopContext)).IsSuccess);
+        Assert.True((await web.StopAutoAdmitAsync(webContext)).IsSuccess);
+        Assert.True(desktopEngine.CancellationObserved);
+        Assert.True(webEngine.CancellationObserved);
+    }
+
+    [Fact]
+    public async Task MissingDesktopMediaControlsDoNotBlockAutoAdmitStartup()
+    {
+        var desktopEngine = new BlockingAutoAdmitEngine("windows");
+        var desktopPlatform = new FakeDesktopPlatform
+        {
+            MicrophoneResult = MeetingOperationResult.Failure(
+                "Zoom Desktop microphone control was not found."),
+            CameraResult = MeetingOperationResult.Failure(
+                "Zoom Desktop camera control was not found.")
+        };
+        await using var desktop = new WindowsDesktopMeetingLauncher(desktopEngine, desktopPlatform);
+        await using var web = new WindowsWebMeetingLauncher(
+            new FakeWebLifecycle(),
+            new FakeWebPreparation());
+        var coordinator = new SessionCoordinator();
+        var orchestrator = CreateOrchestrator("desktop-account", coordinator, desktop, web);
+
+        var session = await orchestrator.RunAsync(Meeting("desktop-account"));
+
+        Assert.Equal(MeetingState.Monitoring, session.State);
+        Assert.Equal(1, desktopEngine.StartCount);
+        Assert.Contains("mic-off", desktopPlatform.Calls);
+        Assert.Contains("camera-off", desktopPlatform.Calls);
+        Assert.True(await orchestrator.EndAsync(session));
+    }
+
+    [Fact]
     public async Task FailedDesktopAndWebLaunchesLeaveNoActiveReservation()
     {
         var coordinator = new SessionCoordinator();
@@ -145,7 +208,8 @@ public sealed class WindowsMeetingRuntimeIntegrationTests : IDisposable
             new BlockingAutoAdmitEngine("windows"),
             new FakeDesktopPlatform
             {
-                LaunchResult = MeetingOperationResult.Failure("Desktop unavailable.")
+                LaunchResult = MeetingOperationResult.Failure("Desktop unavailable."),
+                VerifyResult = MeetingOperationResult.Failure("No Zoom Desktop meeting window.")
             });
         var webEngine = new FakeWebLifecycle { StartFailure = new InvalidOperationException("Web unavailable.") };
         await using var web = new WindowsWebMeetingLauncher(webEngine, new FakeWebPreparation());
@@ -156,6 +220,31 @@ public sealed class WindowsMeetingRuntimeIntegrationTests : IDisposable
         Assert.Equal(MeetingState.Failed, session.State);
         Assert.Contains("Web unavailable", session.FailureReason);
         Assert.Empty(coordinator.ActiveSessions);
+    }
+
+    [Fact]
+    public async Task DesktopLaunchFailureKeepsTheMeetingOnDesktopWhenItsWindowIsOpen()
+    {
+        var coordinator = new SessionCoordinator();
+        // The launch reports a failure, but VerifyJoinedAsync finds the meeting window: Zoom was
+        // already opening it, so the session must stay on Desktop and keep its monitor there.
+        var desktopPlatform = new FakeDesktopPlatform
+        {
+            LaunchResult = MeetingOperationResult.Failure("Zoom changed state before fallback.")
+        };
+        var desktopEngine = new BlockingAutoAdmitEngine("windows");
+        await using var desktop = new WindowsDesktopMeetingLauncher(desktopEngine, desktopPlatform);
+        var webEngine = new FakeWebLifecycle();
+        await using var web = new WindowsWebMeetingLauncher(webEngine, new FakeWebPreparation());
+        var orchestrator = CreateOrchestrator("desktop-account", coordinator, desktop, web);
+
+        var session = await orchestrator.RunAsync(Meeting("desktop-account"));
+
+        Assert.Equal(MeetingState.Monitoring, session.State);
+        Assert.Equal(SessionEngineType.Desktop, session.Allocation!.EngineType);
+        Assert.Equal(1, desktopEngine.StartCount);
+        Assert.Equal(0, webEngine.MonitorCount);
+        Assert.True(await orchestrator.EndAsync(session));
     }
 
     private MeetingOrchestrator CreateOrchestrator(
@@ -235,6 +324,8 @@ public sealed class WindowsMeetingRuntimeIntegrationTests : IDisposable
         public MeetingOperationResult SwitchResult { get; init; } = MeetingOperationResult.Success();
         public MeetingOperationResult LaunchResult { get; init; } = MeetingOperationResult.Success();
         public MeetingOperationResult VerifyResult { get; init; } = MeetingOperationResult.Success();
+        public MeetingOperationResult MicrophoneResult { get; init; } = MeetingOperationResult.Success();
+        public MeetingOperationResult CameraResult { get; init; } = MeetingOperationResult.Success();
 
         public Task<MeetingOperationResult> SwitchAccountAsync(
             MeetingAccount account,
@@ -245,9 +336,9 @@ public sealed class WindowsMeetingRuntimeIntegrationTests : IDisposable
         public Task<MeetingOperationResult> VerifyJoinedAsync(CancellationToken cancellationToken) =>
             Complete("verify", VerifyResult);
         public Task<MeetingOperationResult> DisableMicrophoneAsync(CancellationToken cancellationToken) =>
-            Complete("mic-off", MeetingOperationResult.Success());
+            Complete("mic-off", MicrophoneResult);
         public Task<MeetingOperationResult> DisableCameraAsync(CancellationToken cancellationToken) =>
-            Complete("camera-off", MeetingOperationResult.Success());
+            Complete("camera-off", CameraResult);
         public Task<MeetingOperationResult> StopAsync(CancellationToken cancellationToken) =>
             Complete("stop", MeetingOperationResult.Success());
 
@@ -258,17 +349,30 @@ public sealed class WindowsMeetingRuntimeIntegrationTests : IDisposable
         }
     }
 
+    private sealed class FakeDesktopAutoAdmitPreparation : IWindowsDesktopAutoAdmitPreparation
+    {
+        public int CallCount { get; private set; }
+        public Task PrepareAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CallCount++;
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class FakeWebLifecycle : IWindowsWebAutoAdmitLifecycle
     {
         public CliOptions? StartOptions { get; private set; }
         public int MonitorCount { get; private set; }
         public int StopCount { get; private set; }
         public bool CancellationObserved { get; private set; }
+        public bool StartCancellationObserved { get; private set; }
         public Exception? StartFailure { get; init; }
 
         public Task StartAsync(CliOptions options, CancellationToken cancellationToken)
         {
             StartOptions = options;
+            cancellationToken.Register(() => StartCancellationObserved = true);
             return StartFailure == null ? Task.CompletedTask : Task.FromException(StartFailure);
         }
 

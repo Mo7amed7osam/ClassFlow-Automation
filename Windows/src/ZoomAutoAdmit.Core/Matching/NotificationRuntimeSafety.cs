@@ -46,10 +46,19 @@ public static class NotificationSurfacePolicy
                 $"Candidate target has a verified Zoom HWND in its parent/owner chain (root process '{process}').");
         }
 
-        // 4. Positive Windows Notification Host Verification
-        if ((layout == WaitingRoomNotificationLayout.WindowsNotification ||
-             layout == WaitingRoomNotificationLayout.MultiPersonNotification) &&
-            NotificationProcesses.Any(allowed => process.Equals(allowed, StringComparison.OrdinalIgnoreCase)))
+        // 4. Positive Windows Notification Host Verification.
+        //
+        // Deliberately independent of the layout: the layout is only a guess made from the shape
+        // of the OCR text, while the host process is direct evidence of what is being clicked.
+        // A real Zoom waiting-room alert arriving as a Windows notification reads
+        //     "<participant> entered the"  /  "waiting room"
+        // which the classifier labels InMeetingToast, because it only calls something a
+        // WindowsNotification when the break falls after "waiting" or a bare "Zoom" line is
+        // recognised above it - and the Zoom logo on that card is an image, not text. Gating this
+        // rule on the guess rejected genuine notifications that rule 2 could never accept either,
+        // so nothing was ever admitted from them. Requiring a verified notification host keeps the
+        // guarantee that matters: no click lands on some unrelated application.
+        if (NotificationProcesses.Any(allowed => process.Equals(allowed, StringComparison.OrdinalIgnoreCase)))
         {
             return new NotificationSurfaceDecision(true, $"Candidate belongs to verified Windows notification host '{process}'.");
         }

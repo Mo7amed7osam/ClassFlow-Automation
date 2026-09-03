@@ -1,0 +1,50 @@
+<UserControl x:Class="ZoomAutoAdmit.WindowsUI.Views.StudentsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="12">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel IsEnabled="{Binding IsIdle}">
+            <TextBlock Text="Student roster" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="Student IDs are permanent. Names and aliases may be shared by different students." Foreground="{DynamicResource MutedBrush}" Margin="0,4,0,8" />
+            <DockPanel Margin="0,0,0,12">
+                <Button DockPanel.Dock="Right" Content="Import CSV / Excel" Command="{Binding ImportCommand}" />
+                <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" />
+                <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Search students"
+                         ToolTip="Search student ID, name, aliases or email" MinWidth="200" />
+            </DockPanel>
+        </StackPanel>
+        <Grid Grid.Row="1" IsEnabled="{Binding IsIdle}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
+            <DataGrid ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedStudent}" AutoGenerateColumns="False"
+                      IsReadOnly="True" CanUserAddRows="False" CanUserSortColumns="False" SelectionMode="Single" Margin="0,0,16,0" AutomationProperties.Name="Student roster">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Student ID" Binding="{Binding StudentId}" Width="*" />
+                    <DataGridTextColumn Header="Full name" Binding="{Binding FullName}" Width="2*" />
+                    <DataGridTextColumn Header="Email" Binding="{Binding Email}" Width="2*" />
+                </DataGrid.Columns>
+            </DataGrid>
+            <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Text="Student details" FontSize="18" FontWeight="SemiBold" Margin="4,0,4,12" />
+                    <TextBlock Text="Student ID" />
+                    <TextBox Text="{Binding StudentId, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="{Binding IsEditing}" AutomationProperties.Name="Student ID" />
+                    <TextBlock Text="Full name" />
+                    <TextBox Text="{Binding FullName, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Student full name" />
+                    <TextBlock Text="Aliases (one per line)" />
+                    <TextBox Text="{Binding AliasesText, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" Height="100"
+                             VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Student aliases" />
+                    <TextBlock Text="Email (optional)" />
+                    <TextBox Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Student email" />
+                    <WrapPanel>
+                        <Button Content="New" Command="{Binding NewCommand}" />
+                        <Button Content="Save" Command="{Binding SaveCommand}" />
+                        <Button Content="Delete" Command="{Binding DeleteCommand}" IsEnabled="{Binding IsEditing}" />
+                    </WrapPanel>
+                    <TextBlock Text="Import headers: studentId, fullName, aliases, email. Use | between imported aliases. CSV must be UTF-8; Excel reads the first worksheet. Existing IDs are never overwritten."
+                               TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="4,16,4,4" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+        <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" TextWrapping="Wrap" Foreground="{DynamicResource AccentBrush}" Margin="4,12,4,0" AutomationProperties.Name="Roster status" />
+    </Grid>
+</UserControl>

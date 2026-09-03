@@ -1,0 +1,51 @@
+<Window x:Class="ZoomAutoAdmit.WindowsUI.Views.PickerDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Choose" Width="460" SizeToContent="Height" MaxHeight="560" WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize" ShowInTaskbar="False" Background="{DynamicResource CanvasBrush}"
+        Foreground="{DynamicResource TextBrush}" FontFamily="Inter, Segoe UI" FontSize="14">
+  <Window.Resources><ResourceDictionary>
+    <ResourceDictionary.MergedDictionaries>
+      <ResourceDictionary Source="../Themes/Dark.xaml"/>
+      <ResourceDictionary Source="../Themes/Controls.xaml"/>
+    </ResourceDictionary.MergedDictionaries>
+  </ResourceDictionary></Window.Resources>
+  <Border Style="{DynamicResource Card}" Margin="14">
+    <DockPanel>
+      <TextBlock DockPanel.Dock="Top" x:Name="PromptText" Style="{DynamicResource Muted}" Margin="0,0,0,14"/>
+      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+        <Button Content="Cancel" Click="CancelClicked" IsCancel="True"/>
+        <Button Content="Choose" Click="ChooseClicked" IsDefault="True" Style="{DynamicResource PrimaryButton}"/>
+      </StackPanel>
+      <ListBox x:Name="Options" MaxHeight="340" Background="Transparent" BorderThickness="0"
+               ScrollViewer.HorizontalScrollBarVisibility="Disabled" MouseDoubleClick="ChooseClicked">
+        <ListBox.ItemContainerStyle>
+          <Style TargetType="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Margin" Value="0,2"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="Template">
+              <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                  <Border x:Name="Frame" Background="Transparent" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                    <ContentPresenter/>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsSelected" Value="True"><Setter TargetName="Frame" Property="Background" Value="{DynamicResource SelectedBrush}"/></Trigger>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Frame" Property="Background" Value="{DynamicResource HoverBrush}"/></Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
+          </Style>
+        </ListBox.ItemContainerStyle>
+        <ListBox.ItemTemplate><DataTemplate>
+          <StackPanel>
+            <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+            <TextBlock Text="{Binding Detail}" Style="{DynamicResource Muted}" FontSize="11" Margin="0,3,0,0"/>
+          </StackPanel>
+        </DataTemplate></ListBox.ItemTemplate>
+      </ListBox>
+    </DockPanel>
+  </Border>
+</Window>

@@ -50,22 +50,32 @@ public sealed class WindowsMeetingScheduler : IAsyncDisposable
         try
         {
             int triggered = 0;
-            DateOnly localDate = DateOnly.FromDateTime(now.LocalDateTime);
-            TimeOnly localTime = TimeOnly.FromDateTime(now.LocalDateTime);
+            DateOnly today = DateOnly.FromDateTime(now.LocalDateTime);
+            // A schedule opens ScheduleTiming.StartLead before its own time, so a meeting set for
+            // just after midnight is launched on the day before. Both days are considered.
+            DateOnly tomorrow = today.AddDays(1);
             foreach (var schedule in await _store.ListAsync(cancellationToken))
             {
-                if (!schedule.Enabled ||
-                    !schedule.Days.Includes(now.LocalDateTime.DayOfWeek) ||
-                    schedule.LastTriggeredDate == localDate ||
-                    localTime < schedule.Time)
-                    continue;
+                if (!schedule.Enabled) continue;
+                DateOnly? due = null;
+                foreach (var date in new[] { today, tomorrow })
+                {
+                    bool runsThatDay = schedule.OccurrenceDate.HasValue
+                        ? schedule.OccurrenceDate.Value == date
+                        : schedule.Days.Includes(date.ToDateTime(TimeOnly.MinValue).DayOfWeek);
+                    if (!runsThatDay || schedule.LastTriggeredDate == date) continue;
+                    if (now.LocalDateTime >= schedule.LaunchMoment(date)) { due = date; break; }
+                }
+                if (due == null) continue;
+                DateOnly claimed = due.Value;
 
                 // Persist the claim before launching so overlapping scheduler ticks cannot
                 // create the same meeting twice.
-                await _store.UpsertAsync(schedule with { LastTriggeredDate = localDate }, cancellationToken);
+                await _store.UpsertAsync(schedule with { LastTriggeredDate = claimed }, cancellationToken);
                 try
                 {
-                    ConsoleLogger.Info($"[SCHEDULER] Triggering: {schedule.Name}");
+                    ConsoleLogger.Info(
+                        $"[SCHEDULER] Triggering: {schedule.Name} ({ScheduleTiming.StartLead.TotalMinutes:0} min before {schedule.Time:HH\\:mm})");
                     var session = await _runner.RunAsync(
                         new ScheduledMeeting(
                             new Uri(schedule.MeetingUrl),

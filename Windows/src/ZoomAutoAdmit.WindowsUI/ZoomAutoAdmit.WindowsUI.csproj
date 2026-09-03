@@ -5,8 +5,24 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Per-monitor DPI awareness. See PerMonitorV2.manifest: without it the screen capture
+         and every Admit click land on the wrong coordinates on a mixed-scaling desktop. -->
+    <ApplicationManifest>..\PerMonitorV2.manifest</ApplicationManifest>
+    <!-- The taskbar, the window and the .exe all use the same mark. -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <!-- The screen monitor allocates several full-screen bitmaps per second. Ask the GC to keep
+         the heap compact instead of holding freed memory for speed (0 = default, 9 = most frugal). -->
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ZoomAutoAdmit.AttendanceMatching\ZoomAutoAdmit.AttendanceMatching.csproj" />
+    <ProjectReference Include="..\ZoomAutoAdmit.Roster\ZoomAutoAdmit.Roster.csproj" />
+    <ProjectReference Include="..\ZoomAutoAdmit.SessionRoles\ZoomAutoAdmit.SessionRoles.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.Core\ZoomAutoAdmit.Core.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.Inspector\ZoomAutoAdmit.Inspector.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.WindowsRuntime\ZoomAutoAdmit.WindowsRuntime.csproj" />

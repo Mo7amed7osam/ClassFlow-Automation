@@ -23,6 +23,16 @@ public static class MeetingStartCommand
                 var schedule = schedules.FirstOrDefault(s => s.Id == options.ScheduleId.Value);
                 if (schedule != null)
                 {
+                    // Same early start the in-app scheduler uses, so both paths open a meeting
+                    // at the same moment.
+                    if (schedule.OccurrenceDate.HasValue &&
+                        (!schedule.Enabled || schedule.OccurrenceDate.Value != DateOnly.FromDateTime(DateTime.Now) ||
+                         schedule.LastTriggeredDate == DateOnly.FromDateTime(DateTime.Now) ||
+                         DateTime.Now < schedule.LaunchMoment(schedule.OccurrenceDate.Value)))
+                    {
+                        ConsoleLogger.Info("[SCHEDULER] One-time schedule is disabled, already claimed, or not due today.");
+                        return 0;
+                    }
                     if (string.IsNullOrWhiteSpace(options.AccountId)) options.AccountId = schedule.AccountId;
                     if (string.IsNullOrWhiteSpace(options.MeetingUrl)) options.MeetingUrl = schedule.MeetingUrl;
 

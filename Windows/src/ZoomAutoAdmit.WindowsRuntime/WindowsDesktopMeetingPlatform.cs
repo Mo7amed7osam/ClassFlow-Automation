@@ -8,7 +8,6 @@ using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.Core.Matching;
 using ZoomAutoAdmit.Core.Models;
 using ZoomAutoAdmit.UIAutomation.Discovery;
-using ZoomAutoAdmit.UIAutomation.Input;
 using ZoomAutoAdmit.UIAutomation.Interop;
 using ZoomAutoAdmit.UIAutomation.Window;
 
@@ -17,6 +16,12 @@ namespace ZoomAutoAdmit.WindowsRuntime;
 public sealed class WindowsDesktopMeetingPlatform : IWindowsDesktopMeetingPlatform
 {
     private static readonly TimeSpan JoinTimeout = TimeSpan.FromSeconds(30);
+    // Zoom's meeting tree can be enormous when panels are open; an unbounded walk previously
+    // stalled meeting startup for over a minute per control.
+    private static readonly TimeSpan MeetingControlSearchBudget = TimeSpan.FromSeconds(8);
+    // A single blocking UIA/COM call never reaches the budget check above, so the desktop thread
+    // itself gets a hard wall-clock limit. Without it each control cost the full 60 s default.
+    private const uint MeetingControlThreadTimeoutMs = 12000;
 
     private readonly Func<string, string?> _resolveSwitchEmail;
     private readonly Func<string, CancellationToken, Task<MeetingOperationResult>> _switchAccount;
@@ -87,94 +92,16 @@ public sealed class WindowsDesktopMeetingPlatform : IWindowsDesktopMeetingPlatfo
     public async Task<MeetingOperationResult> VerifyJoinedAsync(CancellationToken cancellationToken)
     {
         DateTimeOffset deadline = DateTimeOffset.UtcNow + JoinTimeout;
-        bool previewHandled = false;
-
         while (DateTimeOffset.UtcNow < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            var candidates = new ZoomProcessDiscovery().FindCandidates(logInfo: false);
-            if (candidates.SelectMany(c => c.Windows)
+            if (new ZoomProcessDiscovery().FindCandidates(logInfo: false).SelectMany(c => c.Windows)
                 .Any(w => (w.IsVisible || NativeMethods.IsIconic(w.Handle)) &&
                     ZoomWindowManager.ClassifyZoomWindow(w.Handle) == ZoomWindowRole.MeetingWindow))
-            {
                 return MeetingOperationResult.Success();
-            }
-
-            // Check if pre-meeting preview dialog is showing (handled once with a clean 4-second delay)
-            if (!previewHandled)
-            {
-                DesktopThread.RunOnInteractiveDesktop(() =>
-                {
-                    using var automation = new UIA3Automation();
-                    var zoomPids = candidates.Select(c => c.ProcessId).ToHashSet();
-                    previewHandled = TryHandlePreMeetingPreview(automation, zoomPids);
-                });
-            }
-
             await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
         }
         return MeetingOperationResult.Failure("Zoom Desktop meeting window was not detected within 30 seconds.");
-    }
-
-    private static bool TryHandlePreMeetingPreview(UIA3Automation automation, HashSet<int> zoomPids)
-    {
-        bool handled = false;
-        try
-        {
-            NativeMethods.EnumWindows((hWnd, _) =>
-            {
-                if (!NativeMethods.IsWindowVisible(hWnd)) return true;
-                NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
-                if (!zoomPids.Contains((int)pid)) return true;
-
-                NativeMethods.GetWindowRect(hWnd, out var r);
-                int width = r.Right - r.Left;
-                int height = r.Bottom - r.Top;
-
-                // Preview dialog is typically around 400x300 to 950x750
-                if (width < 350 || height < 250 || width > 1200 || height > 900) return true;
-
-                string cls = NativeMethods.GetClassNameSafe(hWnd);
-                if (cls.Contains("ZPMenu", StringComparison.OrdinalIgnoreCase) ||
-                    cls.Contains("Tooltip", StringComparison.OrdinalIgnoreCase))
-                    return true;
-
-                ConsoleLogger.Info("[PREVIEW_DIALOG] Preview dialog detected. Waiting 4 seconds before muting and joining...");
-                Thread.Sleep(4000);
-
-                // Bring preview window to top
-                NativeMethods.ForceForegroundWindow(hWnd);
-                Thread.Sleep(200);
-
-                // Refresh window rect after wait
-                NativeMethods.GetWindowRect(hWnd, out r);
-                width = r.Right - r.Left;
-                height = r.Bottom - r.Top;
-
-                // 1. Mute Audio (Microphone) - center left
-                ConsoleLogger.Info("[PREVIEW_DIALOG] Muting audio");
-                new WindowsMouseInput().DirectClick(r.Left + width / 2 - 50, r.Top + height / 2 + 65);
-                Thread.Sleep(300);
-
-                // 2. Turn off Video (Camera) - center right
-                ConsoleLogger.Info("[PREVIEW_DIALOG] Turning off video");
-                new WindowsMouseInput().DirectClick(r.Left + width / 2 + 50, r.Top + height / 2 + 65);
-                Thread.Sleep(500);
-
-                // 3. Click Join button (bottom right) and press Enter
-                ConsoleLogger.Info("[PREVIEW_DIALOG] Clicking Join button");
-                new WindowsMouseInput().DirectClick(r.Right - 85, r.Bottom - 35);
-                Thread.Sleep(200);
-                NativeMethods.SendKeyPress(NativeMethods.VK_RETURN);
-                Thread.Sleep(500);
-
-                handled = true;
-                return false;
-            }, IntPtr.Zero);
-        }
-        catch { }
-        return handled;
     }
 
     public Task<MeetingOperationResult> DisableMicrophoneAsync(CancellationToken cancellationToken) =>
@@ -219,153 +146,25 @@ public sealed class WindowsDesktopMeetingPlatform : IWindowsDesktopMeetingPlatfo
         {
             cancellationToken.ThrowIfCancellationRequested();
             IntPtr meetingWindow = ZoomWindowManager.FindMainZoomMeetingWindow();
-            if (meetingWindow == IntPtr.Zero)
-            {
-                // Find any large visible Zoom meeting window
-                var candidates = new ZoomProcessDiscovery().FindCandidates(logInfo: false);
-                var zoomPids = candidates.Select(c => c.ProcessId).ToHashSet();
-                NativeMethods.EnumWindows((hWnd, _) =>
-                {
-                    if (NativeMethods.IsWindowVisible(hWnd))
-                    {
-                        NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
-                        if (zoomPids.Contains((int)pid) &&
-                            NativeMethods.GetWindowRect(hWnd, out var r) &&
-                            (r.Right - r.Left) > 500 && (r.Bottom - r.Top) > 400)
-                        {
-                            string cls = NativeMethods.GetClassNameSafe(hWnd);
-                            if (!cls.Contains("ZPMenu", StringComparison.OrdinalIgnoreCase))
-                            {
-                                meetingWindow = hWnd;
-                                return false;
-                            }
-                        }
-                    }
-                    return true;
-                }, IntPtr.Zero);
-            }
-
             if (meetingWindow == IntPtr.Zero) return;
-
-            NativeMethods.ForceForegroundWindow(meetingWindow);
-            Thread.Sleep(150);
-
-            if (NativeMethods.GetWindowRect(meetingWindow, out var rect))
+            using var automation = new UIA3Automation();
+            var root = automation.FromHandle(meetingWindow);
+            DateTimeOffset deadline = DateTimeOffset.UtcNow + MeetingControlSearchBudget;
+            var match = FindFirstNamedElement(root, [alreadyOffName, turnOffName], deadline);
+            if (match == null)
             {
-                int width = rect.Right - rect.Left;
-                int height = rect.Bottom - rect.Top;
-
-                // Directly click in the center of the meeting window (no cursor restore)
-                int centerX = rect.Left + width / 2;
-                int centerY = rect.Top + height / 2;
-                ConsoleLogger.Info($"[MEETING_CONTROL] Clicking meeting center at ({centerX}, {centerY})");
-                new WindowsMouseInput().DirectClick(centerX, centerY);
-                Thread.Sleep(200);
-
-                try
-                {
-                    using var automation = new UIA3Automation();
-                    var root = automation.FromHandle(meetingWindow);
-                    var allButtons = root.FindAllDescendants()
-                        .Where(d => d.Properties.ControlType.ValueOrDefault == ControlType.Button)
-                        .ToList();
-
-                    if (controlLabel == "camera")
-                    {
-                        bool alreadyOff = allButtons.Any(b =>
-                        {
-                            string name = b.Properties.Name.ValueOrDefault ?? "";
-                            return name.Contains("Start Video", StringComparison.OrdinalIgnoreCase) ||
-                                   name.Contains("Turn on video", StringComparison.OrdinalIgnoreCase);
-                        });
-
-                        if (alreadyOff)
-                        {
-                            ConsoleLogger.Info("[MEETING_CONTROL] Video is already off; skipping toggle.");
-                            result = MeetingOperationResult.Success();
-                            return;
-                        }
-
-                        var stopVideoBtn = allButtons.FirstOrDefault(b =>
-                        {
-                            string name = b.Properties.Name.ValueOrDefault ?? "";
-                            return name.Contains("Stop Video", StringComparison.OrdinalIgnoreCase) ||
-                                   name.Equals("Video", StringComparison.OrdinalIgnoreCase);
-                        });
-
-                        if (stopVideoBtn != null && (Invoke(stopVideoBtn) || TryClickElement(stopVideoBtn)))
-                        {
-                            result = MeetingOperationResult.Success();
-                            return;
-                        }
-
-                        // Direct toolbar click
-                        new WindowsMouseInput().DirectClick(rect.Left + 150, rect.Bottom - 30);
-                        result = MeetingOperationResult.Success();
-                        return;
-                    }
-
-                    if (controlLabel == "microphone")
-                    {
-                        bool alreadyMuted = allButtons.Any(b =>
-                        {
-                            string name = b.Properties.Name.ValueOrDefault ?? "";
-                            return name.Contains("Unmute", StringComparison.OrdinalIgnoreCase);
-                        });
-
-                        if (alreadyMuted)
-                        {
-                            ConsoleLogger.Info("[MEETING_CONTROL] Audio is already muted; skipping toggle.");
-                            result = MeetingOperationResult.Success();
-                            return;
-                        }
-
-                        var muteBtn = allButtons.FirstOrDefault(b =>
-                        {
-                            string name = b.Properties.Name.ValueOrDefault ?? "";
-                            return name.Contains("Mute", StringComparison.OrdinalIgnoreCase) ||
-                                   name.Equals("Audio", StringComparison.OrdinalIgnoreCase);
-                        });
-
-                        if (muteBtn != null && (Invoke(muteBtn) || TryClickElement(muteBtn)))
-                        {
-                            result = MeetingOperationResult.Success();
-                            return;
-                        }
-                    }
-                }
-                catch { }
-
-                if (controlLabel == "microphone")
-                {
-                    ConsoleLogger.Info("[MEETING_CONTROL] Sending hardware Alt+A to mute microphone and Alt+U to open Participants panel");
-                    
-                    // 1. Hardware scan-code Alt+A (Mute/Unmute Audio)
-                    NativeMethods.SendAltKey(0x41); // 'A'
-                    Thread.Sleep(200);
-
-                    // 2. Hardware scan-code Alt+U (Open Participants Panel)
-                    NativeMethods.SendAltKey(0x55); // 'U'
-                    Thread.Sleep(200);
-
-                    // 3. Click toolbar Audio button directly
-                    new WindowsMouseInput().DirectClick(rect.Left + 50, rect.Bottom - 30);
-                    Thread.Sleep(150);
-
-                    // 4. Click toolbar Participants button directly
-                    new WindowsMouseInput().DirectClick(rect.Left + 350, rect.Bottom - 30);
-                    result = MeetingOperationResult.Success();
-                    return;
-                }
-
-                if (controlLabel == "camera")
-                {
-                    new WindowsMouseInput().DirectClick(rect.Left + 150, rect.Bottom - 30);
-                    result = MeetingOperationResult.Success();
-                    return;
-                }
+                if (DateTimeOffset.UtcNow >= deadline)
+                    ConsoleLogger.Warn(
+                        $"[PREPARE] Zoom Desktop {controlLabel} control search exceeded {MeetingControlSearchBudget.TotalSeconds:0}s; skipping");
+                return;
             }
-        });
+            if (match.Value.Name.Equals(alreadyOffName, StringComparison.OrdinalIgnoreCase))
+            {
+                result = MeetingOperationResult.Success();
+                return;
+            }
+            if (Invoke(match.Value.Element)) result = MeetingOperationResult.Success();
+        }, MeetingControlThreadTimeoutMs);
         return Task.FromResult(result);
     }
 
@@ -450,16 +249,23 @@ public sealed class WindowsDesktopMeetingPlatform : IWindowsDesktopMeetingPlatfo
         return null;
     }
 
-    private static AutomationElement? FindExactNamedElement(AutomationElement element, string name)
+    /// <summary>One bounded depth-first walk that matches any of the given exact names.</summary>
+    private static (AutomationElement Element, string Name)? FindFirstNamedElement(
+        AutomationElement element,
+        IReadOnlyList<string> names,
+        DateTimeOffset deadline)
     {
         try
         {
-            string candidate = element.Properties.Name.ValueOrDefault ?? string.Empty;
-            if (candidate.Trim().Equals(name, StringComparison.OrdinalIgnoreCase)) return element;
+            if (DateTimeOffset.UtcNow >= deadline) return null;
+            string candidate = (element.Properties.Name.ValueOrDefault ?? string.Empty).Trim();
+            foreach (var name in names)
+                if (candidate.Equals(name, StringComparison.OrdinalIgnoreCase)) return (element, name);
             foreach (var child in element.FindAllChildren())
             {
-                var match = FindExactNamedElement(child, name);
+                var match = FindFirstNamedElement(child, names, deadline);
                 if (match != null) return match;
+                if (DateTimeOffset.UtcNow >= deadline) return null;
             }
         }
         catch { }
@@ -489,26 +295,6 @@ public sealed class WindowsDesktopMeetingPlatform : IWindowsDesktopMeetingPlatfo
             {
                 element.Patterns.LegacyIAccessible.Pattern.DoDefaultAction();
                 return true;
-            }
-        }
-        catch { }
-        return false;
-    }
-
-    private static bool TryClickElement(AutomationElement element)
-    {
-        try
-        {
-            var rect = element.Properties.BoundingRectangle.ValueOrDefault;
-            if (rect.Width > 0 && rect.Height > 0)
-            {
-                int cx = (int)(rect.X + rect.Width / 2);
-                int cy = (int)(rect.Y + rect.Height / 2);
-                if (cx > 0 && cy > 0)
-                {
-                    new WindowsMouseInput().LeftClickOncePreservingCursor(cx, cy);
-                    return true;
-                }
             }
         }
         catch { }

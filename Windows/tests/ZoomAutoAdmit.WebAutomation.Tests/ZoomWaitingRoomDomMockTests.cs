@@ -67,8 +67,11 @@ public class ZoomWaitingRoomDomMockTests
     {
         var alice = ParticipantRow("View Alice (Guest) More Admit");
         var bob = ParticipantRow("View Bob (Guest) More Admit");
-        bob.AdmitButton.Setup(item => item.ClickAsync(It.IsAny<LocatorClickOptions>()))
-            .Returns(Task.CompletedTask);
+        bob.AdmitButton.Setup(item => item.EvaluateAsync<object?>(
+                It.Is<string>(script => script.Contains("element.click()")),
+                It.IsAny<object?>(),
+                It.IsAny<LocatorEvaluateOptions>()))
+            .ReturnsAsync((object?)null);
         var rows = Collection(alice.Row.Object, bob.Row.Object);
         var frame = new Mock<IFrame>(MockBehavior.Strict);
         frame.Setup(item => item.Locator(
@@ -95,10 +98,16 @@ public class ZoomWaitingRoomDomMockTests
         Assert.False(alice.Hovered());
         Assert.True(bob.Hovered());
         alice.AdmitButton.Verify(
-            item => item.ClickAsync(It.IsAny<LocatorClickOptions>()),
+            item => item.EvaluateAsync<object?>(
+                It.Is<string>(script => script.Contains("element.click()")),
+                It.IsAny<object?>(),
+                It.IsAny<LocatorEvaluateOptions>()),
             Times.Never);
         bob.AdmitButton.Verify(
-            item => item.ClickAsync(It.IsAny<LocatorClickOptions>()),
+            item => item.EvaluateAsync<object?>(
+                It.Is<string>(script => script.Contains("element.click()")),
+                It.IsAny<object?>(),
+                It.IsAny<LocatorEvaluateOptions>()),
             Times.Once);
     }
 
@@ -149,7 +158,11 @@ public class ZoomWaitingRoomDomMockTests
         var admit = Locator();
         admit.Setup(item => item.IsVisibleAsync(It.IsAny<LocatorIsVisibleOptions>())).ReturnsAsync(true);
         admit.Setup(item => item.InnerTextAsync(It.IsAny<LocatorInnerTextOptions>())).ReturnsAsync("Admit");
-        admit.Setup(item => item.ClickAsync(It.IsAny<LocatorClickOptions>())).Returns(Task.CompletedTask);
+        admit.Setup(item => item.EvaluateAsync<object?>(
+                It.Is<string>(script => script.Contains("element.click()")),
+                It.IsAny<object?>(),
+                It.IsAny<LocatorEvaluateOptions>()))
+            .ReturnsAsync((object?)null);
         var toast = Locator();
         toast.Setup(item => item.IsVisibleAsync(It.IsAny<LocatorIsVisibleOptions>())).ReturnsAsync(true);
         var message = Locator();
@@ -190,7 +203,12 @@ public class ZoomWaitingRoomDomMockTests
         Assert.Single(snapshot.Participants);
         Assert.Equal("eyouth coordinator", snapshot.Participants[0].Name);
         Assert.True(clicked);
-        admit.Verify(item => item.ClickAsync(It.IsAny<LocatorClickOptions>()), Times.Once);
+        admit.Verify(
+            item => item.EvaluateAsync<object?>(
+                It.Is<string>(script => script.Contains("element.click()")),
+                It.IsAny<object?>(),
+                It.IsAny<LocatorEvaluateOptions>()),
+            Times.Once);
     }
 
     [Fact]
@@ -210,8 +228,11 @@ public class ZoomWaitingRoomDomMockTests
             .Returns(Collection(notificationAdmit.Object).Object);
 
         var row = ParticipantRow("eyouth coordinator");
-        row.AdmitButton.Setup(item => item.ClickAsync(It.IsAny<LocatorClickOptions>()))
-            .Returns(Task.CompletedTask);
+        row.AdmitButton.Setup(item => item.EvaluateAsync<object?>(
+                It.Is<string>(script => script.Contains("element.click()")),
+                It.IsAny<object?>(),
+                It.IsAny<LocatorEvaluateOptions>()))
+            .ReturnsAsync((object?)null);
         var frame = new Mock<IFrame>(MockBehavior.Strict);
         frame.Setup(item => item.Locator(
                 It.Is<string>(selector => selector.Contains("Waiting room list")),
@@ -227,10 +248,16 @@ public class ZoomWaitingRoomDomMockTests
         Assert.True(clicked);
         Assert.True(row.Hovered());
         notificationAdmit.Verify(
-            item => item.ClickAsync(It.IsAny<LocatorClickOptions>()),
+            item => item.EvaluateAsync<object?>(
+                It.Is<string>(script => script.Contains("element.click()")),
+                It.IsAny<object?>(),
+                It.IsAny<LocatorEvaluateOptions>()),
             Times.Never);
         row.AdmitButton.Verify(
-            item => item.ClickAsync(It.IsAny<LocatorClickOptions>()),
+            item => item.EvaluateAsync<object?>(
+                It.Is<string>(script => script.Contains("element.click()")),
+                It.IsAny<object?>(),
+                It.IsAny<LocatorEvaluateOptions>()),
             Times.Once);
     }
 
@@ -308,7 +335,11 @@ public class ZoomWaitingRoomDomMockTests
     {
         var button = Locator();
         button.Setup(item => item.IsVisibleAsync(It.IsAny<LocatorIsVisibleOptions>())).ReturnsAsync(true);
-        button.Setup(item => item.ClickAsync(It.IsAny<LocatorClickOptions>())).Returns(Task.CompletedTask);
+        button.Setup(item => item.EvaluateAsync<object?>(
+                It.Is<string>(script => script.Contains("element.click()")),
+                It.IsAny<object?>(),
+                It.IsAny<LocatorEvaluateOptions>()))
+            .ReturnsAsync((object?)null);
         var buttons = Collection(button.Object);
         var frame = new Mock<IFrame>(MockBehavior.Strict);
         frame.Setup(item => item.GetByRole(
@@ -320,7 +351,12 @@ public class ZoomWaitingRoomDomMockTests
         bool clicked = await new ZoomWaitingRoomDom().ClickAdmitAllAsync(new(page.Object, frame.Object));
 
         Assert.True(clicked);
-        button.Verify(item => item.ClickAsync(It.IsAny<LocatorClickOptions>()), Times.Once);
+        button.Verify(
+            item => item.EvaluateAsync<object?>(
+                It.Is<string>(script => script.Contains("element.click()")),
+                It.IsAny<object?>(),
+                It.IsAny<LocatorEvaluateOptions>()),
+            Times.Once);
     }
 
     private static ParticipantRowMock ParticipantRow(

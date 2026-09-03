@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Xml.Linq;
+using System.Globalization;
+using System.Security.Principal;
 
 namespace ZoomAutoAdmit.WindowsRuntime.Scheduling;
 
@@ -28,6 +31,12 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
         if (!schedule.Enabled)
         {
             await DeleteTaskAsync(schedule.Id, cancellationToken);
+            return;
+        }
+
+        if (schedule.OccurrenceDate.HasValue)
+        {
+            await RegisterOneTimeAsync(schedule, cancellationToken);
             return;
         }
 
@@ -122,6 +131,40 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
         }
 
         return $"\"{exePath}\" meeting-start --account-id \"{schedule.AccountId}\" --meeting-url \"{schedule.MeetingUrl}\" --schedule-id {schedule.Id}";
+    }
+
+    public static string BuildOneTimeTaskXml(MeetingSchedule schedule, string executablePath)
+    {
+        if (!schedule.OccurrenceDate.HasValue) throw new ArgumentException("An exact date is required.");
+        XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+        var isDll = executablePath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+        var task = new XElement(ns + "Task", new XAttribute("version", "1.2"),
+            new XElement(ns + "Triggers", new XElement(ns + "TimeTrigger",
+                new XElement(ns + "StartBoundary", schedule.OccurrenceDate.Value.ToDateTime(schedule.Time).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)),
+                new XElement(ns + "Enabled", "true"))),
+            new XElement(ns + "Principals", new XElement(ns + "Principal", new XAttribute("id", "Author"),
+                new XElement(ns + "UserId", WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("Windows user identity is unavailable.")),
+                new XElement(ns + "LogonType", "InteractiveToken"), new XElement(ns + "RunLevel", "LeastPrivilege"))),
+            new XElement(ns + "Settings", new XElement(ns + "MultipleInstancesPolicy", "IgnoreNew"),
+                new XElement(ns + "DisallowStartIfOnBatteries", "false"), new XElement(ns + "StopIfGoingOnBatteries", "false"),
+                new XElement(ns + "StartWhenAvailable", "false"), new XElement(ns + "Enabled", "true"), new XElement(ns + "ExecutionTimeLimit", "PT0S")),
+            new XElement(ns + "Actions", new XAttribute("Context", "Author"), new XElement(ns + "Exec",
+                new XElement(ns + "Command", isDll ? "dotnet.exe" : executablePath),
+                new XElement(ns + "Arguments", (isDll ? $"\"{executablePath}\" " : "") + $"meeting-start --schedule-id {schedule.Id:D}"))));
+        return task.ToString();
+    }
+
+    private async Task RegisterOneTimeAsync(MeetingSchedule schedule, CancellationToken token)
+    {
+        string xmlPath = Path.Combine(Path.GetTempPath(), $"zoom-schedule-{Guid.NewGuid():N}.xml");
+        try
+        {
+            await File.WriteAllTextAsync(xmlPath, BuildOneTimeTaskXml(schedule, ResolveInspectorExecutablePath()), System.Text.Encoding.Unicode, token);
+            var (code, _, _) = await RunSchtasksAsync($"/Create /TN \"{GetTaskName(schedule.Id)}\" /XML \"{xmlPath}\" /F", token);
+            if (code != 0) throw new InvalidOperationException($"Windows task registration failed (exit {code}). The schedule is saved locally; check Windows task permissions.");
+            WindowsSchedulerLog.Write("SCHEDULE_REGISTERED", $"One-time schedule: {schedule.Id}; Date: {schedule.OccurrenceDate:yyyy-MM-dd}");
+        }
+        finally { if (File.Exists(xmlPath)) File.Delete(xmlPath); }
     }
 
     public string ResolveInspectorExecutablePath()
