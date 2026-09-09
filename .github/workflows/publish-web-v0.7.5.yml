@@ -1,0 +1,95 @@
+name: Publish web v0.7.5 release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-web-v0.7.5.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify extension version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./web-extension/manifest.json').version")
+          test "$VERSION" = "0.7.5"
+
+      - name: Package extension
+        shell: bash
+        run: |
+          rm -rf release zoom-auto-admit-web.zip
+          mkdir -p release/zoom-auto-admit-web
+          cp web-extension/manifest.json release/zoom-auto-admit-web/
+          cp web-extension/background.js release/zoom-auto-admit-web/
+          cp web-extension/content.js release/zoom-auto-admit-web/
+          cp web-extension/labels.js release/zoom-auto-admit-web/
+          cp web-extension/meeting-source.js release/zoom-auto-admit-web/
+          cp web-extension/meeting-ui.js release/zoom-auto-admit-web/
+          cp web-extension/name-memory.js release/zoom-auto-admit-web/
+          cp web-extension/session-worker.js release/zoom-auto-admit-web/
+          cp web-extension/popup.html release/zoom-auto-admit-web/
+          cp web-extension/popup.css release/zoom-auto-admit-web/
+          cp web-extension/popup.js release/zoom-auto-admit-web/
+          cp web-extension/attendance.html release/zoom-auto-admit-web/
+          cp web-extension/attendance.css release/zoom-auto-admit-web/
+          cp web-extension/attendance.js release/zoom-auto-admit-web/
+          cp -R web-extension/icons release/zoom-auto-admit-web/
+          cd release
+          zip -r ../zoom-auto-admit-web.zip zoom-auto-admit-web
+          cd ..
+          unzip -t zoom-auto-admit-web.zip
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          # Zoom Auto Admit Web v0.7.5
+
+          This release updates the Chrome/Edge extension to v0.7.5.
+
+          ## What's new
+          - Select the Zoom meeting/tab that attendance should record.
+          - Automatic meeting naming and saved/recording meeting selection.
+          - Finalize attendance from the Attendance page.
+          - Improved meeting-source detection and attendance session handling.
+          - Added meeting UI, name memory, and session worker modules.
+          - Keeps roster matching, unmatched-name review, OpenRouter matching, and CSV attendance export.
+          - Keeps automatic waiting-room admission support.
+
+          ## Install / test
+          1. Download `zoom-auto-admit-web.zip` from Assets below.
+          2. Extract the ZIP.
+          3. Open `chrome://extensions` or `edge://extensions`.
+          4. Enable **Developer mode**.
+          5. Click **Load unpacked** and select the extracted `zoom-auto-admit-web` folder.
+          6. If updating an existing installation, replace the old files and press **Reload** on the extension card.
+
+          Version in `manifest.json`: **0.7.5**.
+          EOF
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view web-v0.7.5 >/dev/null 2>&1; then
+            gh release upload web-v0.7.5 zoom-auto-admit-web.zip --clobber
+            gh release edit web-v0.7.5 \
+              --title "Zoom Auto Admit Web v0.7.5" \
+              --notes-file release-notes.md \
+              --latest
+          else
+            gh release create web-v0.7.5 zoom-auto-admit-web.zip \
+              --title "Zoom Auto Admit Web v0.7.5" \
+              --notes-file release-notes.md \
+              --target "$GITHUB_SHA" \
+              --latest
+          fi
