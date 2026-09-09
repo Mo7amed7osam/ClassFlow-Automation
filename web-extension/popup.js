@@ -63,12 +63,15 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   renderStatus();
 });
 
-chrome.storage.local.get({ attendanceSession: null }, ({ attendanceSession }) => {
-  if (!attendanceSession?.active) return;
-  const count = Object.keys(attendanceSession.observed || {}).length;
-  attendanceSummaryEl.textContent = `${count} unique participant${count === 1 ? "" : "s"} captured`;
-});
-
+(async()=>{
+  const tab=await activeTab();
+  if(!tab?.id)return;
+  const reply=await chrome.runtime.sendMessage({type:"attendanceContext",sourceTabId:tab.id});
+  if(!reply?.sessionId)return;
+  const data=await chrome.runtime.sendMessage({type:"listAttendance"});
+  const meeting=data.sessions?.[reply.sessionId];
+  if(meeting)attendanceSummaryEl.textContent=`${meeting.name}: ${Object.keys(meeting.observed||{}).length} names captured`;
+})();
 for (const key of TOGGLES) {
   document.getElementById(key).addEventListener("change", (event) => {
     chrome.storage.local.set({ [key]: event.target.checked });
@@ -93,8 +96,8 @@ document.getElementById("dump").addEventListener("click", async () => {
   chrome.tabs.sendMessage(tab.id, { type: "dump" }, () => void chrome.runtime.lastError);
 });
 
-document.getElementById("openAttendance").addEventListener("click", () => {
-  chrome.tabs.create({ url: chrome.runtime.getURL("attendance.html") });
+document.getElementById("openAttendance").addEventListener("click", async () => {
+  const tab=await activeTab(); chrome.tabs.create({ url: chrome.runtime.getURL("attendance.html") + (tab?.id ? "?sourceTabId="+tab.id : "") });
 });
 
 // A plain target="_blank" works here, but Chrome closes the popup before the
@@ -105,3 +108,4 @@ document.getElementById("credit").addEventListener("click", (event) => {
 });
 
 detectZoomPage();
+

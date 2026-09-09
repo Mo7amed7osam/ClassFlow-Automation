@@ -18,35 +18,45 @@
       </header>
 
       <section class="card setup">
+        <div class="field grow"><label for="meetingPicker">Saved / recording meetings</label><select id="meetingPicker"><option value="">New meeting</option></select></div>
+        <div class="field grow"><label for="zoomTab">Zoom tab to record</label><select id="zoomTab"><option value="">Choose Zoom meeting</option></select></div>
+        <button id="refreshZoomTabs">Refresh Zoom tabs</button>
         <div class="field grow">
-          <label for="sessionName">Session name</label>
-          <input id="sessionName" placeholder="Example: Data Science — Session 4" />
+          <label for="sessionName">Automatic meeting name</label>
+          <input id="sessionName" readonly placeholder="Meeting 1, Meeting 2, …" />
         </div>
         <button class="primary" id="startSession">Start attendance</button>
         <button id="captureNow">Capture now</button>
         <button class="danger" id="stopSession">Stop</button>
+        <button class="primary" id="finalizeAttendance">Finalize attendance</button>
       </section>
+      <p id="finalizeStatus" class="status-line" role="status" aria-live="polite"></p>
+      <p id="meetingStatus" class="status-line" role="status"></p>
 
       <section class="grid">
         <article class="card">
           <div class="section-title"><div><h2>Official roster</h2><p>One student per line, or import a CSV/TXT file.</p></div><b id="rosterCount">0</b></div>
+          <label for="savedRosters">Saved rosters</label><div class="inline"><select id="savedRosters"><option value="">Choose a saved roster</option></select><button id="loadRoster">Load roster</button><button class="danger" id="deleteRoster">Delete saved</button></div><label for="rosterName">Roster name</label><input id="rosterName" placeholder="Example: Sunday group" /><p class="status-line" id="rosterStatus" role="status"></p>
           <textarea id="roster" rows="13" placeholder="Ahmed Mohamed&#10;Mariam Ali&#10;Youssef Hassan"></textarea>
           <div class="actions">
             <label class="file-button">Import file<input id="rosterFile" type="file" accept=".csv,.txt,text/csv,text/plain" /></label>
+            <button id="cleanRoster">Clean roster</button>
+            <button id="cleanRosterAI">Clean with AI</button>
             <button id="saveRoster">Save roster</button>
             <button id="clearRoster">Clear</button>
           </div>
+          <p class="status-line">Local cleaning automatically ignores rows such as <b>Joined</b> and <b>Not-Joined</b>. AI cleaning is optional for messy copied tables.</p>
         </article>
 
         <article class="card">
-          <div class="section-title"><div><h2>OpenRouter AI</h2><p>Used only for names local matching cannot resolve.</p></div><span class="privacy">Stored locally</span></div>
+          <div class="section-title"><div><h2>OpenRouter AI</h2><p>Reviews uncertain matches and names local matching cannot resolve.</p></div><span class="privacy">Stored locally</span></div>
           <label for="apiKey">API key</label>
           <div class="inline"><input id="apiKey" type="password" autocomplete="off" placeholder="sk-or-v1-…" /><button id="saveKey">Save key</button><button id="clearKey">Clear</button></div>
           <p class="status-line" id="keyStatus">No API key stored.</p>
           <label for="model">Model</label>
           <input id="model" value="openai/gpt-4o-mini" />
-          <button class="primary wide" id="runAI">Match unresolved names with AI</button>
-          <p class="status-line" id="aiStatus">Local matching works without an API key.</p>
+          <button class="primary wide" id="runAI">Match unresolved / review names with AI</button>
+          <button id="cancelAI" hidden>Cancel matching</button><progress id="aiProgress" value="0" max="1" hidden></progress><p class="status-line" id="aiStatus" role="status" aria-live="polite">Local matching works without an API key.</p>
         </article>
       </section>
 
@@ -59,20 +69,28 @@
 
       <section class="card results-card">
         <div class="section-title"><div><h2>Results</h2><p>Review uncertain matches before exporting.</p></div><div class="actions"><button id="recalculate">Recalculate</button><button class="primary" id="exportCSV">Export CSV</button></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Official name</th><th>Status</th><th>Matched Zoom name</th><th>Confidence</th></tr></thead><tbody id="results"></tbody></table></div>
+        <p id="memoryStatus" class="status-line" style="padding:0 20px" role="status"></p><div class="table-wrap"><table><thead><tr><th>Official name</th><th>Status</th><th>Matched Zoom name</th><th>Confidence / Review</th><th>Admissions this session</th><th>Admitted at</th></tr></thead><tbody id="results"></tbody></table></div>
         <div id="emptyState" class="empty">Add a roster and start attendance to see results.</div>
       </section>
 
+      <section class="card observed-card"><div class="section-title"><div><h2>Waiting-room admissions</h2><p>Counts each named Admit action immediately in this session, including repeat admissions. Confirmation in Participants is tracked separately.</p></div></div><p id="admissionMeta" class="status-line"></p><div class="table-wrap"><table><thead><tr><th>Zoom name</th><th>Admit count this session</th><th>Last admitted</th><th>All admission times</th></tr></thead><tbody id="admissionRows"></tbody></table></div><div class="table-wrap" style="margin-top:16px"><h3>Unmatched waiting-room visitors</h3><table><thead><tr><th>Zoom name</th><th>Admit count this session</th><th>First seen</th><th>Last seen</th></tr></thead><tbody id="unmatchedWaitingRows"></tbody></table></div></section>
       <section class="card observed-card">
         <div class="section-title"><div><h2>Captured Zoom names</h2><p id="captureMeta">No snapshots yet.</p></div><button id="clearCaptured">Clear captured names</button></div>
         <div id="observedNames" class="chips"></div>
         <div class="unmatched-block">
-          <h3>Captured but not matched <span id="unmatchedObservedCount">0</span></h3>
-          <p>Seen in Zoom, but not assigned to any student in the roster.</p>
+          <h3>Zoom names awaiting assignment <span id="unmatchedObservedCount">0</span></h3>
+          <p id="matchingSummary"></p>
+          <p>A student can use more than one Zoom name. If you recognize an extra name, link it to that student, even if they are already present. Unrecognized names remain unassigned.</p>
+          <div id="additionalNames" class="chips"></div>
           <div id="unmatchedObservedNames" class="chips"></div>
         </div>
       </section>
     </main>
+    <script src="name-memory.js"></script>
+    <script src="meeting-source.js"></script>
     <script src="attendance.js"></script>
+    <script src="meeting-ui.js"></script>
   </body>
 </html>
+
+
