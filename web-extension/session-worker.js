@@ -95,7 +95,7 @@ async function admissionAttempt(message,sender) {
   const events=(message.events||[]).filter(e=>e.eventId && typeof e.name==="string" && e.name.trim() && e.name.length<=120);
   // The Admit notification and Participants list can live in different frames.
   if(!events.length) {
-    const candidates=[...new Set(Object.values(session.waitingFrames || {}).filter(f=>Date.now()-f.at<5000).flatMap(f=>f.names))]
+    const candidates=[...new Set(Object.values(session.waitingFrames || {}).filter(f=>Date.now()-f.at<10000).flatMap(f=>f.names))]
       .filter(name=>typeof name==='string' && name.trim() && name.length<=120)
       .filter(name=>!Object.values(session.waitingAdmissions).some(e=>e.name.toLocaleLowerCase()===name.toLocaleLowerCase()));
     if(candidates.length===1 || (message.kind==='admitAll' && candidates.length)) {
@@ -184,4 +184,32 @@ async function stopSources(predicate) {
 chrome.tabs.onRemoved.addListener(tabId=>{serialize(()=>stopSources(source=>source?.tabId===tabId));});
 chrome.tabs.onUpdated.addListener((tabId,change)=>{if(change.url) serialize(()=>stopSources(source=>source?.tabId===tabId && source.meetingKey!==MeetingSource.key(change.url)));});
 chrome.runtime.onStartup.addListener(()=>{serialize(()=>stopSources(()=>true));});
+
+// After an update or reload, open Zoom tabs keep the old, disconnected copy of
+// the content script, which can no longer admit anyone. Inject the new copy so
+// the meeting doesn't have to be refreshed (and rejoined).
+// Chrome match-pattern semantics: "*." also matches the bare host, ports are ignored.
+function urlMatches(url,pattern) {
+  const [,scheme,host,path]=pattern.match(/^(\*|[a-z-]+):\/\/([^/]*)(\/.*)$/) || [];
+  let target;try {target=new URL(url);} catch {return false;}
+  const glob=value=>new RegExp("^"+value.split("*").map(part=>part.replace(/[.+?^${}()|[\]\\/]/g,"\\$&")).join(".*")+"$");
+  const schemeOk=scheme==="*" ? /^https?:$/.test(target.protocol) : target.protocol===scheme+":";
+  const hostOk=host==="*" || target.hostname===host.replace(/^\*\./,"") || (host.startsWith("*.") && target.hostname.endsWith(host.slice(1)));
+  return Boolean(path) && schemeOk && hostOk && glob(path).test(target.pathname+target.search);
+}
+async function injectIntoTab(tabId,script,attempt=0) {
+  // Only frames that finished loading and have no running copy: a loading frame
+  // still gets the manifest copy on its own, and two copies in one frame collide.
+  const probes=await chrome.scripting.executeScript({target:{tabId,allFrames:true},func:()=>({running:Boolean(globalThis.zoomAutoAdmitRunning),loaded:document.readyState==="complete",url:location.href})});
+  const frames=probes.filter(p=>p.result && script.matches.some(pattern=>urlMatches(p.result.url,pattern)));
+  const frameIds=frames.filter(p=>!p.result.running && p.result.loaded).map(p=>p.frameId);
+  if(frameIds.length) await chrome.scripting.executeScript({target:{tabId,frameIds},files:script.js});
+  if(frames.some(p=>!p.result.loaded) && attempt<5) setTimeout(()=>injectIntoTab(tabId,script,attempt+1).catch(()=>{}),2000);
+}
+chrome.runtime.onInstalled.addListener(async({reason})=>{
+  if(reason!=="install" && reason!=="update") return;
+  const [script]=chrome.runtime.getManifest().content_scripts;
+  const tabs=await chrome.tabs.query({url:script.matches});
+  for(const tab of tabs) injectIntoTab(tab.id,script).catch(()=>{});
+});
 chrome.storage.onChanged.addListener((changes,area)=>{if(area==="local"&&changes.admittedCount) paintBadge(changes.admittedCount.newValue || 0);});

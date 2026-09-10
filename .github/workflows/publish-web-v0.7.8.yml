@@ -1,10 +1,10 @@
-name: Publish web v0.7.5 release
+name: Publish web v0.7.8 release
 
 on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/publish-web-v0.7.5.yml"
+      - ".github/workflows/publish-web-v0.7.8.yml"
 
 permissions:
   contents: write
@@ -20,7 +20,7 @@ jobs:
         shell: bash
         run: |
           VERSION=$(node -p "require('./web-extension/manifest.json').version")
-          test "$VERSION" = "0.7.5"
+          test "$VERSION" = "0.7.8"
 
       - name: Package extension
         shell: bash
@@ -51,28 +51,30 @@ jobs:
         shell: bash
         run: |
           cat > release-notes.md <<'EOF'
-          # Zoom Auto Admit Web v0.7.5
+          # Zoom Auto Admit Web v0.7.8
 
-          This release updates the Chrome/Edge extension to v0.7.5.
+          This release updates the Chrome/Edge extension to v0.7.8 and replaces v0.7.5.
 
           ## What's new
-          - Select the Zoom meeting/tab that attendance should record.
-          - Automatic meeting naming and saved/recording meeting selection.
-          - Finalize attendance from the Attendance page.
-          - Improved meeting-source detection and attendance session handling.
-          - Added meeting UI, name memory, and session worker modules.
-          - Keeps roster matching, unmatched-name review, OpenRouter matching, and CSV attendance export.
-          - Keeps automatic waiting-room admission support.
+          - Admits waiting participants whose **Admit** button only appears on hover — no more hovering by hand.
+          - Keeps admitting while the Zoom tab or window is in the background or minimized.
+          - Reopens the Participants panel when screen sharing closes it (new **Keep Participants open** switch in the popup).
+          - Presses **Admit to main session** while the host is in a breakout room.
+          - Opens the waiting room from Zoom's "See waiting room" notification when the Participants panel is closed.
+          - Updating or reloading the extension no longer requires refreshing the Zoom meeting: the new version is loaded into open Zoom tabs automatically.
+          - Fixes the repeated "Extension context invalidated" error after reloading the extension.
+          - Fewer storage writes during meetings, and attendance capture reads the frame that shows the Participants list.
 
-          ## Install / test
+          ## Install / update
           1. Download `zoom-auto-admit-web.zip` from Assets below.
           2. Extract the ZIP.
           3. Open `chrome://extensions` or `edge://extensions`.
           4. Enable **Developer mode**.
           5. Click **Load unpacked** and select the extracted `zoom-auto-admit-web` folder.
           6. If updating an existing installation, replace the old files and press **Reload** on the extension card.
+          7. Updating from v0.7.5 or earlier: refresh the open Zoom tab once. Later updates apply without a refresh.
 
-          Version in `manifest.json`: **0.7.5**.
+          Version in `manifest.json`: **0.7.8**. New permission: `scripting` (used only to load the updated extension into open Zoom tabs).
           EOF
 
       - name: Publish GitHub release
@@ -80,16 +82,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          if gh release view web-v0.7.5 >/dev/null 2>&1; then
-            gh release upload web-v0.7.5 zoom-auto-admit-web.zip --clobber
-            gh release edit web-v0.7.5 \
-              --title "Zoom Auto Admit Web v0.7.5" \
+          if gh release view web-v0.7.8 >/dev/null 2>&1; then
+            gh release upload web-v0.7.8 zoom-auto-admit-web.zip --clobber
+            gh release edit web-v0.7.8 \
+              --title "Zoom Auto Admit Web v0.7.8" \
               --notes-file release-notes.md \
               --latest
           else
-            gh release create web-v0.7.5 zoom-auto-admit-web.zip \
-              --title "Zoom Auto Admit Web v0.7.5" \
+            gh release create web-v0.7.8 zoom-auto-admit-web.zip \
+              --title "Zoom Auto Admit Web v0.7.8" \
               --notes-file release-notes.md \
               --target "$GITHUB_SHA" \
               --latest
+          fi
+
+      # v0.7.8 replaces v0.7.5. Removed only after the new release exists, so a
+      # failed publish never leaves the repo without a release. The tag stays.
+      - name: Remove superseded release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view web-v0.7.5 >/dev/null 2>&1; then
+            gh release delete web-v0.7.5 --yes
           fi

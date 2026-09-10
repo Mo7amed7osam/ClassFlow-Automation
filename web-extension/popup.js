@@ -2,10 +2,11 @@ const DEFAULTS = {
   enabled: true,
   preferAdmitAll: true,
   debug: false,
+  keepParticipantsOpen: true,
   admittedCount: 0
 };
 
-const TOGGLES = ["enabled", "preferAdmitAll", "debug"];
+const TOGGLES = ["enabled", "preferAdmitAll", "keepParticipantsOpen", "debug"];
 
 const statusEl = document.getElementById("status");
 const statusText = document.getElementById("statusText");
@@ -49,9 +50,14 @@ async function detectZoomPage() {
     // No content script in this tab — not a Zoom meeting page.
     onZoomPage = false;
   }
+  // A Zoom tab that doesn't answer was opened before the extension was
+  // reloaded; its old script has stopped and the tab needs a refresh.
+  const zoomTab = /^https:\/\/([^/]+\.)?zoom\.us\/(wc|j|s|w)\//i.test(tab.url || "");
   hintEl.textContent = onZoomPage
     ? "Open the Participants panel so the waiting-room controls exist in the page."
-    : "Open a Zoom meeting at app.zoom.us as host, then reopen this popup.";
+    : zoomTab
+      ? "Refresh this Zoom tab (F5) so auto admit starts, then reopen this popup."
+      : "Open a Zoom meeting at app.zoom.us as host, then reopen this popup.";
   renderStatus();
 }
 
@@ -69,9 +75,9 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   const reply=await chrome.runtime.sendMessage({type:"attendanceContext",sourceTabId:tab.id});
   if(!reply?.sessionId)return;
   const data=await chrome.runtime.sendMessage({type:"listAttendance"});
-  const meeting=data.sessions?.[reply.sessionId];
+  const meeting=data?.sessions?.[reply.sessionId];
   if(meeting)attendanceSummaryEl.textContent=`${meeting.name}: ${Object.keys(meeting.observed||{}).length} names captured`;
-})();
+})().catch(()=>{});
 for (const key of TOGGLES) {
   document.getElementById(key).addEventListener("change", (event) => {
     chrome.storage.local.set({ [key]: event.target.checked });

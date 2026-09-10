@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Zoom Auto Admit (Web)",
-  "version": "0.7.5",
+  "version": "0.7.8",
   "description": "Automatically admits Zoom Web Client participants and records attendance.",
   "permissions": [
-    "storage"
+    "storage",
+    "scripting"
   ],
   "host_permissions": [
     "https://*.zoom.us/*",
