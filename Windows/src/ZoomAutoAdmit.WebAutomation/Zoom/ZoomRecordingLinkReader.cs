@@ -15,10 +15,34 @@ public sealed record ZoomRecordingEntry(string Topic, string DetailUrl)
     public TimeSpan? Duration { get; init; }
 }
 
+/// <summary>Why a recording could not be read, for callers that answer differently to each.</summary>
+public enum ZoomRecordingFailure
+{
+    None,
+    /// <summary>The browser profile is not signed in to Zoom.</summary>
+    NotSignedIn,
+    /// <summary>No recording of this group matches the requested day and time.</summary>
+    NotFound,
+    /// <summary>The recording Zoom handed over starts outside the requested session.</summary>
+    TimeMismatch,
+    /// <summary>Anything else: a page that did not load, a button that did not answer.</summary>
+    Failed,
+}
+
 public sealed record ZoomRecordingLinkResult(bool IsSuccess, string Message, string? ShareUrl = null)
 {
+    public ZoomRecordingFailure FailureKind { get; init; }
+    /// <summary>The recording that was picked, when one was.</summary>
+    public ZoomRecordingEntry? Recording { get; init; }
+    /// <summary>
+    /// When the recording really started, read from the share link itself rather than from the
+    /// list's text - the list prints times in the Zoom account's own time zone.
+    /// </summary>
+    public DateTimeOffset? StartedAtUtc { get; init; }
+
     public static ZoomRecordingLinkResult Success(string shareUrl, string message) => new(true, message, shareUrl);
-    public static ZoomRecordingLinkResult Failure(string message) => new(false, message);
+    public static ZoomRecordingLinkResult Fail(ZoomRecordingFailure failure, string message) =>
+        new(false, message) { FailureKind = failure };
 }
 
 /// <summary>
@@ -29,11 +53,35 @@ public sealed record ZoomRecordingLinkResult(bool IsSuccess, string Message, str
 ///
 /// Nothing here changes a recording. It opens pages and presses one copy button.
 /// </summary>
-public sealed class ZoomRecordingLinkReader(ZoomProfileManager? profiles = null)
+/// <param name="zoomDisplayTimeZone">
+/// The time zone of the Zoom account's profile, which is the zone My Recordings prints its times in.
+/// Given, those times are converted to this computer's time before a recording is picked. Not
+/// given, they are read as they are - which only works when the two zones are the same.
+/// </param>
+/// <param name="localTimeZone">This computer's zone; the requested day and time are in it.</param>
+public sealed class ZoomRecordingLinkReader(
+    ZoomProfileManager? profiles = null,
+    TimeZoneInfo? zoomDisplayTimeZone = null,
+    TimeZoneInfo? localTimeZone = null)
 {
     private const string RecordingsUrl = "https://zoom.us/recording/";
     private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(30);
     private readonly ZoomProfileManager _profiles = profiles ?? new ZoomProfileManager();
+    private readonly TimeZoneInfo _local = localTimeZone ?? TimeZoneInfo.Local;
+
+    /// <summary>
+    /// The environment variable that names the Zoom account's time zone, as a Windows or IANA id
+    /// (for example "Pacific Standard Time" or "America/Los_Angeles").
+    /// </summary>
+    public const string ZoomTimeZoneVariable = "ZOOM_AUTO_ADMIT_ZOOM_TIMEZONE";
+
+    /// <summary>The configured Zoom account time zone, or null when none (or an unknown one) is set.</summary>
+    public static TimeZoneInfo? ConfiguredZoomTimeZone(Func<string, string?>? readVariable = null)
+    {
+        string? id = (readVariable ?? Environment.GetEnvironmentVariable)(ZoomTimeZoneVariable)?.Trim();
+        if (string.IsNullOrEmpty(id)) return null;
+        return TimeZoneInfo.TryFindSystemTimeZoneById(id, out var zone) ? zone : null;
+    }
 
     /// <param name="group">The recording's name, which is the group, for example CAI5_AIS4_S7.</param>
     /// <param name="profileName">The signed-in browser profile that owns the recordings.</param>
@@ -65,21 +113,21 @@ public sealed class ZoomRecordingLinkReader(ZoomProfileManager? profiles = null)
         {
             await page.GotoAsync(RecordingsUrl, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
             if (page.Url.Contains("/signin", StringComparison.OrdinalIgnoreCase))
-                return ZoomRecordingLinkResult.Failure(
+                return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.NotSignedIn,
                     $"The '{profileName}' browser profile is not signed in to Zoom, so the recordings could not be read.");
 
             step = "searching the recordings for the group";
             await SearchAsync(page, group, cancellationToken);
 
             step = "finding the group's recording";
-            var entries = await ReadEntriesAsync(page);
+            var entries = ToLocalTimes(await ReadEntriesAsync(page), zoomDisplayTimeZone, _local);
             var picked = PickRecording(entries, group, day, startTime);
             if (picked == null)
             {
                 string when = day is { } d
                     ? $" on {d:yyyy-MM-dd}{(startTime is { } t ? $" around {t:HH\\:mm}" : string.Empty)}"
                     : string.Empty;
-                return ZoomRecordingLinkResult.Failure(entries.Count == 0
+                return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.NotFound, entries.Count == 0
                     ? $"No cloud recording is listed for {group}{when}."
                     : $"None of the {entries.Count} listed recordings is {group}{when}.");
             }
@@ -97,7 +145,7 @@ public sealed class ZoomRecordingLinkReader(ZoomProfileManager? profiles = null)
             try { await copy.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 20000 }); }
             catch (TimeoutException)
             {
-                return ZoomRecordingLinkResult.Failure(
+                return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.Failed,
                     $"The recording page for {group} does not offer a shareable link.");
             }
             // Zoom answers this button on the clipboard, not on the page, so the clipboard has to
@@ -109,15 +157,25 @@ public sealed class ZoomRecordingLinkReader(ZoomProfileManager? profiles = null)
 
             string link = await WaitForClipboardLinkAsync(page, cancellationToken);
             if (link.Length == 0)
-                return ZoomRecordingLinkResult.Failure(
+                return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.Failed,
                     $"The shareable link for {group} was pressed but nothing was copied.");
-            return ZoomRecordingLinkResult.Success(link, $"{group}: the recording's shareable link was copied.");
+
+            // The list's text is in the Zoom account's clock; the link carries the real start in
+            // UTC. Checking the link is what makes a wrong time zone setting fail safe: it can make
+            // a recording go unfound, but it can never put the wrong week's video on a session.
+            var startedAt = ReadShareLinkStart(link);
+            if (!StartsWithinSession(startedAt, day, startTime, _local, out string why))
+                return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.TimeMismatch,
+                    $"{group}: {why} Nothing was attached. Check {ZoomTimeZoneVariable} against the Zoom profile's time zone.")
+                    with { Recording = picked, StartedAtUtc = startedAt };
+            return ZoomRecordingLinkResult.Success(link, $"{group}: the recording's shareable link was copied.")
+                with { Recording = picked, StartedAtUtc = startedAt };
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             ConsoleLogger.Warn($"[RECORDING] Failed while {step}: {ex.GetType().Name}.");
-            return ZoomRecordingLinkResult.Failure($"Zoom did not respond while {step}.");
+            return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.Failed, $"Zoom did not respond while {step}.");
         }
     }
 
@@ -163,6 +221,58 @@ public sealed class ZoomRecordingLinkReader(ZoomProfileManager? profiles = null)
             });
         }
         return entries;
+    }
+
+    /// <summary>
+    /// Moves each listed time from the Zoom account's clock to this computer's. Without a Zoom zone
+    /// the entries are returned untouched, which is how this behaved before the zone was known.
+    /// </summary>
+    public static IReadOnlyList<ZoomRecordingEntry> ToLocalTimes(
+        IReadOnlyList<ZoomRecordingEntry> entries, TimeZoneInfo? zoomZone, TimeZoneInfo localZone)
+    {
+        if (zoomZone == null) return entries;
+        return [.. entries.Select(entry => entry.RecordedAt is { } shown
+            ? entry with { RecordedAt = TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(shown, DateTimeKind.Unspecified), zoomZone, localZone) }
+            : entry)];
+    }
+
+    /// <summary>
+    /// The real start of a recording, from the "startTime" Zoom puts in every share link (Unix
+    /// milliseconds, UTC). Null when the link carries none.
+    /// </summary>
+    public static DateTimeOffset? ReadShareLinkStart(string? shareUrl)
+    {
+        if (string.IsNullOrWhiteSpace(shareUrl)) return null;
+        var match = System.Text.RegularExpressions.Regex.Match(shareUrl, @"[?&]startTime=(\d{10,13})(?:&|$)");
+        if (!match.Success || !long.TryParse(match.Groups[1].Value, out long value)) return null;
+        return match.Groups[1].Value.Length >= 13
+            ? DateTimeOffset.FromUnixTimeMilliseconds(value)
+            : DateTimeOffset.FromUnixTimeSeconds(value);
+    }
+
+    /// <summary>
+    /// Whether a recording that really started at <paramref name="startedAtUtc"/> belongs to the
+    /// requested session: the same local day and, when a time is given, inside that session's hours.
+    /// A link with no start is not evidence either way and is let through, as before.
+    /// </summary>
+    public static bool StartsWithinSession(
+        DateTimeOffset? startedAtUtc, DateOnly? day, TimeOnly? startTime, TimeZoneInfo localZone, out string reason)
+    {
+        reason = string.Empty;
+        if (startedAtUtc is not { } started || (day == null && startTime == null)) return true;
+        var local = TimeZoneInfo.ConvertTime(started, localZone).DateTime;
+        string at = local.ToString("yyyy-MM-dd HH:mm");
+        if (day is { } wantedDay && DateOnly.FromDateTime(local) != wantedDay)
+        {
+            reason = $"the recording Zoom handed over started {at} local time, not on {wantedDay:yyyy-MM-dd}.";
+            return false;
+        }
+        if (startTime is { } wantedTime && !IsWithinSession(TimeOnly.FromDateTime(local), wantedTime))
+        {
+            reason = $"the recording Zoom handed over started {at} local time, outside the {wantedTime:HH':'mm} session.";
+            return false;
+        }
+        return true;
     }
 
     /// <summary>

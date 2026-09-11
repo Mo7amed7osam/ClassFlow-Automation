@@ -1,7 +1,7 @@
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Models;
-using ZoomAutoAdmit.WebAutomation.Lms;
-using ZoomAutoAdmit.WebAutomation.Zoom;
+using ZoomAutoAdmit.Inspector.Runtime;
+using ZoomAutoAdmit.WebAutomation.Recordings;
 
 namespace ZoomAutoAdmit.Inspector.Commands;
 
@@ -9,10 +9,16 @@ namespace ZoomAutoAdmit.Inspector.Commands;
 /// The step after a class is finished: take the cloud recording's shareable link and put it on
 /// the session in the dashboard.
 ///
-///   lms-record-link --group CAI5_AIS4_S7 [--profile s7] [--day 2026-09-01] [--dry-run] [--headed]
+///   lms-record-link --group CAI5_AIS4_S7 [--profile s7] [--day 2026-09-01] [--time 18:58]
+///                   [--dry-run] [--headed] [--replace]
 ///
 /// --dry-run does everything except press Save, which is how the whole path gets checked against
-/// a real session without writing to it.
+/// a real session without writing to it. Without --profile the account's own browser profile is
+/// used - the one its meetings sign in with. Day and time are this computer's local time.
+///
+/// It runs through the same workflow as the HTTP API (serve-api), so both behave identically.
+/// Exit codes: 0 done, 1 bad arguments, 2 the recording was not found or Zoom failed,
+/// 3 the dashboard failed, 4 a browser profile was busy.
 /// </summary>
 public static class LmsRecordLinkCommand
 {
@@ -25,44 +31,30 @@ public static class LmsRecordLinkCommand
             return 1;
         }
 
-        // The recordings live under the account that ran the meeting, so its own browser profile
-        // is the one signed in to Zoom. --profile overrides it for an account owned elsewhere.
-        string profileName = string.Equals(options.WebProfile, "default", StringComparison.OrdinalIgnoreCase)
-            ? group.Trim()
-            : options.WebProfile;
-
-        ConsoleLogger.Info($"Reading the recording link for {group} from the '{profileName}' profile...");
-        var recording = await new ZoomRecordingLinkReader().ReadAsync(
-            group.Trim(), profileName,
+        var processor = RecordingWorkflow.Create(RecordingWorkflow.ToConsole);
+        var outcome = await processor.ProcessAsync(new RecordingLinkRequest
+        {
+            Group = group.Trim(),
             // The same group records the same name every week, so the session's own day and time
             // are what say which recording this is.
-            day: options.LmsDay ?? DateOnly.FromDateTime(DateTime.Now),
-            startTime: options.LmsTime,
-            headed: options.WebHeaded, keepBrowserOpen: false, cancellationToken: cancellationToken);
-        if (!recording.IsSuccess || recording.ShareUrl == null)
+            Date = options.LmsDay,
+            StartTime = options.LmsTime,
+            Profile = options.WebProfile,
+            Headed = options.WebHeaded,
+            DryRun = options.DryRun,
+            ReplaceExisting = options.ReplaceExisting,
+            // Watching it by hand: the dashboard stays open afterwards, as it always did.
+            KeepBrowserOpen = options.WebHeaded,
+        }, cancellationToken);
+
+        if (outcome.IsSuccess) ConsoleLogger.Success(outcome.Message);
+        else ConsoleLogger.Error(outcome.Message);
+        return outcome.Status switch
         {
-            ConsoleLogger.Error(recording.Message);
-            return 2;
-        }
-        // Enough of the link to see it is the right one, without printing a link that opens the
-        // recording to anyone who reads the log.
-        ConsoleLogger.Success($"{recording.Message} ({Shorten(recording.ShareUrl)})");
-
-        var runner = new LmsSessionRunner(new LmsCredentialStore());
-        var attached = await runner.AttachRecordLinkAsync(
-            group.Trim(),
-            recording.ShareUrl,
-            startTime: options.LmsTime,
-            day: options.LmsDay,
-            headed: options.WebHeaded,
-            dryRun: options.DryRun,
-            keepBrowserOpen: options.WebHeaded,
-            replaceExisting: options.ReplaceExisting,
-            cancellationToken: cancellationToken);
-        if (attached.IsSuccess) ConsoleLogger.Success(attached.Message);
-        else ConsoleLogger.Error(attached.Message);
-        return attached.IsSuccess ? 0 : 3;
+            RecordingLinkStatus.Attached or RecordingLinkStatus.AlreadyExists or RecordingLinkStatus.DryRun => 0,
+            RecordingLinkStatus.RecordingNotFound or RecordingLinkStatus.ZoomFailed => 2,
+            RecordingLinkStatus.Busy => 4,
+            _ => 3,
+        };
     }
-
-    private static string Shorten(string url) => url.Length <= 48 ? url : url[..48] + "...";
 }

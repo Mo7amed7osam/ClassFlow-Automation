@@ -46,6 +46,8 @@ internal static class Program
                 "lms-record-link" => await LmsRecordLinkCommand.ExecuteAsync(options),
                 "lms-attendance" => await LmsAttendanceCommand.ExecuteAsync(options),
                 "repair-schedules" => await RepairSchedulesCommand.ExecuteAsync(options),
+                "serve-api" => await RecordingApiCommand.ServeAsync(options),
+                "api-autostart" => RecordingApiCommand.Autostart(options),
                 _ => HandleUnknownCommand(options.Command)
             };
         }
@@ -104,6 +106,8 @@ internal static class Program
         Console.WriteLine("  web-dom-probe             Print the Zoom Web client's frames and buttons (read-only)");
         Console.WriteLine("  lms-run-session           Press Run Session on the DEPI dashboard for --group");
         Console.WriteLine("  lms-record-link           Copy the group's Zoom recording link onto its finished session");
+        Console.WriteLine("  serve-api                 Run the recording API for n8n on 127.0.0.1 (see RECORDING-API.md)");
+        Console.WriteLine("  api-autostart             --enable / --disable starting the recording API at sign-in");
         Console.WriteLine("  meeting-start             Run the complete allocated meeting lifecycle");
         Console.WriteLine("  background-zoom-test      Safe diagnostic probe of background window capture & input");
         Console.WriteLine("  inspect                   Print the Zoom UI Automation element tree (read-only)");

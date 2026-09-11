@@ -38,6 +38,12 @@ public class CliOptions
     public string? PresentNames { get; set; }
     /// <summary>Correct an attendance already taken, through "View details".</summary>
     public bool CorrectAttendance { get; set; }
+    /// <summary>serve-api: hide the console window, for a run started at sign-in.</summary>
+    public bool ApiBackground { get; set; }
+    /// <summary>api-autostart: start the recording API at every sign-in.</summary>
+    public bool AutostartEnable { get; set; }
+    /// <summary>api-autostart: stop starting it at sign-in.</summary>
+    public bool AutostartDisable { get; set; }
     /// <summary>Which day of sessions to look at. Today when it is not given.</summary>
     public DateOnly? LmsDay { get; set; }
     /// <summary>The session's own start time, which separates two classes on the same day.</summary>
@@ -69,7 +75,9 @@ public class CliOptions
         "lms-run-session",
         "lms-record-link",
         "lms-attendance",
-        "repair-schedules"
+        "repair-schedules",
+        "serve-api",
+        "api-autostart"
     };
 
     public static CliOptions Parse(string[] args)
@@ -193,6 +201,18 @@ public class CliOptions
             else if (arg.Equals("--correct", StringComparison.OrdinalIgnoreCase))
             {
                 options.CorrectAttendance = true;
+            }
+            else if (arg.Equals("--background", StringComparison.OrdinalIgnoreCase))
+            {
+                options.ApiBackground = true;
+            }
+            else if (arg.Equals("--enable", StringComparison.OrdinalIgnoreCase))
+            {
+                options.AutostartEnable = true;
+            }
+            else if (arg.Equals("--disable", StringComparison.OrdinalIgnoreCase))
+            {
+                options.AutostartDisable = true;
             }
             else if (arg.Equals("--day", StringComparison.OrdinalIgnoreCase))
             {

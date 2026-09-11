@@ -4,11 +4,32 @@ using ZoomAutoAdmit.WebAutomation.Browser;
 
 namespace ZoomAutoAdmit.WebAutomation.Lms;
 
+/// <summary>Why a dashboard step did not happen, for callers that answer differently to each.</summary>
+public enum LmsFailure
+{
+    None,
+    /// <summary>No dashboard sign-in is saved on this computer.</summary>
+    NotSignedIn,
+    /// <summary>The dashboard lists no session for this group on that day (and time).</summary>
+    SessionNotFound,
+    /// <summary>The session is there but not finished, so it does not offer a record link yet.</summary>
+    SessionNotFinished,
+    /// <summary>The link handed in is not a Zoom recording link.</summary>
+    InvalidLink,
+    /// <summary>Anything else: a page that did not load, a save that did not take.</summary>
+    Failed,
+}
+
 /// <summary>What one attempt to start a session on the LMS did.</summary>
 public sealed record LmsRunResult(bool IsSuccess, string Message)
 {
+    public LmsFailure FailureKind { get; init; }
+    /// <summary>The session already carried a recording link, and it was left as it was.</summary>
+    public bool AlreadyExists { get; init; }
+
     public static LmsRunResult Success(string message) => new(true, message);
-    public static LmsRunResult Failure(string message) => new(false, message);
+    public static LmsRunResult Failure(string message) => new(false, message) { FailureKind = LmsFailure.Failed };
+    public static LmsRunResult Fail(LmsFailure failure, string message) => new(false, message) { FailureKind = failure };
 }
 
 /// <summary>
@@ -33,6 +54,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     private const string LoginUrl = "https://dashboard.depi.eyouthbusiness.com/auth/login";
     private const string SessionsUrl = "https://dashboard.depi.eyouthbusiness.com/group_admin/sessions";
     private const string ProfileName = "lms-dashboard";
+    /// <summary>The browser profile the dashboard is driven with, for anything that must not share it.</summary>
+    public const string DashboardProfile = ProfileName;
     private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(30);
 
     // Signing in makes Chrome offer to save the password. That bubble floats over the page and
@@ -169,10 +192,10 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(group);
         if (!Zoom.ZoomRecordingLinkReader.IsShareLink(recordLink))
-            return LmsRunResult.Failure("That is not a Zoom recording link, so nothing was saved.");
+            return LmsRunResult.Fail(LmsFailure.InvalidLink, "That is not a Zoom recording link, so nothing was saved.");
         var account = credentials.Read();
         if (account == null)
-            return LmsRunResult.Failure("No LMS sign-in is saved. Add it in the app before attaching a recording.");
+            return LmsRunResult.Fail(LmsFailure.NotSignedIn, "No LMS sign-in is saved. Add it in the app before attaching a recording.");
 
         DateOnly date = day ?? DateOnly.FromDateTime(DateTime.Now);
         var profile = _profiles.GetOrCreate(ProfileName);
@@ -191,7 +214,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             step = "opening the session";
             var opened = await OpenSessionAsync(page, group, date, startTime, cancellationToken);
             if (!opened.IsOpen)
-                return LmsRunResult.Failure($"{opened.Reason} Nothing was saved.");
+                return LmsRunResult.Fail(opened.NotListed ? LmsFailure.SessionNotFound : LmsFailure.Failed,
+                    $"{opened.Reason} Nothing was saved.");
 
             step = "looking for Add Record Link";
             // The dashboard calls it "Add Record Link" while the session has none and "Edit Record
@@ -207,7 +231,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
                 // What the page does offer, so a renamed or re-shaped button is visible in the log
                 // instead of leaving "not found" as the only thing anyone can see.
                 ConsoleLogger.Info($"[LMS] The session page offers: {await ListActionsAsync(page)}");
-                return LmsRunResult.Failure(
+                return LmsRunResult.Fail(LmsFailure.SessionNotFinished,
                     $"The session page for {group} offers no Add Record Link" +
                     $"{(state.Length > 0 ? $"; it reads \"{state}\"" : string.Empty)}. " +
                     "The dashboard only offers it once the session is finished.");
@@ -219,7 +243,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             bool alreadyHasLink = buttonText.Contains("Edit", StringComparison.OrdinalIgnoreCase);
             if (alreadyHasLink && !replaceExisting)
                 return LmsRunResult.Success(
-                    $"{group}: the session already has a recording link, so it was left as it is.");
+                    $"{group}: the session already has a recording link, so it was left as it is.")
+                    with { AlreadyExists = true };
 
             step = "opening the record link box";
             await add.ClickAsync();
@@ -572,7 +597,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     }
 
     /// <summary>What one attempt to reach a session's own page ended with.</summary>
-    private sealed record SessionPage(bool IsOpen, string Reason);
+    /// <param name="NotListed">No row for the group was found, as opposed to a row that would not open.</param>
+    private sealed record SessionPage(bool IsOpen, string Reason, bool NotListed = false);
 
     /// <summary>
     /// The list, the row and the session's page, tried more than once. Every step here is the
@@ -585,6 +611,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     {
         const int attempts = 3;
         string reason = $"The {group} session could not be opened.";
+        bool notListed = false;
         for (int attempt = 1; attempt <= attempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -592,12 +619,12 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             {
                 await OpenTodaysSessionsAsync(page, date, group, cancellationToken);
                 var found = await FindSessionRowAsync(page, group, startTime);
-                if (found.Link == null) reason = found.Reason;
+                if (found.Link == null) { reason = found.Reason; notListed = true; }
                 else if (await OpenSessionPageAsync(page, found.Link, group)) return new(true, string.Empty);
-                else reason = $"The row for {group} did not open its session page.";
+                else { reason = $"The row for {group} did not open its session page."; notListed = false; }
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { reason = $"The session list did not answer ({ex.GetType().Name})."; }
+            catch (Exception ex) { reason = $"The session list did not answer ({ex.GetType().Name})."; notListed = false; }
 
             if (attempt < attempts)
             {
@@ -605,7 +632,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
                 await page.WaitForTimeoutAsync(2500);
             }
         }
-        return new(false, reason);
+        return new(false, reason, notListed);
     }
 
     /// <summary>Every clickable thing the page is showing, named, for the log.</summary>
