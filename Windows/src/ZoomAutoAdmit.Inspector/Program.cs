@@ -45,6 +45,7 @@ internal static class Program
                 "lms-run-session" => await LmsSessionCommand.ExecuteAsync(options),
                 "lms-record-link" => await LmsRecordLinkCommand.ExecuteAsync(options),
                 "lms-attendance" => await LmsAttendanceCommand.ExecuteAsync(options),
+                "repair-schedules" => await RepairSchedulesCommand.ExecuteAsync(options),
                 _ => HandleUnknownCommand(options.Command)
             };
         }

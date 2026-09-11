@@ -68,7 +68,8 @@ public class CliOptions
         "web-dom-probe",
         "lms-run-session",
         "lms-record-link",
-        "lms-attendance"
+        "lms-attendance",
+        "repair-schedules"
     };
 
     public static CliOptions Parse(string[] args)

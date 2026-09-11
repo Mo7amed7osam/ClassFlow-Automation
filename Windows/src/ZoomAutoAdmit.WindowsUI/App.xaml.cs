@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Threading;
+using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Inspector.Runtime;
+using ZoomAutoAdmit.WindowsRuntime.Scheduling;
 using ZoomAutoAdmit.WindowsUI.Infrastructure;
 using ZoomAutoAdmit.WindowsUI.Services;
 using ZoomAutoAdmit.WindowsUI.ViewModels;
@@ -61,7 +63,8 @@ public partial class App : Application
 
         try
         {
-            _service = new WindowsUiService(new WindowsRuntimeBootstrapper());
+            var bootstrapper = new WindowsRuntimeBootstrapper();
+            _service = new WindowsUiService(bootstrapper);
             _service.EnableSessionRoleAi(new AiRoleMatcher(new AiCredentialStore(), new AiMatchingService()));
             _service.SessionRoleNotice += notice =>
                 Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show(notice); } catch { } });
@@ -75,6 +78,7 @@ public partial class App : Application
             window.DataContext = _viewModel;
             await _viewModel.InitializeAsync();
             WindowsUiRuntimeLog.Write("VIEWMODELS", "View model initialization completed.");
+            RepairScheduledMeetingsInBackground(bootstrapper);
         }
         catch (Exception ex)
         {
@@ -139,6 +143,30 @@ public partial class App : Application
         e.SetObserved();
         Dispatcher.BeginInvoke(() =>
             ShowErrorDialog("A background service reported an error. The application will stay open.", e.Exception));
+    }
+
+    /// <summary>
+    /// A scheduled meeting's task names its program by full path, so moving the app leaves every
+    /// one of them pointing at a place that is gone - and they fail without a word, because nobody
+    /// is watching a scheduled meeting. Each start checks the upcoming ones and re-points any that
+    /// are broken. It runs off the window's thread: a few seconds of checking must not hold it up.
+    /// </summary>
+    private static void RepairScheduledMeetingsInBackground(WindowsRuntimeBootstrapper bootstrapper)
+    {
+        if (bootstrapper.TaskScheduler is not WindowsTaskSchedulerService scheduler) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await ScheduleTaskRepair.For(bootstrapper.ScheduleStore, scheduler)
+                    .RepairAsync(DateOnly.FromDateTime(DateTime.Now));
+                WindowsUiRuntimeLog.Write("SCHEDULE", result.Summary);
+                foreach (string line in result.Details) WindowsUiRuntimeLog.Write("SCHEDULE", line);
+                // Only something that changed is worth showing in the Logs page.
+                if (result.Repaired > 0 || result.Failed > 0) ConsoleLogger.Info($"[SCHEDULE] {result.Summary}");
+            }
+            catch (Exception ex) { WindowsUiRuntimeLog.Write("SCHEDULE", $"Checking scheduled meetings failed: {ex.GetType().Name}"); }
+        });
     }
 
     private void ReportNonCriticalError(string message, Exception exception)

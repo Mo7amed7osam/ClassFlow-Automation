@@ -122,6 +122,61 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
         }
     }
 
+    /// <summary>
+    /// The program a schedule's task will actually start, or null when no task is registered for
+    /// it. A task that runs a launcher script is followed into the script, because the script is
+    /// where the program's path lives - the task itself only ever names the script.
+    /// </summary>
+    public async Task<string?> ReadTaskTargetAsync(Guid scheduleId, CancellationToken cancellationToken = default)
+    {
+        var (exitCode, stdout, _) = await RunSchtasksAsync(
+            $"/Query /TN \"{GetTaskName(scheduleId)}\" /XML", cancellationToken);
+        if (exitCode != 0 || string.IsNullOrWhiteSpace(stdout)) return null;
+        return ExtractTaskTarget(stdout, path => File.Exists(path) ? File.ReadAllText(path) : null);
+    }
+
+    /// <summary>
+    /// Reads the program out of a task's XML. Three shapes exist: the program named directly, a
+    /// launcher script that names it, and "dotnet" with the program as its first argument. An
+    /// empty string means the task names something that could not be followed, which is as broken
+    /// as a missing program and is reported the same way.
+    /// </summary>
+    public static string ExtractTaskTarget(string taskXml, Func<string, string?> readScript)
+    {
+        XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+        XDocument document;
+        try { document = XDocument.Parse(taskXml.TrimStart('\uFEFF')); }
+        catch (System.Xml.XmlException) { return string.Empty; }
+
+        var exec = document.Descendants(ns + "Exec").FirstOrDefault();
+        string command = Unquote(exec?.Element(ns + "Command")?.Value);
+        string arguments = exec?.Element(ns + "Arguments")?.Value ?? string.Empty;
+        if (command.Length == 0) return string.Empty;
+
+        if (command.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) ||
+            command.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
+        {
+            string? script = readScript(command);
+            return script == null ? command : FirstQuotedProgram(script) ?? string.Empty;
+        }
+
+        if (Path.GetFileName(command).Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase) ||
+            Path.GetFileName(command).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+            return FirstQuotedProgram(arguments) ?? string.Empty;
+
+        return command;
+    }
+
+    private static string Unquote(string? value) => (value ?? string.Empty).Trim().Trim('"').Trim();
+
+    /// <summary>The first quoted .exe or .dll in a line of script, which is the program it runs.</summary>
+    private static string? FirstQuotedProgram(string text)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            text, "\"([^\"]+\\.(?:exe|dll))\"", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
     public string BuildTaskRunCommand(MeetingSchedule schedule)
     {
         string exePath = ResolveInspectorExecutablePath();
