@@ -130,6 +130,7 @@ dotnet test Windows/ZoomAutoAdmit.Windows.sln --configuration Release
 > **Testing Classification Note**:
 > - **UNIT TESTED**: CLI argument parsing, output formatters, tree search filtering, candidate sorting logic, safe property extraction models.
 > - **REQUIRES LIVE ZOOM VALIDATION**: Real-time tree traversal against a live Zoom Workplace process on a Windows desktop.
+> - **OPT-IN, TOUCHES THE REAL TASK SCHEDULER**: `LiveTaskSchedulerCreatesAndDeletesRealWindowsTask` is skipped unless `ZOOMAUTOADMIT_LIVE_SCHEDULER_TESTS=1` is set. When it runs it creates and deletes one task under `\ZoomAutoAdmitTests\`, never under `\ZoomAutoAdmit\` where the scheduled meetings live. No other test touches the Task Scheduler.
 
 ---
 

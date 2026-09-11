@@ -45,24 +45,74 @@ public sealed class WindowsTaskSchedulerServiceTests : IDisposable
     }
 
     [Fact]
+    public void TaskFolderAndLauncherDirectoryCanBeMovedAwayFromTheAppsOwn()
+    {
+        var id = Guid.Parse("12345678-1234-1234-1234-123456789abc");
+
+        Assert.Equal(
+            @"ZoomAutoAdmitTests\Schedule_12345678123412341234123456789abc",
+            WindowsTaskSchedulerService.GetTaskName(id, @"\ZoomAutoAdmitTests\"));
+        Assert.Equal(
+            Path.Combine(@"C:\Temp\Launchers", "launch_12345678123412341234123456789abc.cmd"),
+            WindowsTaskSchedulerService.GetLauncherScriptPath(id, @"C:\Temp\Launchers"));
+        Assert.EndsWith(
+            Path.Combine("ZoomAutoAdmit", "Schedules", "launch_12345678123412341234123456789abc.cmd"),
+            WindowsTaskSchedulerService.GetLauncherScriptPath(id));
+    }
+
+    /// <summary>
+    /// The one test that talks to the real Task Scheduler. It only runs when asked for, because the
+    /// machine running the suite is usually the one whose meetings are scheduled: an earlier
+    /// version registered straight into \ZoomAutoAdmit\ and, when it failed half-way, left two
+    /// daily tasks there. Now it registers in its own folder, writes its launcher to a temp folder,
+    /// and deletes the task in a finally block.
+    /// </summary>
+    [LiveSchedulerFact]
     public async Task LiveTaskSchedulerCreatesAndDeletesRealWindowsTask()
     {
-        var service = new WindowsTaskSchedulerService();
+        string launcherDirectory = Path.Combine(Path.GetTempPath(), $"live_scheduler_{Guid.NewGuid():N}");
+        var service = new WindowsTaskSchedulerService(
+            taskFolder: LiveSchedulerFactAttribute.TaskFolder,
+            launcherDirectory: launcherDirectory);
+        // An hour ago, so the daily trigger's next run is almost a day away and cannot fire while
+        // the test runs. The account and meeting are placeholders; nothing is ever launched.
         var schedule = new MeetingSchedule(
             Guid.NewGuid(),
             "Live Test Task",
-            "https://zoom.us/j/91310623669",
-            "CAI5_AIS4_S7",
-            new TimeOnly(23, 59),
+            "https://zoom.us/j/00000000000",
+            "live-scheduler-test",
+            TimeOnly.FromDateTime(DateTime.Now.AddHours(-1)),
             ScheduleDays.EveryDay,
             true);
+        string taskName = WindowsTaskSchedulerService.GetTaskName(schedule.Id, LiveSchedulerFactAttribute.TaskFolder);
+        Assert.StartsWith(LiveSchedulerFactAttribute.TaskFolder + @"\", taskName);
 
-        // Register task
-        await service.RegisterTaskAsync(schedule);
+        try
+        {
+            await service.RegisterTaskAsync(schedule);
 
-        string taskName = WindowsTaskSchedulerService.GetTaskName(schedule.Id);
+            var (exitCode, output, error) = await QueryTaskAsync(taskName);
+            string logFile = File.Exists(_testLogPath) ? File.ReadAllText(_testLogPath) : "NO LOG FILE";
+            Assert.True(exitCode == 0, $"Query failed with exit code {exitCode}. Output: '{output}', Error: '{error}', Log: '{logFile}'");
+            Assert.Contains(taskName, output);
 
-        // Verify task exists in Windows Task Scheduler
+            await service.DeleteTaskAsync(schedule.Id);
+
+            var (exitCodeAfterDelete, _, _) = await QueryTaskAsync(taskName);
+            Assert.NotEqual(0, exitCodeAfterDelete);
+            Assert.False(File.Exists(WindowsTaskSchedulerService.GetLauncherScriptPath(schedule.Id, launcherDirectory)));
+        }
+        finally
+        {
+            // Runs whether or not an assertion failed, so a failure cannot leave a task behind.
+            // Deleting a task that is already gone is harmless.
+            await service.DeleteTaskAsync(schedule.Id);
+            if (Directory.Exists(launcherDirectory)) Directory.Delete(launcherDirectory, recursive: true);
+        }
+    }
+
+    private static async Task<(int ExitCode, string Output, string Error)> QueryTaskAsync(string taskName)
+    {
         var psi = new System.Diagnostics.ProcessStartInfo("schtasks.exe")
         {
             RedirectStandardOutput = true,
@@ -76,23 +126,11 @@ public sealed class WindowsTaskSchedulerServiceTests : IDisposable
         psi.ArgumentList.Add("/FO");
         psi.ArgumentList.Add("LIST");
 
-        using var queryProc = System.Diagnostics.Process.Start(psi)!;
-        string queryOutput = await queryProc.StandardOutput.ReadToEndAsync();
-        string queryError = await queryProc.StandardError.ReadToEndAsync();
-        await queryProc.WaitForExitAsync();
-
-        string logFile = File.Exists(_testLogPath) ? File.ReadAllText(_testLogPath) : "NO LOG FILE";
-
-        Assert.True(queryProc.ExitCode == 0, $"Query failed with exit code {queryProc.ExitCode}. Output: '{queryOutput}', Error: '{queryError}', Log: '{logFile}'");
-        Assert.Contains(taskName, queryOutput);
-
-        // Delete task
-        await service.DeleteTaskAsync(schedule.Id);
-
-        // Verify task is gone
-        using var queryProc2 = System.Diagnostics.Process.Start(psi)!;
-        await queryProc2.WaitForExitAsync();
-        Assert.NotEqual(0, queryProc2.ExitCode);
+        using var process = System.Diagnostics.Process.Start(psi)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode, await output, await error);
     }
 
     [Fact]

@@ -7,26 +7,48 @@ namespace ZoomAutoAdmit.WindowsRuntime.Scheduling;
 
 public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
 {
-    private readonly string? _customExecutablePath;
+    /// <summary>The Task Scheduler folder the app's meetings are registered in.</summary>
+    public const string DefaultTaskFolder = "ZoomAutoAdmit";
 
-    public WindowsTaskSchedulerService(string? customExecutablePath = null)
+    private readonly string? _customExecutablePath;
+    private readonly string _taskFolder;
+    private readonly string? _launcherDirectory;
+
+    /// <param name="taskFolder">
+    /// Task Scheduler folder to register in. Anything that is not the app itself - a live test -
+    /// must pass its own, so it can never create, replace or delete one of the user's meetings.
+    /// </param>
+    /// <param name="launcherDirectory">Where launcher scripts are written; the app's data folder by default.</param>
+    public WindowsTaskSchedulerService(
+        string? customExecutablePath = null,
+        string taskFolder = DefaultTaskFolder,
+        string? launcherDirectory = null)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(taskFolder);
         _customExecutablePath = customExecutablePath;
+        _taskFolder = taskFolder.Trim('\\');
+        _launcherDirectory = launcherDirectory;
     }
 
-    public static string GetTaskName(Guid scheduleId) => $@"ZoomAutoAdmit\Schedule_{scheduleId:N}";
+    public static string GetTaskName(Guid scheduleId, string taskFolder = DefaultTaskFolder) =>
+        $@"{taskFolder.Trim('\\')}\Schedule_{scheduleId:N}";
 
-    public static string GetLauncherScriptPath(Guid scheduleId) =>
+    public static string GetLauncherScriptPath(Guid scheduleId, string? launcherDirectory = null) =>
         Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ZoomAutoAdmit",
-            "Schedules",
+            launcherDirectory ?? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ZoomAutoAdmit",
+                "Schedules"),
             $"launch_{scheduleId:N}.cmd");
+
+    private string TaskName(Guid scheduleId) => GetTaskName(scheduleId, _taskFolder);
+
+    private string LauncherScriptPath(Guid scheduleId) => GetLauncherScriptPath(scheduleId, _launcherDirectory);
 
     public async Task RegisterTaskAsync(MeetingSchedule schedule, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(schedule);
-        string taskName = GetTaskName(schedule.Id);
+        string taskName = TaskName(schedule.Id);
 
         if (!schedule.Enabled)
         {
@@ -44,7 +66,7 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
         {
             string timeString = schedule.Time.ToString("HH:mm");
             string exePath = ResolveInspectorExecutablePath();
-            string launcherPath = GetLauncherScriptPath(schedule.Id);
+            string launcherPath = LauncherScriptPath(schedule.Id);
             string launcherDir = Path.GetDirectoryName(launcherPath)!;
             Directory.CreateDirectory(launcherDir);
 
@@ -98,8 +120,8 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
 
     public async Task DeleteTaskAsync(Guid scheduleId, CancellationToken cancellationToken = default)
     {
-        string taskName = GetTaskName(scheduleId);
-        string launcherPath = GetLauncherScriptPath(scheduleId);
+        string taskName = TaskName(scheduleId);
+        string launcherPath = LauncherScriptPath(scheduleId);
         if (File.Exists(launcherPath))
         {
             try { File.Delete(launcherPath); } catch { }
@@ -130,7 +152,7 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
     public async Task<string?> ReadTaskTargetAsync(Guid scheduleId, CancellationToken cancellationToken = default)
     {
         var (exitCode, stdout, _) = await RunSchtasksAsync(
-            $"/Query /TN \"{GetTaskName(scheduleId)}\" /XML", cancellationToken);
+            $"/Query /TN \"{TaskName(scheduleId)}\" /XML", cancellationToken);
         if (exitCode != 0 || string.IsNullOrWhiteSpace(stdout)) return null;
         return ExtractTaskTarget(stdout, path => File.Exists(path) ? File.ReadAllText(path) : null);
     }
@@ -215,7 +237,7 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
         try
         {
             await File.WriteAllTextAsync(xmlPath, BuildOneTimeTaskXml(schedule, ResolveInspectorExecutablePath()), System.Text.Encoding.Unicode, token);
-            var (code, _, _) = await RunSchtasksAsync($"/Create /TN \"{GetTaskName(schedule.Id)}\" /XML \"{xmlPath}\" /F", token);
+            var (code, _, _) = await RunSchtasksAsync($"/Create /TN \"{TaskName(schedule.Id)}\" /XML \"{xmlPath}\" /F", token);
             if (code != 0) throw new InvalidOperationException($"Windows task registration failed (exit {code}). The schedule is saved locally; check Windows task permissions.");
             WindowsSchedulerLog.Write("SCHEDULE_REGISTERED", $"One-time schedule: {schedule.Id}; Date: {schedule.OccurrenceDate:yyyy-MM-dd}");
         }

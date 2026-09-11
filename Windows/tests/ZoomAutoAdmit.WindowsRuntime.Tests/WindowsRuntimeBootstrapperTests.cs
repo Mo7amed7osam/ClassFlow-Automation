@@ -12,6 +12,10 @@ public sealed class WindowsRuntimeBootstrapperTests : IDisposable
         "ZoomAutoAdmitBootstrapperTests",
         Guid.NewGuid().ToString("N"));
 
+    // The bootstrapper defaults to the user's real schedules file and the real Task Scheduler;
+    // the tests always pass their own so nothing here can reach the user's meetings.
+    private string SchedulesPath => Path.Combine(_root, "Schedules", "schedules.json");
+
     [Fact]
     public async Task BootstrapCreatesCompleteProductionDependencyGraph()
     {
@@ -21,7 +25,9 @@ public sealed class WindowsRuntimeBootstrapperTests : IDisposable
         await using var bootstrapper = new WindowsRuntimeBootstrapper(
             accountsPath,
             profilesRoot,
-            new AlwaysResolvableCredentialReference());
+            new AlwaysResolvableCredentialReference(),
+            SchedulesPath,
+            new NoTaskScheduler());
 
         Assert.NotNull(bootstrapper.AccountManager);
         Assert.NotNull(bootstrapper.ProfileMapper);
@@ -40,6 +46,7 @@ public sealed class WindowsRuntimeBootstrapperTests : IDisposable
         var store = new AttendanceTestStore();
         var bootstrapper = new WindowsRuntimeBootstrapper(CreateAccountsFile("teacher-1"),
             Path.Combine(_root, "Profiles"), new AlwaysResolvableCredentialReference(),
+            SchedulesPath, new NoTaskScheduler(),
             attendanceSources: _ => new AttendanceTestSource(), attendanceStore: store);
         var meeting = new ZoomAutoAdmit.Core.Meetings.ScheduledMeeting(
             new Uri("https://zoom.us/j/12345678901"), "teacher-1", DateTimeOffset.UtcNow);
@@ -239,5 +246,15 @@ public sealed class WindowsRuntimeBootstrapperTests : IDisposable
     private sealed class AlwaysResolvableCredentialReference : IWindowsCredentialReferenceResolver
     {
         public bool CanResolve(string credentialReference) => true;
+    }
+
+    private sealed class NoTaskScheduler : ZoomAutoAdmit.WindowsRuntime.Scheduling.IWindowsTaskScheduler
+    {
+        public Task RegisterTaskAsync(
+            ZoomAutoAdmit.WindowsRuntime.Scheduling.MeetingSchedule schedule,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task DeleteTaskAsync(Guid scheduleId, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
     }
 }
