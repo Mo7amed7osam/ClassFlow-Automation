@@ -402,7 +402,7 @@ public sealed class RecordingApiOptionsTests
     public void OnlyLoopbackAddressesAreListenedOn()
     {
         var options = RecordingApiOptions.ForTesting(47821, "a-long-enough-random-key-0001");
-        Assert.All(options.Prefixes, prefix => Assert.Matches(@"^http://(127\.0\.0\.1|localhost):47821/$", prefix));
+        Assert.Equal(["http://127.0.0.1:47821/", "http://[::1]:47821/"], options.Prefixes);
     }
 
     [Fact]

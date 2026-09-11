@@ -45,6 +45,13 @@ public static class RecordingApiCommand
             var processor = RecordingWorkflow.CreateForApi(RecordingWorkflow.ToConsole, apiOptions.LockWait);
             await using var server = new RecordingApiServer(apiOptions, processor, RecordingWorkflow.ToConsole);
             try { server.Start(); }
+            catch (HttpListenerException ex) when (ex.ErrorCode == 5 && !apiOptions.IsLoopbackOnly)
+            {
+                // Access denied on a private address: Windows lets a normal user listen only on
+                // loopback until an administrator reserves the address once.
+                ConsoleLogger.Error($"[API] {apiOptions.ReservationAdvice()}");
+                return 2;
+            }
             catch (HttpListenerException ex)
             {
                 ConsoleLogger.Error($"[API] Could not listen on port {apiOptions.Port} ({ex.ErrorCode}). " +

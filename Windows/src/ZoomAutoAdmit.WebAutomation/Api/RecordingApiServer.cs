@@ -18,9 +18,11 @@ namespace ZoomAutoAdmit.WebAutomation.Api;
 /// exactly as sent; Zoom is never opened for these requests.
 ///
 /// It uses the HTTP server built into Windows (http.sys, through HttpListener), which needs no extra
-/// runtime and no administrator rights for 127.0.0.1. It listens on loopback only, and every request
-/// whose connection does not come from this computer is refused before it is read - http.sys matches
-/// requests by their Host header, so the bound address alone is not relied on.
+/// runtime and, on loopback, no administrator rights. Where it listens and who may connect come from
+/// <see cref="RecordingApiOptions"/>: loopback by default, so it is reached from elsewhere only through
+/// a tunnel or reverse proxy that runs on this PC. Every connection is checked against those rules
+/// before anything is read, by its real source address - never by a forwarded header. No CORS headers
+/// are sent: the callers are servers such as n8n, not browsers.
 ///
 /// A request keeps running if the caller hangs up: stopping halfway through a dashboard save would be
 /// worse than finishing it, and a repeat is safe because an existing link is never overwritten unless
@@ -57,14 +59,14 @@ public sealed class RecordingApiServer : IAsyncDisposable
         foreach (string prefix in options.Prefixes) _listener.Prefixes.Add(prefix);
     }
 
-    public Uri BaseAddress => new($"http://127.0.0.1:{_options.Port}/");
+    public Uri BaseAddress => _options.LocalUrl;
 
     /// <summary>Starts listening. Throws <see cref="HttpListenerException"/> when the port is taken.</summary>
     public void Start()
     {
         _listener.Start();
         _acceptLoop = Task.Run(AcceptLoopAsync);
-        _log($"[API] Recording API started on {BaseAddress.ToString().TrimEnd('/')} (loopback only).");
+        _log($"[API] Recording API started on {_options.Describe()}.");
     }
 
     private async Task AcceptLoopAsync()
@@ -87,18 +89,29 @@ public sealed class RecordingApiServer : IAsyncDisposable
         var watch = Stopwatch.StartNew();
         string path = (request.Url?.AbsolutePath ?? "/").TrimEnd('/');
         if (path.Length == 0) path = "/";
+        // Read now: once an answer is sent, the request's method and headers can no longer be read.
+        string method = request.HttpMethod;
+        string origin = Origin(request);
         int status = 500;
         try
         {
-            if (request.RemoteEndPoint is not { } remote || !IPAddress.IsLoopback(remote.Address))
+            if (request.RemoteEndPoint is not { } remote || !_options.IsClientAllowed(remote.Address))
             {
                 status = await WriteAsync(context, 403, new() { ["success"] = false, ["error"] = "Forbidden" });
                 return;
             }
 
+            // A tunnel or proxy that let a caller in over plain HTTP says so; refuse, so a missing
+            // HTTPS setting shows up as an error instead of a key crossing the internet unencrypted.
+            if (ArrivedOverPlainHttp(request.Headers["X-Forwarded-Proto"], request.Headers["Forwarded"]))
+            {
+                status = await WriteAsync(context, 403, new() { ["success"] = false, ["error"] = "HTTPS required" });
+                return;
+            }
+
             if (path.Equals(HealthPath, StringComparison.OrdinalIgnoreCase))
             {
-                status = request.HttpMethod == "GET" || request.HttpMethod == "HEAD"
+                status = method == "GET" || method == "HEAD"
                     ? await WriteAsync(context, 200, new() { ["status"] = "ok" })
                     : await MethodNotAllowedAsync(context, "GET");
                 return;
@@ -109,7 +122,7 @@ public sealed class RecordingApiServer : IAsyncDisposable
                 status = await WriteAsync(context, 404, new() { ["success"] = false, ["error"] = "Not found" });
                 return;
             }
-            if (request.HttpMethod != "POST")
+            if (method != "POST")
             {
                 status = await MethodNotAllowedAsync(context, "POST");
                 return;
@@ -151,12 +164,12 @@ public sealed class RecordingApiServer : IAsyncDisposable
         catch (Exception ex)
         {
             // The type only: an exception's text can quote a path or a value from a page.
-            _log($"[API] Unexpected {ex.GetType().Name} while handling {request.HttpMethod} {path}.");
+            _log($"[API] Unexpected {ex.GetType().Name} while handling {method} {path}.");
             status = await TryWriteAsync(context, 500, new() { ["success"] = false, ["error"] = "Internal error" });
         }
         finally
         {
-            _log($"[API] {request.HttpMethod} {path} -> {status} in {watch.ElapsedMilliseconds} ms");
+            _log($"[API] {method} {path} -> {status} in {watch.ElapsedMilliseconds} ms{origin}");
         }
     }
 
@@ -237,6 +250,39 @@ public sealed class RecordingApiServer : IAsyncDisposable
         return WriteAsync(context, 405, new() { ["success"] = false, ["error"] = "Method not allowed" });
     }
 
+    /// <summary>
+    /// Where a request came from, for the log: the connection's address and, behind a tunnel, the
+    /// address the tunnel says it forwarded. The forwarded one is only ever logged, never trusted, and
+    /// only characters an IP address can have are kept, so it cannot write anything else into the log.
+    /// </summary>
+    public static string Origin(HttpListenerRequest request) =>
+        Origin(request.RemoteEndPoint?.Address, request.Headers["CF-Connecting-IP"] ?? request.Headers["X-Forwarded-For"]);
+
+    public static string Origin(IPAddress? remote, string? forwarded)
+    {
+        string from = remote == null ? "?" : (remote.IsIPv4MappedToIPv6 ? remote.MapToIPv4() : remote).ToString();
+        string first = (forwarded ?? string.Empty).Split(',')[0].Trim();
+        string via = new(first.Where(c => char.IsAsciiHexDigit(c) || c is '.' or ':').Take(45).ToArray());
+        return via.Length > 0 && via != from ? $" (from {from} via {via})" : $" (from {from})";
+    }
+
+    /// <summary>
+    /// Whether the proxy in front says the caller used plain HTTP: the first (client-facing) entry of
+    /// X-Forwarded-Proto, or proto= in the first element of Forwarded (RFC 7239). A request without
+    /// either header came straight from this PC and is not affected.
+    /// </summary>
+    public static bool ArrivedOverPlainHttp(string? forwardedProto, string? forwarded)
+    {
+        string first = (forwardedProto ?? string.Empty).Split(',')[0].Trim();
+        if (first.Equals("http", StringComparison.OrdinalIgnoreCase)) return true;
+
+        string element = (forwarded ?? string.Empty).Split(',')[0];
+        return element.Split(';')
+            .Select(pair => pair.Trim())
+            .Any(pair => pair.StartsWith("proto=", StringComparison.OrdinalIgnoreCase) &&
+                         pair["proto=".Length..].Trim('"', ' ').Equals("http", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static async Task<int> WriteAsync(HttpListenerContext context, int status, Dictionary<string, object?> body)
     {
         byte[] payload = JsonSerializer.SerializeToUtf8Bytes(body, Json);
@@ -245,6 +291,7 @@ public sealed class RecordingApiServer : IAsyncDisposable
         response.ContentType = "application/json; charset=utf-8";
         response.ContentLength64 = payload.Length;
         response.Headers["Cache-Control"] = "no-store";
+        response.Headers["X-Content-Type-Options"] = "nosniff";
         await response.OutputStream.WriteAsync(payload);
         response.Close();
         return status;
