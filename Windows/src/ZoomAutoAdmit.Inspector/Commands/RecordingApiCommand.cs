@@ -8,8 +8,8 @@ using ZoomAutoAdmit.WebAutomation.Api;
 namespace ZoomAutoAdmit.Inspector.Commands;
 
 /// <summary>
-/// The recording API, for n8n or anything else on this computer that should trigger the recording
-/// workflow without a person at the keyboard.
+/// The recording API, for n8n: it puts the recording link it is given - the Google Drive link from
+/// the recordings sheet - on the matching DEPI dashboard session. It never opens Zoom.
 ///
 ///   serve-api [--background]            run it until Ctrl+C (--background hides the console window)
 ///   api-autostart [--enable|--disable]  start it at every sign-in, or stop doing so; no flag reports
@@ -33,7 +33,7 @@ public static class RecordingApiCommand
         }
 
         string logPath = LogPath();
-        // Everything the API, the Zoom step and the dashboard step say goes to the file as well, so
+        // Everything the API and the dashboard step say goes to the file as well, so
         // a run started at sign-in with no window can still be read afterwards.
         void Mirror(LogEntry entry) => AppendToFile(logPath, entry);
         ConsoleLogger.EntryWritten += Mirror;
@@ -42,7 +42,7 @@ public static class RecordingApiCommand
             if (options.ApiBackground) HideConsoleWindow();
             ConsoleLogger.Info($"[API] Logging to {logPath}");
 
-            var processor = RecordingWorkflow.Create(RecordingWorkflow.ToConsole, apiOptions.LockWait);
+            var processor = RecordingWorkflow.CreateForApi(RecordingWorkflow.ToConsole, apiOptions.LockWait);
             await using var server = new RecordingApiServer(apiOptions, processor, RecordingWorkflow.ToConsole);
             try { server.Start(); }
             catch (HttpListenerException ex)

@@ -9,10 +9,13 @@ using ZoomAutoAdmit.WebAutomation.Recordings;
 namespace ZoomAutoAdmit.WebAutomation.Api;
 
 /// <summary>
-/// A small HTTP endpoint on this computer that hands a session to the recording workflow.
+/// A small HTTP endpoint on this computer that puts a recording link on a DEPI dashboard session.
 ///
 ///   GET  /health                   {"status":"ok"} - no key, so it can be checked before anything else
-///   POST /api/recordings/process   X-API-Key required; runs the same path as lms-record-link
+///   POST /api/recordings/process   X-API-Key required; { group, recordLink, date?, replaceExisting? }
+///
+/// The link is the Google Drive link n8n read from the recordings sheet. It is written to the session
+/// exactly as sent; Zoom is never opened for these requests.
 ///
 /// It uses the HTTP server built into Windows (http.sys, through HttpListener), which needs no extra
 /// runtime and no administrator rights for 127.0.0.1. It listens on loopback only, and every request
@@ -41,19 +44,16 @@ public sealed class RecordingApiServer : IAsyncDisposable
     private readonly RecordingApiOptions _options;
     private readonly IRecordingLinkProcessor _processor;
     private readonly Action<string> _log;
-    private readonly TimeZoneInfo _localZone;
     private readonly HttpListener _listener = new();
     private readonly CancellationTokenSource _stopping = new();
     private readonly ConcurrentDictionary<Task, byte> _inFlight = new();
     private Task? _acceptLoop;
 
-    public RecordingApiServer(RecordingApiOptions options, IRecordingLinkProcessor processor, Action<string>? log = null,
-        TimeZoneInfo? localZone = null)
+    public RecordingApiServer(RecordingApiOptions options, IRecordingLinkProcessor processor, Action<string>? log = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _processor = processor ?? throw new ArgumentNullException(nameof(processor));
         _log = log ?? (_ => { });
-        _localZone = localZone ?? TimeZoneInfo.Local;
         foreach (string prefix in options.Prefixes) _listener.Prefixes.Add(prefix);
     }
 
@@ -128,17 +128,19 @@ public sealed class RecordingApiServer : IAsyncDisposable
                 status = await InvalidAsync(context, $"The body must be JSON of at most {MaximumBodyBytes / 1024} KB.");
                 return;
             }
-            if (!RecordingApiRequestParser.TryParse(body, out var parsed, out string error, _localZone))
+            if (!RecordingApiRequestParser.TryParse(body, out var parsed, out string error))
             {
                 status = await InvalidAsync(context, error);
                 return;
             }
 
+            // The link only as a preview: a Drive share link opens the recording to anyone who has it.
             _log($"[API] Request: group={parsed!.Group} date={parsed.Date?.ToString("yyyy-MM-dd") ?? "(today)"} " +
-                 $"startTime={parsed.StartTime?.ToString("HH':'mm") ?? "(any)"} profile={parsed.Profile ?? "default"} " +
-                 $"headed={parsed.Headed} dryRun={parsed.DryRun} replaceExisting={parsed.ReplaceExisting}");
+                 $"recordLink={RecordingLinks.Preview(parsed.RecordLink)}" +
+                 $"{(parsed.StartTime is { } time ? $" startTime={time:HH':'mm}" : string.Empty)} " +
+                 $"replaceExisting={parsed.ReplaceExisting} dryRun={parsed.DryRun} headed={parsed.Headed}");
 
-            var outcome = await _processor.ProcessAsync(parsed, _stopping.Token);
+            var outcome = await _processor.AttachProvidedLinkAsync(parsed, _stopping.Token);
             var (code, response) = Describe(outcome);
             status = await WriteAsync(context, code, response);
         }
@@ -169,8 +171,9 @@ public sealed class RecordingApiServer : IAsyncDisposable
             ["success"] = outcome.IsSuccess,
             ["group"] = outcome.Group,
             ["date"] = outcome.Date.ToString("yyyy-MM-dd"),
-            ["startTime"] = outcome.StartTime?.ToString("HH':'mm"),
         };
+        // Only when one was sent: a dictionary writes its nulls, and "startTime": null reads like a lookup.
+        if (outcome.StartTime is { } time) body["startTime"] = time.ToString("HH':'mm");
         if (outcome.RecordingStartedAtUtc is { } started) body["recordingStartedAtUtc"] = started.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
         if (outcome.RecordingDuration is { } length) body["recordingDuration"] = length.ToString(@"hh\:mm\:ss");
 

@@ -14,7 +14,7 @@ public sealed class ZoomRecordingClockTests
 {
     private static readonly TimeZoneInfo Cairo = TimeZoneInfo.FindSystemTimeZoneById("Egypt Standard Time");
     private static readonly TimeZoneInfo Pacific = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
-    private const string RealLink = "https://zoom.us/rec/share/KXYkU1V_taaVZOZn2NR4J2b0S4tAcIPzLFEpLZnHDR6r.VxWnf7_4?startTime=1788278291000";
+    private const string RealLink = "https://zoom.us/rec/share/FAKE-TOKEN-FOR-TESTS.NotARealLink?startTime=1788278291000";
 
     [Fact]
     public void TheShareLinkCarriesTheRealStartInUtc()

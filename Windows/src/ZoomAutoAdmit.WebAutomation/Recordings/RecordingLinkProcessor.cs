@@ -21,6 +21,27 @@ public sealed record RecordingLinkRequest
     public bool KeepBrowserOpen { get; init; }
 }
 
+/// <summary>
+/// A session and the recording link to put on it, handed in by the caller - the HTTP API passes the
+/// Google Drive link n8n read from the recordings sheet. Nothing is looked up in Zoom.
+/// </summary>
+public sealed record ProvidedRecordLinkRequest
+{
+    public required string Group { get; init; }
+    /// <summary>Written exactly as given.</summary>
+    public required string RecordLink { get; init; }
+    /// <summary>The session's day. Today when absent.</summary>
+    public DateOnly? Date { get; init; }
+    /// <summary>
+    /// Only to choose between several dashboard sessions of the group on the same day; it is never
+    /// worked out by the application. Absent, a day with one session is enough.
+    /// </summary>
+    public TimeOnly? StartTime { get; init; }
+    public bool Headed { get; init; }
+    public bool DryRun { get; init; }
+    public bool ReplaceExisting { get; init; }
+}
+
 public enum RecordingLinkStatus
 {
     Attached,
@@ -65,7 +86,11 @@ public interface IRecordingLinkTarget
 
 public interface IRecordingLinkProcessor
 {
+    /// <summary>Find the session's recording in Zoom, then attach its share link (lms-record-link).</summary>
     Task<RecordingLinkOutcome> ProcessAsync(RecordingLinkRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Attach a link the caller already has (the HTTP API). Zoom is never opened.</summary>
+    Task<RecordingLinkOutcome> AttachProvidedLinkAsync(ProvidedRecordLinkRequest request, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -177,44 +202,95 @@ public sealed class RecordingLinkProcessor(
              $"{(recording.StartedAtUtc is { } s ? $", started {s.ToLocalTime():yyyy-MM-dd HH:mm} local" : string.Empty)}" +
              $"{(recording.Recording?.Duration is { } d ? $", {d:hh\\:mm\\:ss} long" : string.Empty)} ({preview}).");
 
-        // ---- write it on the dashboard, holding only the dashboard profile
+        var found = Outcome(RecordingLinkStatus.Attached, string.Empty) with
+        {
+            RecordingStartedAtUtc = recording.StartedAtUtc,
+            RecordingDuration = recording.Recording?.Duration,
+            ShareLinkPreview = preview,
+        };
+        return await WriteToDashboardAsync(found, recording.ShareUrl, request.StartTime, request.Headed,
+            request.DryRun, request.KeepBrowserOpen, request.ReplaceExisting, cancellationToken);
+    }
+
+    /// <summary>
+    /// Puts a link the caller already has on the session. There is no Zoom step at all: no Zoom
+    /// profile is taken, no Zoom page is opened, and the link goes to the dashboard exactly as given.
+    /// The dashboard profile is still held for the length of the write, as for every other writer.
+    /// </summary>
+    public async Task<RecordingLinkOutcome> AttachProvidedLinkAsync(ProvidedRecordLinkRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        string group = request.Group?.Trim() ?? string.Empty;
+        ArgumentException.ThrowIfNullOrWhiteSpace(group, nameof(request.Group));
+        string link = request.RecordLink ?? string.Empty;
+        DateOnly day = request.Date ?? _today();
+        string preview = RecordingLinks.Preview(link);
+
+        var outcome = new RecordingLinkOutcome(RecordingLinkStatus.Attached, string.Empty)
+        {
+            Group = group,
+            Date = day,
+            StartTime = request.StartTime,
+            Profile = DashboardProfile,
+            ShareLinkPreview = preview,
+        };
+        var kind = RecordingLinks.Classify(link);
+        _log($"[RECORDINGS] {group} {day:yyyy-MM-dd}: attaching a given {(kind == RecordingLinkKind.GoogleDrive ? "Google Drive" : kind == RecordingLinkKind.ZoomShare ? "Zoom" : "unrecognised")} link ({preview})" +
+             $"{(request.DryRun ? ", dry run" : string.Empty)}{(request.ReplaceExisting ? ", replacing an existing link" : string.Empty)}.");
+        if (kind == RecordingLinkKind.None)
+            return outcome with
+            {
+                Status = RecordingLinkStatus.LmsFailed,
+                Message = "That is not a Zoom recording link or a Google Drive file link, so nothing was saved.",
+                Reason = "invalidLink",
+            };
+
+        return await WriteToDashboardAsync(outcome, link, request.StartTime, request.Headed, request.DryRun,
+            keepBrowserOpen: false, request.ReplaceExisting, cancellationToken);
+    }
+
+    /// <summary>
+    /// The dashboard half, the same for a link found in Zoom and a link handed in: take the
+    /// dashboard profile, write the link, and turn the dashboard's answer into an outcome.
+    /// </summary>
+    private async Task<RecordingLinkOutcome> WriteToDashboardAsync(RecordingLinkOutcome found, string link,
+        TimeOnly? startTime, bool headed, bool dryRun, bool keepBrowserOpen, bool replaceExisting,
+        CancellationToken cancellationToken)
+    {
+        string group = found.Group;
         LmsRunResult attached;
         await using (var dashboard = await locks.TryAcquireAsync(DashboardProfile, _wait, cancellationToken))
         {
             if (dashboard == null)
             {
                 _log($"[RECORDINGS] {group}: the dashboard browser profile is busy.");
-                return Outcome(RecordingLinkStatus.Busy,
-                    "The dashboard browser profile is in use by another operation or an open browser. Try again shortly.")
-                    with { RecordingStartedAtUtc = recording.StartedAtUtc, RecordingDuration = recording.Recording?.Duration, ShareLinkPreview = preview };
+                return found with
+                {
+                    Status = RecordingLinkStatus.Busy,
+                    Message = "The dashboard browser profile is in use by another operation or an open browser. Try again shortly.",
+                };
             }
             _log($"[RECORDINGS] {group}: attaching the link on the dashboard.");
             try
             {
-                attached = await target.AttachAsync(group, recording.ShareUrl, request.StartTime, day, request.Headed,
-                    request.DryRun, request.KeepBrowserOpen, request.ReplaceExisting, cancellationToken);
+                attached = await target.AttachAsync(group, link, startTime, found.Date, headed,
+                    dryRun, keepBrowserOpen, replaceExisting, cancellationToken);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 _log($"[RECORDINGS] {group}: the dashboard failed ({ex.GetType().Name}).");
-                return Outcome(RecordingLinkStatus.LmsFailed, "The dashboard could not be reached.") with
-                { Reason = "lmsFailed", ShareLinkPreview = preview };
+                return found with { Status = RecordingLinkStatus.LmsFailed, Message = "The dashboard could not be reached.", Reason = "lmsFailed" };
             }
         }
 
-        var found = Outcome(RecordingLinkStatus.Attached, attached.Message) with
-        {
-            RecordingStartedAtUtc = recording.StartedAtUtc,
-            RecordingDuration = recording.Recording?.Duration,
-            ShareLinkPreview = preview,
-        };
         if (!attached.IsSuccess)
         {
             _log($"[RECORDINGS] {group}: attaching failed - {attached.Message}");
             return found with
             {
                 Status = RecordingLinkStatus.LmsFailed,
+                Message = attached.Message,
                 Reason = attached.FailureKind switch
                 {
                     LmsFailure.NotSignedIn => "lmsNotSignedIn",
@@ -226,14 +302,14 @@ public sealed class RecordingLinkProcessor(
             };
         }
         var status = attached.AlreadyExists ? RecordingLinkStatus.AlreadyExists
-            : request.DryRun ? RecordingLinkStatus.DryRun
+            : dryRun ? RecordingLinkStatus.DryRun
             : RecordingLinkStatus.Attached;
         _log($"[RECORDINGS] {group}: {status} - {attached.Message}");
-        return found with { Status = status };
+        return found with { Status = status, Message = attached.Message };
     }
 
     /// <summary>Enough of a share link to recognise it in a log, not enough to open it.</summary>
-    public static string Preview(string url) => url.Length <= 40 ? url : url[..40] + "...";
+    public static string Preview(string url) => RecordingLinks.Preview(url);
 }
 
 /// <summary>The real Zoom side: My Recordings, read through the signed-in browser profile.</summary>

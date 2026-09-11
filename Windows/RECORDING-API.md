@@ -1,41 +1,36 @@
 # Recording API (for n8n)
 
-A small, authenticated HTTP endpoint on this Windows PC that runs the **existing** recording
-workflow — find the group's Zoom cloud recording, copy its share link, attach it to the matching
-DEPI LMS session — exactly as `lms-record-link` does in the terminal.
+A small, authenticated HTTP endpoint on this Windows PC that puts a recording link on a DEPI LMS
+session. n8n sends the **Google Drive link** it read from the recordings sheet; the application
+opens the matching session on the dashboard and writes that link — exactly as sent — into
+*Add / Edit Record Link*. **It never opens or searches Zoom.**
 
 ```
-n8n ──POST──▶ http://127.0.0.1:47821/api/recordings/process   (X-API-Key)
-                 │
-                 ▼  RecordingLinkProcessor   ◀── the same object lms-record-link uses
-                 ├─ Zoom:  My Recordings → pick by group/date/time → copy share link
-                 │         (the link's own startTime is checked against the session)
-                 └─ LMS:   open the session → Add/Edit Record Link → Save
+Google Sheet ─▶ n8n (loop → memory check → IF new → Data Table insert → HTTP POST)
+                                                                          │
+      http://127.0.0.1:47821/api/recordings/process   X-API-Key           ▼
+                                   Windows app ─▶ DEPI LMS: session → Record Link = the Drive URL
 ```
 
-> **Read "Limitations" before connecting n8n.** In the recordings checked on 2026-09-11,
-> Zoom **no longer had** any recording that was already listed in the Google Sheet — the
-> recordings are removed from Zoom when they are moved to Drive. A request made *because* a new
-> row appeared in the sheet will therefore usually answer **404 Recording not found**.
+The API holds no Google Sheets logic; n8n decides what is new.
 
 ---
 
-## 1. Architecture (why it is built this way)
+## 1. How it is built
 
-| Choice | Reason |
+| | |
 |---|---|
-| Runs as `ZoomAutoAdmit.Inspector.exe serve-api` | The same executable the scheduled meetings already run. No new program, no Windows Service, easy to start, stop and read. |
-| Built-in Windows HTTP server (`HttpListener` / http.sys) | **The ASP.NET Core runtime is not installed** in `C:\Program Files\dotnet` on this PC, so a Kestrel/Minimal API app would build here but fail to start when Windows launches it. http.sys is part of the runtime already installed and binds `127.0.0.1` without administrator rights. |
-| Not inside the WPF window | The API keeps working when the window is closed, and the window is untouched. |
-| One shared workflow (`RecordingLinkProcessor`) | `lms-record-link` and the API call the same object — no second copy of the Zoom or LMS logic. |
-
-The WPF app is not changed by this feature.
+| Runs as | `ZoomAutoAdmit.Inspector.exe serve-api` — the same executable the scheduled meetings run. No Windows Service. |
+| HTTP server | Windows' built-in http.sys (`HttpListener`). The ASP.NET Core runtime is not installed on this PC, so a Kestrel app would build but not start when Windows launches it. |
+| Path of a request | parse & validate → `RecordingLinkProcessor.AttachProvidedLinkAsync` → take the `lms-dashboard` browser profile → `LmsSessionRunner.AttachRecordLinkAsync(group, recordLink, …)` → release. |
+| Zoom | Not involved. The API's workflow is built without a Zoom source at all; its slot holds a stand-in that refuses. |
+| Terminal | `lms-record-link` is unchanged: it still finds the recording in Zoom and attaches the Zoom link, through the same dashboard step. |
+| WPF app | Not changed by this feature. |
 
 ## 2. Configure it (once)
 
-Run in **PowerShell** as your normal user. This creates a random key, stores it for your Windows
-user only, and copies it to the clipboard so you can paste it into n8n. It is not printed and not
-saved to any file.
+In **PowerShell**, as your normal user. This creates a random key, stores it for your Windows user
+only and copies it to the clipboard for n8n. It is not printed and not written to any file.
 
 ```powershell
 $bytes = New-Object byte[] 32
@@ -46,272 +41,241 @@ $key | Set-Clipboard
 Remove-Variable key, bytes
 ```
 
-Also set the Zoom account's time zone (see §8 for why):
-
-```powershell
-[Environment]::SetEnvironmentVariable('ZOOM_AUTO_ADMIT_ZOOM_TIMEZONE', 'Pacific Standard Time', 'User')
-```
-
-Then **sign out of Windows and back in** (programs that are already open do not see new user
-variables).
+Then **sign out of Windows and back in** (programs already open do not see new user variables).
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
-| `ZOOM_AUTO_ADMIT_API_KEY` | **yes** | — | The key n8n sends in `X-API-Key`. At least 20 characters. Without it the API refuses to start. |
-| `ZOOM_AUTO_ADMIT_API_PORT` | no | `47821` | Port on `127.0.0.1`. 1024–65535. |
-| `ZOOM_AUTO_ADMIT_ZOOM_TIMEZONE` | recommended | none | The time zone of the Zoom **profile** (zoom.us → Profile → Time Zone), as a Windows id (`Pacific Standard Time`) or IANA id (`America/Los_Angeles`). |
-| `ZOOM_AUTO_ADMIT_API_LOCK_WAIT_SECONDS` | no | `120` | How long a request waits for a busy browser profile before answering 409. |
+| `ZOOM_AUTO_ADMIT_API_KEY` | **yes** | — | Sent by n8n as `X-API-Key`. ≥ 20 characters. Without it the API refuses to start. |
+| `ZOOM_AUTO_ADMIT_API_PORT` | no | `47821` | Port on `127.0.0.1`, 1024–65535. |
+| `ZOOM_AUTO_ADMIT_API_LOCK_WAIT_SECONDS` | no | `120` | How long a request waits for the busy dashboard profile before answering 409. |
 
-To change the key later, run the first block again, restart the API, and update n8n.
+(`ZOOM_AUTO_ADMIT_ZOOM_TIMEZONE` is only used by the terminal's `lms-record-link`; the API does not need it.)
 
 ## 3. Start it
 
-The executable is the one in the WPF app's Release folder (the one the scheduled meetings use):
+The executable is in the WPF app's Release folder (the one the scheduled meetings use):
 
 ```
 E:\zooommmm\zoom-auto-admit claude\Windows\src\ZoomAutoAdmit.WindowsUI\bin\Release\net8.0-windows10.0.19041.0\ZoomAutoAdmit.Inspector.exe
 ```
 
-- **By hand** (shows a console with the log; Ctrl+C stops it):
-  `ZoomAutoAdmit.Inspector.exe serve-api`
+- **By hand** (a console with the log; Ctrl+C stops it): `ZoomAutoAdmit.Inspector.exe serve-api`
 - **At every sign-in** (no admin rights; one file in your Startup folder):
-  `ZoomAutoAdmit.Inspector.exe api-autostart --enable`
-  - `api-autostart` alone shows whether it is on and whether the key is set.
-  - `api-autostart --disable` removes it. A running API keeps running until stopped.
-  - It starts `serve-api --background`, which hides its own console window.
-- **Stop a background one:** Task Manager → *ZoomAutoAdmit.Inspector* → End task, or
-  `Get-Process ZoomAutoAdmit.Inspector | Stop-Process`. (Scheduled meetings also run as
-  `ZoomAutoAdmit.Inspector` — check the command line if one is running.)
+  `ZoomAutoAdmit.Inspector.exe api-autostart --enable` · `api-autostart` shows the state ·
+  `api-autostart --disable` removes it. It runs `serve-api --background`, which hides its window.
+- **Stop a background one:** Task Manager → *ZoomAutoAdmit.Inspector* → End task.
+  (Scheduled meetings also run as *ZoomAutoAdmit.Inspector* — check the command line.)
 
-Only one API can hold the port; a second start says so and exits. If you move or rebuild the
-project somewhere else, run `api-autostart --enable` again from the new location.
+Only one API can hold the port; a second start says so and exits. After moving or rebuilding the
+project elsewhere, run `api-autostart --enable` again from the new location.
 
-Log: `%LOCALAPPDATA%\ZoomAutoAdmit\Logs\recording-api.log` (rolls over at 5 MB). It records each
-request's group, date, time, profile and flags, each stage, and each answer's status and duration.
-It **never** records the API key, headers, passwords, cookies, browser profile contents, share
-links in full, or any AI key.
+**Log:** `%LOCALAPPDATA%\ZoomAutoAdmit\Logs\recording-api.log` (rolls over at 5 MB): each request's
+group, date and flags, the link as a short preview (`drive.google.com/file/d/1A1bzB...`), each
+dashboard step, each answer's status and duration. **Never** the API key, headers, passwords,
+cookies, browser profile contents, the full recording link, or any AI key.
 
-## 4. Check it with curl
+## 4. The contract
 
-In **Windows PowerShell** `curl` is an alias for `Invoke-WebRequest`, so either type `curl.exe`
-or use the PowerShell lines below.
+### `POST /api/recordings/process`
+
+| Header | Value |
+|---|---|
+| `X-API-Key` | the configured key |
+| `Content-Type` | `application/json` |
+
+```json
+{
+  "group": "AST5_DAT1_S1",
+  "recordLink": "https://drive.google.com/file/d/XXXXX/view?usp=sharing",
+  "date": "2026-09-03",
+  "replaceExisting": false
+}
+```
+
+| Field | | Rules |
+|---|---|---|
+| `group` | **required** | The group as the dashboard lists it. Trimmed. Letters, digits, space, `_ - .`, ≤ 100 chars. |
+| `recordLink` | **required** | The Google Drive file link (rules in §5). Written to the LMS **exactly as sent**; only surrounding spaces are removed. |
+| `date` | optional | `yyyy-MM-dd`. The session's day. Absent or `null` → today. `""` is refused. |
+| `replaceExisting` | optional | Default `false`: an existing record link is left alone. `true` replaces it. |
+| `dryRun` | optional | Everything up to filling the link box; Save is not pressed. |
+| `headed` | optional | Show the browser while it works (closed afterwards). |
+| `startTime` | optional | `HH:mm`, Cairo time. Only to choose between **two sessions of the same group on the same day**. The application never works it out. |
+| `profile` | optional | Accepted so an older node that still sends it keeps working. **Ignored** — the dashboard always uses its own `lms-dashboard` profile. |
+
+Any other field is refused (400) rather than ignored — including `link`, `url`, `driveUrl`
+(the answer says to use `recordLink`), `file` / `fileName` (the file is never downloaded or uploaded)
+and `timeZone` (no longer used). A typo such as `recordlink` is an error.
+
+### Answers
+
+**200 — attached**
+```json
+{ "success": true, "group": "AST5_DAT1_S1", "date": "2026-09-03",
+  "message": "Recording link attached successfully.", "alreadyExists": false }
+```
+
+**200 — the session already had a link** (`replaceExisting` false; nothing changed)
+```json
+{ "success": true, "group": "CAI5_AIS4_S7", "date": "2026-09-01",
+  "message": "CAI5_AIS4_S7: the session already has a recording link, so it was left as it is.",
+  "alreadyExists": true }
+```
+
+**200 — dry run**
+```json
+{ "success": true, "group": "CAI5_AIS4_S7", "date": "2026-09-01",
+  "message": "CAI5_AIS4_S7: the record link box is open and holds the recording's link. Nothing was saved.",
+  "alreadyExists": false, "dryRun": true }
+```
+
+**400 — invalid request**
+```json
+{ "success": false, "error": "Invalid request",
+  "details": "'recordLink' must be a Google Drive link to one file, like https://drive.google.com/file/d/<file id>/view?usp=sharing." }
+```
+
+**401** `{ "success": false, "error": "Unauthorized" }` — missing or wrong key.
+
+**409** `{ "success": false, "error": "Busy", "message": "…" }` — the dashboard profile stayed busy
+(another request, or a dashboard browser left open). Retry in a few minutes.
+
+**500 — the LMS step failed**
+```json
+{ "success": false, "group": "…", "date": "…", "error": "LMS operation failed",
+  "reason": "sessionNotFinished", "message": "The session page for … offers no Add Record Link; it reads \"running\". …" }
+```
+
+| `reason` | Meaning | What n8n should do |
+|---|---|---|
+| `sessionNotFinished` | The session is not *finished* yet, so the LMS offers no Add Record Link. | Retry later. |
+| `sessionNotFound` | No session for the group on that date (or two that day and no `startTime`). | Check group / date. |
+| `lmsNotSignedIn` | No dashboard sign-in saved in the app. | A person saves it in the app. |
+| `lmsFailed` | The dashboard did not respond or the save did not take. | Retry later. |
+
+Other: `403 Forbidden` (connection not from this PC), `404 Not found` (unknown path),
+`405` (wrong method), `500 Internal error` (unexpected; details are in the log, never in the answer).
+
+### `GET /health`
+
+`200 {"status":"ok"}`, no key. It proves the API is up, reveals nothing, and answers only this PC.
+
+## 5. Google Drive link rules
+
+Accepted — a link to **one Drive file**:
+
+- `https://drive.google.com/file/d/<id>`, optionally followed by `/view`, `/preview` or `/edit`,
+  and any query such as `?usp=sharing`
+- `https://drive.google.com/open?id=<id>`
+
+`<id>` is 20–100 of `A–Z a–z 0–9 _ -`. Refused, each with its own message:
+
+- empty or missing · longer than 2048 characters · containing spaces or control characters
+- local paths: `C:\…`, `\\server\…`, `file://…`
+- not a valid absolute URL · not `https`
+- any other host (`docs.google.com`, `drive.google.com.evil.example`, …), a non-default port, or
+  `user:password@` in the URL
+- Drive folders (`/drive/folders/…`) and download links (`/uc?…&export=download`)
+
+The API accepts **only** Drive links. The LMS step itself accepts Drive links **and** Zoom share
+links (`https://…zoom.us/…/rec/…`), which is what the terminal's `lms-record-link` still writes.
+
+The application does not check who can open the Drive file. If the file is not shared
+("anyone with the link"), students will see *Request access*.
+
+## 6. Check it
+
+In Windows PowerShell `curl` is an alias for `Invoke-WebRequest`; type `curl.exe`, or use the
+PowerShell lines.
 
 ```bash
 curl.exe http://127.0.0.1:47821/health
 ```
-→ `{"status":"ok"}` (no key needed — see §6).
 
-```bash
-curl.exe -i -X POST http://127.0.0.1:47821/api/recordings/process -H "Content-Type: application/json" -d "{\"group\":\"CAI5_AIS4_S7\"}"
-```
-→ `401 Unauthorized` (no key).
-
-A **dry run** goes all the way to the LMS record-link box and stops before Save. From PowerShell,
-reading the key from your user settings so it is never typed or shown:
+A dry run, reading the key from your user settings so it is never typed or shown:
 
 ```powershell
 $headers = @{ 'X-API-Key' = [Environment]::GetEnvironmentVariable('ZOOM_AUTO_ADMIT_API_KEY', 'User') }
-$body = @{ group = 'CAI5_AIS4_S7'; date = '2026-09-11'; startTime = '14:13'; dryRun = $true } | ConvertTo-Json
+$body = @{ group = 'CAI5_AIS4_S7'; recordLink = 'https://drive.google.com/file/d/<id>/view?usp=sharing'; date = '2026-09-01'; dryRun = $true } | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:47821/api/recordings/process -Headers $headers -ContentType 'application/json' -Body $body
 ```
 
 (Windows PowerShell turns a 4xx/5xx answer into an error; the answer's JSON is in the error text.)
 
-## 5. The contract
+## 7. n8n — HTTP Request node
 
-### `POST /api/recordings/process`
-
-Headers: `X-API-Key: <key>`, `Content-Type: application/json`. Body ≤ 16 KB.
-
-```json
-{
-  "group": "CAI5_AIS4_S7",
-  "date": "2026-09-11",
-  "startTime": "14:13",
-  "timeZone": "local",
-  "profile": "default",
-  "headed": false,
-  "dryRun": false,
-  "replaceExisting": false
-}
-```
-
-| Field | Rules |
-|---|---|
-| `group` | Required. Trimmed. Letters, digits, space, `_ - .`, ≤ 100 chars. |
-| `date` | Optional, `yyyy-MM-dd`. Absent or `null` → today (this PC's date). `""` is refused. |
-| `startTime` | Optional, 24-hour `HH:mm`. Absent or `null` → any recording of that day (one per day is picked; with several, the longest is taken). `""` is refused. |
-| `timeZone` | Optional, `"local"` (default) or `"utc"`. **Addition to the requested contract** — see §8. With `"utc"`, both `date` and `startTime` are required and are converted to this PC's time (Egypt, including daylight saving) before anything else. |
-| `profile` | Optional. Absent, `null` or `"default"` → **the account's own web profile** as configured in the app (`CAI5_AIS4_S7 → s7`, `CAI5_AIS4_S8 → s8`); only if an account has none, a profile named after the group. Any other value names a profile folder. |
-| `headed` | Optional bool. Shows the browsers. The API always closes them afterwards. |
-| `dryRun` | Optional bool. Everything except the final Save. |
-| `replaceExisting` | Optional bool, default `false`. An existing LMS record link is **never** overwritten unless this is `true`. |
-
-Refused with **400**: any unknown field (a typo such as `starttime` is an error, not ignored),
-and any of `recordLink`, `file`, `fileName`, `driveUrl`, `googleDriveUrl`, `link` — the
-application finds the Zoom recording itself.
-
-### Answers
-
-| HTTP | When | Body |
-|---|---|---|
-| **200** | Attached | `{"success":true,"message":"Recording link attached successfully.","group":"…","date":"…","startTime":"…","alreadyExists":false,"recordingStartedAtUtc":"…","recordingDuration":"03:29:13"}` |
-| **200** | The session already had a link (and `replaceExisting` was false) | `{"success":true,"message":"…already has a recording link…","alreadyExists":true,…}` |
-| **200** | `dryRun` | `{"success":true,"dryRun":true,"message":"…Nothing was saved.",…}` |
-| **400** | Bad request | `{"success":false,"error":"Invalid request","details":"…"}` |
-| **401** | Missing or wrong key | `{"success":false,"error":"Unauthorized"}` |
-| **404** | No matching Zoom recording | `{"success":false,"error":"Recording not found","group","date","startTime","reason":"notFound" \| "timeMismatch","message"}` |
-| **409** | A browser profile stayed busy | `{"success":false,"error":"Busy","message"}` — retry in a few minutes. |
-| **500** | Zoom step failed | `{"success":false,"error":"Zoom operation failed","reason":"zoomNotSignedIn" \| "zoomFailed","message"}` |
-| **500** | LMS step failed | `{"success":false,"error":"LMS operation failed","reason":"sessionNotFinished" \| "sessionNotFound" \| "lmsNotSignedIn" \| "lmsFailed","message"}` |
-| 403 | Connection not from this PC | `{"success":false,"error":"Forbidden"}` |
-
-`reason` is an addition so n8n can decide what to do: `sessionNotFinished` means the LMS does
-not offer *Add Record Link* yet — retry later. Messages never contain stack traces, keys, cookies
-or file paths.
-
-### `GET /health`
-
-`200 {"status":"ok"}`. No key: it only proves the API is up, reveals nothing, and is reachable
-from this PC only (every request from another address gets 403).
-
-## 6. Security
-
-- Listens on `127.0.0.1` / `localhost` only, and additionally refuses any connection whose remote
-  address is not loopback (http.sys routes by Host header, so the bound address alone is not
-  trusted).
-- The key is compared in constant time against its SHA-256; the text of the key is not kept.
-- The key is checked before the body is read, so a caller without it learns nothing.
-- **Never** forward the port on your router or bind it to `0.0.0.0`.
-
-## 7. Behaviour you can rely on
-
-- **Same logic as the terminal.** `lms-record-link` now goes through the same
-  `RecordingLinkProcessor`. Its flags and exit codes are unchanged (0 done, 1 bad arguments,
-  2 recording not found / Zoom failed, 3 LMS failed; new: 4 busy). One change: without
-  `--profile` it now uses the account's configured web profile (`s7`) instead of creating a
-  separate copy named after the group.
-- **One operation per browser profile, across processes.** The Zoom profile is held while the
-  link is read, then released; the dashboard profile (`lms-dashboard`) is held while it is
-  written. They are never held together, so two requests cannot deadlock. A request waits up to
-  `ZOOM_AUTO_ADMIT_API_LOCK_WAIT_SECONDS`, then gets 409. A profile that Chromium already has
-  open — a live Web meeting, a browser left open by `--headed` — counts as busy (Chromium's
-  `lockfile` in the profile folder is checked), so the API never starts a second browser on it.
-- **Duplicates are safe.** With `replaceExisting: false` a second request for the same session
-  answers 200 `alreadyExists: true` and changes nothing.
-- **A caller hanging up does not stop the work.** A save is never cut in half; the next request
-  simply finds the link already there. Set n8n's timeout generously (§9).
-
-## 8. Time zones — measured, not assumed
-
-For the S7 recording of 2026-09-01, four sources were compared:
-
-| Source | Value |
-|---|---|
-| Drive file name | `CAI5_AIS4_S7_2026-09-01_1558.mp4` → **15:58** |
-| `startTime=` in the Zoom share link | `1788278291000` → **2026-09-01 15:58:11 UTC** |
-| Zoom *My Recordings* list | **`Sep 1, 2026 08:58 AM`** |
-| The class in the schedule | **19:00** Cairo |
-
-So:
-- **The Drive file name is in UTC.** 15:58 UTC is **18:58 in Cairo** — two minutes before the class.
-- **Zoom's web list shows the Zoom profile's time zone**, which was UTC−7 in September (US
-  Pacific). Confirmed again on 2026-09-11: Zoom listed `04:13 AM`, converted with
-  `ZOOM_AUTO_ADMIT_ZOOM_TIMEZONE=Pacific Standard Time` to **14:13** Cairo, and matched.
-- **The LMS and this app use Cairo time.**
-
-Two safeguards follow:
-1. Set `ZOOM_AUTO_ADMIT_ZOOM_TIMEZONE` so the list's times are converted before a recording is
-   picked. (Check it on zoom.us → Profile. If it is Arizona rather than Pacific, use
-   `US Mountain Standard Time` — the two differ in winter.)
-2. Whatever the setting, **the copied share link's own `startTime` is checked** against the
-   requested session (same Cairo day; from 30 minutes before to 3½ hours after the requested
-   time). If it does not belong, nothing is attached and the answer is 404 `timeMismatch`. A wrong
-   setting can therefore make a recording go unfound; it cannot attach the wrong week's video.
-
-## 9. n8n — HTTP Request node
-
-### Derive the fields from the file name (Code node, before the request)
-
-The file names seen in the sheet are `GROUP_yyyy-MM-dd_HHmm.mp4`, sometimes with `_part1`/`_part2`.
-The time is **UTC**, so it is sent with `"timeZone": "utc"` and the app converts it.
-
-```javascript
-// Input items look like: { group, fileName, type, date, link }
-const pattern = /^(.+)_(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})(?:_part\d+)?\.mp4$/i;
-
-return $input.all().map(({ json }) => {
-  const match = pattern.exec(json.fileName ?? '');
-  if (!match) throw new Error(`Unrecognised recording file name: ${json.fileName}`);
-  const [, fileGroup, date, hh, mm] = match;
-  const group = (json.group ?? fileGroup).trim();
-  if (group !== fileGroup) throw new Error(`Group "${group}" does not match file "${json.fileName}"`);
-  // json.link (the Drive URL) is deliberately NOT passed on.
-  return { json: { group, date, startTime: `${hh}:${mm}`, timeZone: 'utc' } };
-});
-```
-
-A `_part1` / `_part2` pair has the same time: the first request attaches the longest recording of
-that session, the second answers `alreadyExists: true`.
-
-### HTTP Request node
+The field names are exactly `group`, `recordLink`, `date`, `replaceExisting`. From a sheet row
+`{ group, fileName, type, date, link }`, `link` goes into **`recordLink`**:
 
 | Setting | Value |
 |---|---|
 | Method | `POST` |
 | URL | `http://127.0.0.1:47821/api/recordings/process` |
-| Authentication | **Generic Credential Type → Header Auth**, Name `X-API-Key`, Value = the key. (Or Authentication *None* and a header `X-API-Key` under *Send Headers* — but a credential keeps the key out of the workflow JSON.) |
+| Authentication | **Generic Credential Type → Header Auth**, Name `X-API-Key`, Value = the key. (Or *None* plus a header `X-API-Key` under *Send Headers*; a credential keeps the key out of the workflow JSON.) |
 | Send Body | on · Body Content Type **JSON** · Specify Body **Using JSON** |
-| Options → Timeout | `300000` (a run takes ~30–75 s, longer if it waits for a busy profile) |
-| Options → Response → Never Error | on, so 404/409/500 reach the next node to be branched on |
+| Options → Timeout | `300000` (a run takes ~15–40 s; longer if it waits for the dashboard profile) |
+| Options → Response → Never Error | on, so 409/500 bodies reach the next node |
 
 JSON body:
 
 ```json
 {
   "group": "{{ $json.group }}",
+  "recordLink": "{{ $json.link }}",
   "date": "{{ $json.date }}",
-  "startTime": "{{ $json.startTime }}",
-  "timeZone": "{{ $json.timeZone }}",
-  "profile": "default",
-  "headed": false,
-  "dryRun": false,
   "replaceExisting": false
 }
 ```
 
-Branch on the answer: `200` → record as done in the Data Table · `409` or reason
-`sessionNotFinished` → retry later · `404` → see Limitations · `zoomNotSignedIn` /
-`lmsNotSignedIn` → needs a person · `401` → the key in n8n does not match.
+If a value could ever contain a quote, build the body with an expression instead so it is escaped:
+`{{ JSON.stringify({ group: $json.group, recordLink: $json.link, date: $json.date, replaceExisting: false }) }}`
 
-Test with `"dryRun": true` first.
+Notes on the row values:
+- `date` must be `yyyy-MM-dd`. An empty cell becomes `""` and is refused — on purpose, so a missing
+  date is visible instead of silently meaning "today". The sheet's date is the recording's **UTC**
+  date; for classes held between midnight and about 03:00 Cairo time it is the previous day.
+- `group` must be the dashboard's group name (e.g. `CAI5_AIS4_S7`).
+- A `_part1` / `_part2` pair produces two rows: the first attaches its link, the second answers
+  `alreadyExists: true`. Send `replaceExisting: true` only if the later part should win.
 
-## 10. Where n8n runs matters
+Branch on the answer: `200` → mark done in the Data Table · `409`, or `reason` `sessionNotFinished`
+/ `lmsFailed` → retry later · `400` → fix the mapping · `401` → the key in n8n does not match ·
+`lmsNotSignedIn` → needs a person. Test with `"dryRun": true` first.
 
-`127.0.0.1` means **the machine the request is sent from**. The URL above only reaches this PC
-when **n8n itself runs on this PC**.
+## 8. Where n8n runs matters
+
+`127.0.0.1` means **the machine the request is sent from**. The URL reaches this PC only when
+**n8n itself runs on this PC**.
 
 | n8n runs… | Works? |
 |---|---|
-| On this PC, installed natively (`npx n8n`, n8n desktop) | Yes, as documented above. |
-| In Docker on this PC | Not as is. Requests arrive from the Docker network, not loopback, with a `host.docker.internal` Host header; the API refuses both by design. Install n8n natively instead, or put a local reverse proxy/tunnel on this PC in front of it. (Not tested here.) |
-| On another machine / n8n Cloud | Not directly — its `localhost` is its own machine. Use a tunnel that runs **on this PC** and forwards to `http://127.0.0.1:47821`: e.g. **Tailscale** (put the n8n host on the same tailnet) or **Cloudflare Tunnel** with Cloudflare Access in front. Configure the tunnel to send the Host header `127.0.0.1:47821` (Cloudflare: `originRequest.httpHostHeader`), or http.sys answers *Bad Request – Invalid Hostname*. Keep the API key on top of the tunnel's own protection. **Never** open the port on your router. |
+| On this PC, installed natively (`npx n8n`, n8n desktop) | Yes. |
+| In Docker on this PC | Not as is: requests arrive from the Docker network, not loopback, with a `host.docker.internal` Host header, and the API refuses both by design. Install n8n natively, or put a local reverse proxy/tunnel on this PC in front of it. (Not tested here.) |
+| Another machine / n8n Cloud | Not directly — its `localhost` is its own machine. Use a tunnel that runs **on this PC** and forwards to `http://127.0.0.1:47821` (Tailscale with the n8n host on the same tailnet, or Cloudflare Tunnel with Cloudflare Access), and have it send the Host header `127.0.0.1:47821` (Cloudflare: `originRequest.httpHostHeader`) or http.sys answers *Bad Request – Invalid Hostname*. Keep the API key on top. **Never** open the port on your router. |
 
-## 11. Limitations (verified on 2026-09-11)
+## 9. Behaviour you can rely on
 
-1. **Recordings disappear from Zoom when they reach Drive.** On 2026-09-11 Zoom listed only one
-   S7 recording — that day's, still processing. The 1, 4, 6 and 8 September recordings were already
-   in the sheet and gone from Zoom. A live request for 1 September 18:58 answered
-   `404 Recording not found` in 27 s. Because this API is triggered *by* a new sheet row, and it may
-   not take a Drive link, most real requests will be 404. Making the Drive link usable would need a
-   separate, explicitly validated path — not built, pending your decision.
-2. **A recording still processing can fail to open.** Today's recording was matched correctly but
-   its page timed out while opening (500 `zoomFailed`); it is expected to work once Zoom finishes.
-3. **Restarted classes.** Sending the second file's own time can be more than 30 minutes after the
-   LMS session's time; if the group has more than one session that day, the LMS row is then not
-   matched (500 `sessionNotFound`). The first file's request has already attached the longest
-   recording in that case.
-4. **The API must be running** when n8n calls; with `api-autostart --enable` it starts at sign-in,
-   not before anyone signs in to Windows.
-5. The Zoom and LMS steps are browser automation of third-party pages; a redesign of either can
-   break them, as it could for the terminal.
+- **Zoom is never searched.** Checked live: the requests went sign-in → that day's sessions →
+  the session page, with no Zoom page opened.
+- **Duplicates are safe.** `replaceExisting: false` never overwrites; a repeat answers
+  `alreadyExists: true`.
+- **One dashboard operation at a time**, across every process on the PC (the window, scheduled
+  meetings, the terminal, the API): the `lms-dashboard` profile is locked by a file, and a dashboard
+  browser Chromium already has open counts as busy.
+- **A caller hanging up does not stop the work** — a save is never cut in half; a repeat then finds
+  the link already there.
+
+## 10. Limitations
+
+1. **A real Save of a Drive link has not been performed.** Verified live with dry runs on the
+   S7 session of 2026-09-01: the LMS opened *Edit Record Link* and took the Drive link into the box;
+   Save was deliberately not pressed, because that session already has its link. Whether the LMS
+   accepts a Drive URL when saving is proven only the first time it is done for real.
+2. The dashboard must show the session as **finished** before it offers *Add Record Link*
+   (`reason: sessionNotFinished` until then).
+3. A group with **two sessions on the same date** needs `startTime` (Cairo time) to tell them apart;
+   without it nothing is attached (`sessionNotFound`).
+4. The API must be running when n8n calls; with `api-autostart --enable` it starts at sign-in, not
+   before anyone signs in.
+5. The dashboard step automates a third-party page; a redesign of it could break it, as for the
+   terminal.

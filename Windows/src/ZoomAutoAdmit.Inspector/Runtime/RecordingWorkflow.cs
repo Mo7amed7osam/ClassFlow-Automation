@@ -38,6 +38,26 @@ public static class RecordingWorkflow
             lockWait: lockWait);
     }
 
+    /// <summary>
+    /// The workflow for the HTTP API: the dashboard and its profile lock, and no Zoom at all. The API
+    /// is handed the recording's Drive link, so there is nothing to look up - and the Zoom slot holds
+    /// a stand-in that refuses, so no request can reach Zoom even by mistake.
+    /// </summary>
+    public static RecordingLinkProcessor CreateForApi(Action<string> log, TimeSpan? lockWait = null) =>
+        new(new NoZoomSource(),
+            new LmsRecordingTarget(new LmsSessionRunner(new LmsCredentialStore())),
+            new ProfileOperationLock(),
+            accountProfile: null,
+            log: log,
+            lockWait: lockWait);
+
+    private sealed class NoZoomSource : IRecordingLinkSource
+    {
+        public Task<ZoomRecordingLinkResult> ReadAsync(string group, string profile, DateOnly day, TimeOnly? startTime,
+            bool headed, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The recording API does not read Zoom; it is given the recording's link.");
+    }
+
     /// <summary>The log the terminal already uses; the Zoom and dashboard steps write to it too.</summary>
     public static void ToConsole(string line)
     {

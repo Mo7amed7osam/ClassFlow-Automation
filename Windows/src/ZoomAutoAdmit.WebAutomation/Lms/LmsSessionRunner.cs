@@ -177,7 +177,10 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     /// press "Add Record Link", paste, Save. The dashboard only offers that button once the
     /// session is finished, so a session that is not finished yet is reported rather than forced.
     /// </summary>
-    /// <param name="recordLink">The Zoom shareable link, already copied from the recording.</param>
+    /// <param name="recordLink">
+    /// The recording's link, written exactly as given: a Zoom share link copied from My Recordings,
+    /// or a Google Drive file link from the recordings sheet. Anything else is refused.
+    /// </param>
     /// <param name="dryRun">Open everything and report what it would paste, without saving.</param>
     public async Task<LmsRunResult> AttachRecordLinkAsync(
         string group,
@@ -191,8 +194,9 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(group);
-        if (!Zoom.ZoomRecordingLinkReader.IsShareLink(recordLink))
-            return LmsRunResult.Fail(LmsFailure.InvalidLink, "That is not a Zoom recording link, so nothing was saved.");
+        if (!Recordings.RecordingLinks.IsAttachable(recordLink))
+            return LmsRunResult.Fail(LmsFailure.InvalidLink,
+                "That is not a Zoom recording link or a Google Drive file link, so nothing was saved.");
         var account = credentials.Read();
         if (account == null)
             return LmsRunResult.Fail(LmsFailure.NotSignedIn, "No LMS sign-in is saved. Add it in the app before attaching a recording.");

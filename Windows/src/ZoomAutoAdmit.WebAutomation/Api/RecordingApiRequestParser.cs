@@ -6,26 +6,30 @@ using ZoomAutoAdmit.WebAutomation.Recordings;
 namespace ZoomAutoAdmit.WebAutomation.Api;
 
 /// <summary>
-/// Turns a request body into a <see cref="RecordingLinkRequest"/>, or says exactly what is wrong.
+/// Turns a request body into a <see cref="ProvidedRecordLinkRequest"/>, or says exactly what is wrong.
 ///
-/// Strict on purpose. An unknown field is refused rather than ignored, because a misspelt
-/// "starttime" silently ignored would mean "any time that day". And the application finds the Zoom
-/// recording itself, so a Drive link - under any of the names it has been seen under - is refused
-/// with an explanation instead of being carried along unused.
+///   { "group": "AST5_DAT1_S1",
+///     "recordLink": "https://drive.google.com/file/d/…/view?usp=sharing",
+///     "date": "2026-09-03",
+///     "replaceExisting": false }
+///
+/// The recording link is the Google Drive link from the recordings sheet and is written to the
+/// dashboard exactly as sent (surrounding spaces aside). Strict on purpose: an unknown field is
+/// refused rather than ignored, because a misspelt field silently ignored is a request that does
+/// something other than what was meant.
 /// </summary>
 public static class RecordingApiRequestParser
 {
     public static readonly IReadOnlyList<string> AllowedFields =
-        ["group", "date", "startTime", "timeZone", "profile", "headed", "dryRun", "replaceExisting"];
+        ["group", "recordLink", "date", "startTime", "replaceExisting", "profile", "dryRun", "headed"];
 
-    /// <summary>Fields that carry a recording file or link, which this API never takes.</summary>
-    public static readonly IReadOnlyList<string> RefusedLinkFields =
-        ["recordLink", "file", "fileName", "driveUrl", "googleDriveUrl", "link"];
+    /// <summary>Other names the recording link has been seen under, answered with the right one.</summary>
+    private static readonly IReadOnlyList<string> LinkAliases =
+        ["link", "url", "driveUrl", "googleDriveUrl", "recordingUrl", "recordingLink", "shareLink"];
 
     private static readonly Regex SafeGroup = new(@"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,99}$", RegexOptions.CultureInvariant);
 
-    /// <param name="localZone">This computer's zone, for a time sent in UTC. The machine's own by default.</param>
-    public static bool TryParse(string body, out RecordingLinkRequest? request, out string error, TimeZoneInfo? localZone = null)
+    public static bool TryParse(string body, out ProvidedRecordLinkRequest? request, out string error)
     {
         request = null;
         error = string.Empty;
@@ -42,19 +46,12 @@ public static class RecordingApiRequestParser
             foreach (var property in root.EnumerateObject())
             {
                 if (!seen.Add(property.Name)) { error = $"'{property.Name}' is given more than once."; return false; }
-                if (RefusedLinkFields.Contains(property.Name, StringComparer.OrdinalIgnoreCase))
-                {
-                    error = $"'{property.Name}' is not accepted: the application finds the Zoom recording itself. " +
-                            "Send group, date and startTime instead.";
-                    return false;
-                }
-                if (!AllowedFields.Contains(property.Name, StringComparer.Ordinal))
-                {
-                    error = $"'{property.Name}' is not a known field. Allowed: {string.Join(", ", AllowedFields)}.";
-                    return false;
-                }
+                if (AllowedFields.Contains(property.Name, StringComparer.Ordinal)) continue;
+                error = HintFor(property.Name) ?? $"'{property.Name}' is not a known field. Allowed: {string.Join(", ", AllowedFields)}.";
+                return false;
             }
 
+            // ---- group
             if (!TryString(root, "group", out string? group, out error)) return false;
             group = group?.Trim();
             if (string.IsNullOrEmpty(group)) { error = "'group' is required."; return false; }
@@ -64,6 +61,13 @@ public static class RecordingApiRequestParser
                 return false;
             }
 
+            // ---- recordLink
+            if (!TryString(root, "recordLink", out string? link, out error)) return false;
+            link = link?.Trim();
+            if (string.IsNullOrEmpty(link)) { error = "'recordLink' is required: the recording's Google Drive link."; return false; }
+            if (!CheckDriveLink(link, out error)) return false;
+
+            // ---- date
             if (!TryString(root, "date", out string? dateText, out error)) return false;
             DateOnly? date = null;
             if (dateText != null)
@@ -73,29 +77,17 @@ public static class RecordingApiRequestParser
                 date = parsedDate;
             }
 
+            // ---- startTime: only to tell apart two dashboard sessions of the group on one day
             if (!TryString(root, "startTime", out string? timeText, out error)) return false;
             TimeOnly? startTime = null;
             if (timeText != null)
             {
                 if (!TimeOnly.TryParseExact(timeText.Trim(), "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedTime))
-                { error = "'startTime' must be a 24-hour time in the form HH:mm."; return false; }
+                { error = "'startTime' must be a 24-hour local time in the form HH:mm."; return false; }
                 startTime = parsedTime;
             }
 
-            if (!TryString(root, "timeZone", out string? zoneText, out error)) return false;
-            string zone = zoneText?.Trim().ToLowerInvariant() ?? "local";
-            if (zone is not ("local" or "utc")) { error = "'timeZone' must be \"local\" or \"utc\"."; return false; }
-            if (zone == "utc")
-            {
-                // A UTC time can land on the next or previous local day, so both halves are needed.
-                if (date == null || startTime == null)
-                { error = "'timeZone': \"utc\" needs both 'date' and 'startTime'."; return false; }
-                var utc = DateTime.SpecifyKind(date.Value.ToDateTime(startTime.Value), DateTimeKind.Utc);
-                var local = TimeZoneInfo.ConvertTimeFromUtc(utc, localZone ?? TimeZoneInfo.Local);
-                date = DateOnly.FromDateTime(local);
-                startTime = TimeOnly.FromDateTime(local);
-            }
-
+            // ---- profile: accepted so an existing n8n node that still sends it keeps working
             if (!TryString(root, "profile", out string? profile, out error)) return false;
             profile = profile?.Trim();
             if (profile != null && !profile.Equals("default", StringComparison.OrdinalIgnoreCase) &&
@@ -105,23 +97,60 @@ public static class RecordingApiRequestParser
                 return false;
             }
 
-            if (!TryBool(root, "headed", out bool headed, out error)) return false;
-            if (!TryBool(root, "dryRun", out bool dryRun, out error)) return false;
             if (!TryBool(root, "replaceExisting", out bool replaceExisting, out error)) return false;
+            if (!TryBool(root, "dryRun", out bool dryRun, out error)) return false;
+            if (!TryBool(root, "headed", out bool headed, out error)) return false;
 
-            request = new RecordingLinkRequest
+            request = new ProvidedRecordLinkRequest
             {
                 Group = group,
+                RecordLink = link,
                 Date = date,
                 StartTime = startTime,
-                Profile = string.IsNullOrEmpty(profile) ? null : profile,
-                Headed = headed,
-                DryRun = dryRun,
                 ReplaceExisting = replaceExisting,
-                KeepBrowserOpen = false,
+                DryRun = dryRun,
+                Headed = headed,
             };
             return true;
         }
+    }
+
+    /// <summary>
+    /// The recording link has to be a Google Drive link to one file. Each way it can be wrong gets
+    /// its own message, so the n8n execution log says what to fix.
+    /// </summary>
+    public static bool CheckDriveLink(string link, out string error)
+    {
+        error = string.Empty;
+        if (link.Length > RecordingLinks.MaximumLength)
+        { error = $"'recordLink' is longer than {RecordingLinks.MaximumLength} characters."; return false; }
+        if (link.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
+        { error = "'recordLink' contains spaces or control characters."; return false; }
+        if (Regex.IsMatch(link, @"^[A-Za-z]:[\\/]") || link.StartsWith(@"\\", StringComparison.Ordinal) ||
+            link.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        { error = "'recordLink' is a file path, not a link. Send the recording's Google Drive link."; return false; }
+        if (!Uri.TryCreate(link, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host))
+        { error = "'recordLink' is not a valid URL."; return false; }
+        if (uri.Scheme != Uri.UriSchemeHttps)
+        { error = "'recordLink' must use https."; return false; }
+        if (!RecordingLinks.IsGoogleDriveFileLink(link))
+        {
+            error = "'recordLink' must be a Google Drive link to one file, like " +
+                    "https://drive.google.com/file/d/<file id>/view?usp=sharing.";
+            return false;
+        }
+        return true;
+    }
+
+    private static string? HintFor(string field)
+    {
+        if (LinkAliases.Contains(field, StringComparer.OrdinalIgnoreCase))
+            return $"'{field}' is not a known field: send the recording's Google Drive link as 'recordLink'.";
+        if (field.Equals("file", StringComparison.OrdinalIgnoreCase) || field.Equals("fileName", StringComparison.OrdinalIgnoreCase))
+            return $"'{field}' is not needed: only the recording's link is, as 'recordLink'. The file is never downloaded or uploaded.";
+        if (field.Equals("timeZone", StringComparison.OrdinalIgnoreCase))
+            return "'timeZone' is no longer used: attaching a link does not need the recording's time.";
+        return null;
     }
 
     /// <summary>A string field, or null when absent or JSON null. An empty string is not "absent".</summary>
@@ -133,8 +162,8 @@ public static class RecordingApiRequestParser
         if (element.ValueKind != JsonValueKind.String) { error = $"'{name}' must be a string."; return false; }
         value = element.GetString();
         // "" is what a template produces when its source is missing. Treating it as "absent" would
-        // quietly mean "today" or "any time"; refusing it makes the missing value visible.
-        if (value != null && value.Trim().Length == 0 && name != "group")
+        // quietly mean "today"; refusing it makes the missing value visible.
+        if (value != null && value.Trim().Length == 0 && name is not ("group" or "recordLink"))
         { error = $"'{name}' is empty. Leave it out, or send null, to use the default."; return false; }
         return true;
     }
