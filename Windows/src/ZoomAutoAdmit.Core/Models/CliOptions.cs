@@ -44,6 +44,10 @@ public class CliOptions
     public bool AutostartEnable { get; set; }
     /// <summary>api-autostart: stop starting it at sign-in.</summary>
     public bool AutostartDisable { get; set; }
+    /// <summary>agent-register: the central backend's address, e.g. https://central.example.com.</summary>
+    public string? CentralBackendUrl { get; set; }
+    /// <summary>agent-register: the name this PC shows in the backend (default: the computer name).</summary>
+    public string? DeviceName { get; set; }
     /// <summary>Which day of sessions to look at. Today when it is not given.</summary>
     public DateOnly? LmsDay { get; set; }
     /// <summary>The session's own start time, which separates two classes on the same day.</summary>
@@ -77,7 +81,10 @@ public class CliOptions
         "lms-attendance",
         "repair-schedules",
         "serve-api",
-        "api-autostart"
+        "api-autostart",
+        "agent-register",
+        "agent-run",
+        "agent-status"
     };
 
     public static CliOptions Parse(string[] args)
@@ -213,6 +220,14 @@ public class CliOptions
             else if (arg.Equals("--disable", StringComparison.OrdinalIgnoreCase))
             {
                 options.AutostartDisable = true;
+            }
+            else if (arg.Equals("--backend", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 < args.Length) options.CentralBackendUrl = args[++index].Trim();
+            }
+            else if (arg.Equals("--name", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 < args.Length) options.DeviceName = args[++index].Trim();
             }
             else if (arg.Equals("--day", StringComparison.OrdinalIgnoreCase))
             {

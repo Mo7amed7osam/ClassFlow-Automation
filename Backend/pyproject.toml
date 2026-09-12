@@ -1,0 +1,26 @@
+[project]
+name = "zoom-auto-admit-central-backend"
+version = "0.1.0"
+description = "Central backend for Zoom Auto Admit Windows agents: devices, jobs, heartbeats (Phase 1)."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "websockets>=13",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = [
+    # Starlette 1.x suggests httpx2 for its TestClient; httpx works the same for these tests.
+    "ignore::DeprecationWarning:starlette.testclient",
+    "ignore:Using `httpx` with `starlette.testclient`",
+]

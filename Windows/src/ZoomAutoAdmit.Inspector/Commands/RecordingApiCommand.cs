@@ -123,7 +123,7 @@ public static class RecordingApiCommand
     public static string LogPath() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZoomAutoAdmit", "Logs", "recording-api.log");
 
-    private static void AppendToFile(string path, LogEntry entry)
+    internal static void AppendToFile(string path, LogEntry entry)
     {
         try
         {
@@ -143,7 +143,7 @@ public static class RecordingApiCommand
     [DllImport("kernel32.dll")] private static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr window, int command);
 
-    private static void HideConsoleWindow()
+    internal static void HideConsoleWindow()
     {
         IntPtr window = GetConsoleWindow();
         if (window != IntPtr.Zero) ShowWindow(window, 0);

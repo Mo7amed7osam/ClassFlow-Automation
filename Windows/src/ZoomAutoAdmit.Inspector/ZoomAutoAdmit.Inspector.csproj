@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ZoomAutoAdmit.Attendance\ZoomAutoAdmit.Attendance.csproj" />
+    <ProjectReference Include="..\ZoomAutoAdmit.CentralAgent\ZoomAutoAdmit.CentralAgent.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.Core\ZoomAutoAdmit.Core.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.SessionRoles\ZoomAutoAdmit.SessionRoles.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.UIAutomation\ZoomAutoAdmit.UIAutomation.csproj" />

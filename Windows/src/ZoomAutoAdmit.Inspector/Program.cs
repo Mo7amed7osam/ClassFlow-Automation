@@ -48,6 +48,9 @@ internal static class Program
                 "repair-schedules" => await RepairSchedulesCommand.ExecuteAsync(options),
                 "serve-api" => await RecordingApiCommand.ServeAsync(options),
                 "api-autostart" => RecordingApiCommand.Autostart(options),
+                "agent-register" => await CentralAgentCommand.RegisterAsync(options),
+                "agent-run" => await CentralAgentCommand.RunAsync(options),
+                "agent-status" => CentralAgentCommand.Status(),
                 _ => HandleUnknownCommand(options.Command)
             };
         }
@@ -108,6 +111,9 @@ internal static class Program
         Console.WriteLine("  lms-record-link           Copy the group's Zoom recording link onto its finished session");
         Console.WriteLine("  serve-api                 Run the recording API for n8n on 127.0.0.1 (see RECORDING-API.md)");
         Console.WriteLine("  api-autostart             --enable / --disable starting the recording API at sign-in");
+        Console.WriteLine("  agent-register            --backend <url> [--name <pc>]: register this PC with the central backend");
+        Console.WriteLine("  agent-run                 Stay connected to the central backend and run its jobs (see CENTRAL-AGENT.md)");
+        Console.WriteLine("  agent-status              Show this PC's central-backend registration");
         Console.WriteLine("  meeting-start             Run the complete allocated meeting lifecycle");
         Console.WriteLine("  background-zoom-test      Safe diagnostic probe of background window capture & input");
         Console.WriteLine("  inspect                   Print the Zoom UI Automation element tree (read-only)");

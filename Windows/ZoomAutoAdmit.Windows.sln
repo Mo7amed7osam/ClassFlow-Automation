@@ -42,6 +42,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZoomAutoAdmit.AttendanceMat
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZoomAutoAdmit.AttendanceMatching.Tests", "tests\ZoomAutoAdmit.AttendanceMatching.Tests\ZoomAutoAdmit.AttendanceMatching.Tests.csproj", "{E34FE864-9D08-4AE0-B854-4F6107C77F2A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZoomAutoAdmit.CentralAgent", "src\ZoomAutoAdmit.CentralAgent\ZoomAutoAdmit.CentralAgent.csproj", "{F323D6DB-012D-4E02-9E18-E251A09925F2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZoomAutoAdmit.CentralAgent.Tests", "tests\ZoomAutoAdmit.CentralAgent.Tests\ZoomAutoAdmit.CentralAgent.Tests.csproj", "{F2CA0F5A-52DA-4952-A5AF-CE5E018D2A8D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -120,6 +124,14 @@ Global
 		{E34FE864-9D08-4AE0-B854-4F6107C77F2A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E34FE864-9D08-4AE0-B854-4F6107C77F2A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E34FE864-9D08-4AE0-B854-4F6107C77F2A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F323D6DB-012D-4E02-9E18-E251A09925F2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F323D6DB-012D-4E02-9E18-E251A09925F2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F323D6DB-012D-4E02-9E18-E251A09925F2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F323D6DB-012D-4E02-9E18-E251A09925F2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F2CA0F5A-52DA-4952-A5AF-CE5E018D2A8D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F2CA0F5A-52DA-4952-A5AF-CE5E018D2A8D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F2CA0F5A-52DA-4952-A5AF-CE5E018D2A8D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F2CA0F5A-52DA-4952-A5AF-CE5E018D2A8D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -138,5 +150,7 @@ Global
 		{D7F1D868-17FB-4A47-881F-7B01546410C0} = {90388369-4D7C-4221-9571-CCC8EF41FBCD}
 		{2C655912-F2C9-438E-A902-DB3DB934CBF3} = {B6F428AB-AFD3-427A-BE30-794DB3318B5A}
 		{E34FE864-9D08-4AE0-B854-4F6107C77F2A} = {90388369-4D7C-4221-9571-CCC8EF41FBCD}
+		{F323D6DB-012D-4E02-9E18-E251A09925F2} = {B6F428AB-AFD3-427A-BE30-794DB3318B5A}
+		{F2CA0F5A-52DA-4952-A5AF-CE5E018D2A8D} = {90388369-4D7C-4221-9571-CCC8EF41FBCD}
 	EndGlobalSection
 EndGlobal

@@ -18,6 +18,20 @@ public class InspectionOptionsTests
     }
 
     [Fact]
+    public void Parse_AgentCommands_CaptureBackendAndName()
+    {
+        var register = CliOptions.Parse(["agent-register", "--backend", "https://central.example.com", "--name", "PC-01"]);
+        Assert.Equal("agent-register", register.Command);
+        Assert.Equal("https://central.example.com", register.CentralBackendUrl);
+        Assert.Equal("PC-01", register.DeviceName);
+
+        var run = CliOptions.Parse(["agent-run", "--background"]);
+        Assert.Equal("agent-run", run.Command);
+        Assert.True(run.ApiBackground);
+        Assert.Equal("agent-status", CliOptions.Parse(["agent-status"]).Command);
+    }
+
+    [Fact]
     public void Parse_DefaultArgs_ReturnsInspectCommandWithDefaults()
     {
         var options = CliOptions.Parse(Array.Empty<string>());

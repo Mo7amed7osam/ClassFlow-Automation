@@ -1,0 +1,10 @@
+# Exact versions the Phase 1 tests passed with (Python 3.13). Ranges are in pyproject.toml.
+fastapi==0.141.1
+starlette==1.6.0
+pydantic==2.13.5
+uvicorn==0.52.4
+websockets==17.1
+SQLAlchemy==2.0.52
+greenlet==3.5.5
+asyncpg==0.31.0
+alembic==1.20.0
