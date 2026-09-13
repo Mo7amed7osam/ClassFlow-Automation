@@ -27,6 +27,7 @@ from .connections import ConnectionRegistry
 from .db import make_engine, make_sessionmaker
 from .dispatch import Dispatcher, Sweeper
 from .observability import configure_logging, emit
+from .recordings import router as recordings_router
 
 
 class RequireHttpsMiddleware:
@@ -113,6 +114,7 @@ def create_app(
 
     app.include_router(api_router)
     app.include_router(agent_router)
+    app.include_router(recordings_router)
     return app
 
 

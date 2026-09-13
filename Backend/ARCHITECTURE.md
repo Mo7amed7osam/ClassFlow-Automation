@@ -62,6 +62,7 @@
 | `enrollment_tokens` | `id`, `token_hash` UNIQUE, `label`, `expires_at`, `used_at`, `used_by_device_id` → devices |
 | `jobs` | `id` uuid PK, `type`, `device_id` → devices, `payload` jsonb, `status` (queued/assigned/running/succeeded/failed/cancelled), `result` jsonb, `error` jsonb, `idempotency_key` UNIQUE, `attempts`, `max_attempts`, `available_at`, `created_at`, `assigned_at`, `accepted_at`, `started_at`, `finished_at`, `updated_at`; indexes (status, available_at, created_at) and (device_id, status) |
 | `job_events` | `id` bigserial, `job_id` → jobs, `device_id`, `event_type` (created, assigned, accepted, started, succeeded, failed, retry_scheduled, rejected, assignment_expired, assignment_undelivered, agent_lost, cancelled), `payload` jsonb, `created_at` |
+| `recordings` (migration `0002_recordings`) | `id` uuid PK, `group_name` (indexed), `session_date` date (indexed), `start_time`, `file_name`, `record_type`, `drive_link` text, `zoom_link` text, `source` default 'zoom', `lms_status` default 'pending', `lms_updated_at`, `created_at`, `updated_at`; unique index (group_name, session_date, coalesce(start_time, '')) |
 
 ## Phase 2 (not built)
 

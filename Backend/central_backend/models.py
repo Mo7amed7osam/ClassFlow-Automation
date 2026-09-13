@@ -4,18 +4,21 @@ device tokens and enrollment tokens are kept only as SHA-256 hashes."""
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     String,
+    Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -109,6 +112,39 @@ class JobEvent(Base):
     __table_args__ = (Index("ix_job_events_job", "job_id", "id"),)
 
 
+class Recording(Base):
+    """One session recording as the recordings sheet (via n8n) describes it, and whether its link
+    has reached the LMS yet. A session is identified by group + date + start time (no time = one
+    slot for the day), enforced by a unique index."""
+
+    __tablename__ = "recordings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    group_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    start_time: Mapped[str | None] = mapped_column(String(5))
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    record_type: Mapped[str | None] = mapped_column(String(50))
+    drive_link: Mapped[str | None] = mapped_column(Text)
+    zoom_link: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, server_default="zoom")
+    lms_status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
+    lms_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index(
+            "uq_recordings_session",
+            "group_name",
+            "session_date",
+            text("coalesce(start_time, '')"),
+            unique=True,
+        ),
+        Index("ix_recordings_session_date", "session_date"),
+    )
+
+
 __all__ = [
     "ACTIVE_JOB_STATUSES",
     "FINAL_JOB_STATUSES",
@@ -118,4 +154,5 @@ __all__ = [
     "EnrollmentToken",
     "Job",
     "JobEvent",
+    "Recording",
 ]

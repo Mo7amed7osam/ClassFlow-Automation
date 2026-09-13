@@ -179,6 +179,44 @@ For `agentRestarted` and `agentLost`, check the LMS before resubmitting. A repea
 * **Then poll:** `GET https://<backend>/api/v1/jobs/{{ $json.jobId }}` every 15–30 s (a Wait node
   in a loop) until `status` is `succeeded` or `failed`.
 
+## Recordings (metadata from the recordings sheet)
+
+The same client key as the jobs API. These endpoints only **store** what n8n reports: they create
+no jobs and do not touch the LMS. `lmsStatus` is `pending` until a later step moves it on.
+
+| Endpoint | |
+|---|---|
+| `POST /api/v1/recordings/sync` | Create the session's recording, or update it if one with the same **group + date + startTime** exists. |
+| `GET /api/v1/recordings` | All recordings, newest date first. Optional `?group=`, `?date=yyyy-MM-dd`, `?status=` (the `lmsStatus`), `?limit=` (1–5000, default 1000), `?offset=`. Answers `{"recordings":[…],"count":n}`. |
+| `GET /api/v1/recordings/latest` | The most recently created or updated recordings, `updatedAt` newest first. `?limit=` 1–100, default 20; anything else is `400`. Each item has `id, group, date, startTime, fileName, type, driveLink, zoomLink, source, lmsStatus, updatedAt`. Answers `{"recordings":[…],"count":n}`. |
+| `GET /api/v1/recordings/{id}` | One recording, or `404`. |
+| `GET /api/v1/groups` | `{"groups":[…],"count":n}`: the distinct group names that have recordings, sorted. |
+
+Sync body (unknown fields are refused):
+
+```json
+{ "group": "CAI5_AIS4_S7", "date": "2026-09-11", "startTime": "18:00",
+  "fileName": "session.mp4", "type": "recording", "link": "https://drive.google.com/file/d/<id>/view" }
+```
+
+**Fields:**
+* `group` and `date` (`yyyy-MM-dd`) are required.
+* `startTime` (`HH:mm`), `fileName`, `type` and `link` are optional. An empty string counts as not
+  given, because empty sheet cells arrive as `""`.
+* `link` must be a Google Drive file link (stored as `driveLink`) or a Zoom recording link,
+  `https://…zoom.us/rec/share|play/…` (stored as `zoomLink`). Anything else is refused.
+* `source` is `drive` when a Drive link is stored, otherwise `zoom`.
+* The date and time are stored exactly as sent. The sheet's file names are in UTC, so send the
+  session's own (Cairo) date and time if they should match the LMS.
+
+**Answers:** `201 {"action":"created","recording":{…}}` or `200 {"action":"updated","recording":{…}}`.
+
+**On update:**
+* Fields that are given replace the stored ones; fields left out keep their values.
+* A changed link resets `lmsStatus` to `pending`, since the LMS would then hold an outdated link.
+* No start time is one slot for the day: two syncs of the same group and date without `startTime`
+  update the same row.
+
 ## Agent authentication and registration
 
 1. An operator runs `create-enrollment-token`. It is single use and expires; only its hash is stored.
