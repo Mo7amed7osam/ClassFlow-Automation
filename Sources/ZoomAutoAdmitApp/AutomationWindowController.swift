@@ -14,6 +14,8 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
     private let runSessionButton = NSButton(checkboxWithTitle: "Press Run Session when a scheduled meeting goes live", target: nil, action: nil)
     private let takeAttendanceButton = NSButton(checkboxWithTitle: "Upload attendance 90 minutes after the start", target: nil, action: nil)
     private let correctAttendanceButton = NSButton(checkboxWithTitle: "Correct late joiners 3 hours after the start", target: nil, action: nil)
+    private let endSessionButton = NSButton(checkboxWithTitle: "At the schedule's end time, after the final attendance: press End on the dashboard session", target: nil, action: nil)
+    private let zoomRecordingButton = NSButton(checkboxWithTitle: "Then put the Zoom cloud recording's share link on it (only while its record link is empty)", target: nil, action: nil)
     private let showBrowserButton = NSButton(checkboxWithTitle: "Show the browser while it works", target: nil, action: nil)
     private let dryRunButton = NSButton(checkboxWithTitle: "Rehearse only (open everything, press nothing that writes)", target: nil, action: nil)
     private let zoomTimeZoneField = NSTextField()
@@ -92,6 +94,8 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         runSessionButton.state = settings.runSessionOnMeetingStart ? .on : .off
         takeAttendanceButton.state = settings.takeAttendance ? .on : .off
         correctAttendanceButton.state = settings.correctAttendance ? .on : .off
+        endSessionButton.state = settings.endSessionAtEnd ? .on : .off
+        zoomRecordingButton.state = settings.attachZoomRecording ? .on : .off
         showBrowserButton.state = settings.showBrowser ? .on : .off
         dryRunButton.state = settings.dryRun ? .on : .off
         zoomTimeZoneField.stringValue = UserDefaults.standard.string(forKey: "lms.zoomAccountTimeZone") ?? ""
@@ -133,7 +137,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         emailField.placeholderString = "coordinator@example.com"
         passwordField.placeholderString = "Password"
         [emailField, passwordField].forEach { $0.widthAnchor.constraint(equalToConstant: 320).isActive = true }
-        for button in [runSessionButton, takeAttendanceButton, correctAttendanceButton, showBrowserButton, dryRunButton] {
+        for button in [runSessionButton, takeAttendanceButton, correctAttendanceButton, endSessionButton, zoomRecordingButton, showBrowserButton, dryRunButton] {
             button.target = self
             button.action = #selector(lmsSettingsChanged)
         }
@@ -158,6 +162,14 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
                 runSessionButton,
                 takeAttendanceButton,
                 correctAttendanceButton,
+                endSessionButton,
+                zoomRecordingButton,
+                DesignKit.caption("""
+                The Zoom link is read from My Recordings in the class account's Zoom Web profile (sign in once: \
+                Schedules → Accounts → Sign in to Zoom Web). A recording still processing is tried again every \
+                15 minutes. A link already on the session is never replaced; the Drive link from the recordings \
+                sheet replaces the Zoom link later.
+                """),
                 DesignKit.caption("""
                 The dashboard group is the group's LMS code (Schedules → Groups), or its name. Students marked \
                 Present are sent as Joined; everyone else the dashboard lists is Not-joined. If any row cannot be \
@@ -586,7 +598,9 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
             takeAttendance: takeAttendanceButton.state == .on,
             correctAttendance: correctAttendanceButton.state == .on,
             showBrowser: showBrowserButton.state == .on,
-            dryRun: dryRunButton.state == .on
+            dryRun: dryRunButton.state == .on,
+            endSessionAtEnd: endSessionButton.state == .on,
+            attachZoomRecording: zoomRecordingButton.state == .on
         ).save()
         let zone = zoomTimeZoneField.stringValue.trimmingCharacters(in: .whitespaces)
         if zone.isEmpty {

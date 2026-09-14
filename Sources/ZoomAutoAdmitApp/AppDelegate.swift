@@ -210,8 +210,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self?.openAutomationWindow()
         }
         menuBarController.onFinalizeAttendance = { [weak self] in
-            _ = self?.attendanceCoordinator.finalize()
-            self?.menuBarController.refresh()
+            guard let self else { return }
+            if let reason = self.attendanceCoordinator.manualFinalizeBlocker(configuration: self.schedulerCoordinator.currentConfiguration) {
+                SchedulerLog.shared.write("[attendance] manual-finalize refused: \(reason)")
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = "Attendance is still open"
+                alert.informativeText = reason
+                alert.runModal()
+                return
+            }
+            _ = self.attendanceCoordinator.finalize()
+            self.menuBarController.refresh()
         }
         menuBarController.attendanceSummary = { [weak self] in
             self?.attendanceCoordinator.liveSummary?.lines
@@ -337,6 +347,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     self?.attendanceCoordinator.finalize()
                 }
             )
+            attendanceWindowController?.finalizeBlocker = { [weak self] in
+                guard let self else { return nil }
+                return self.attendanceCoordinator.manualFinalizeBlocker(configuration: self.schedulerCoordinator.currentConfiguration)
+            }
         }
         attendanceWindowController?.present()
     }

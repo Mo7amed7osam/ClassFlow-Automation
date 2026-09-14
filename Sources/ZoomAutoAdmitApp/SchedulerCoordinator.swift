@@ -404,7 +404,10 @@ final class SchedulerCoordinator {
             if automationCoordinator?.liveAttendanceSession()?.scheduleID == schedule.id {
                 schedulerLog.write("End time reached for \(schedule.name); closing its attendance register only")
                 report(schedule, kind: .zoomEnded, severity: .info, title: "Class ended", message: "End time reached; register closed", notify: false)
-                DispatchQueue.main.async { [stopAttendance] in stopAttendance(true) }
+                DispatchQueue.main.async { [stopAttendance, automationCoordinator] in
+                    stopAttendance(true)
+                    automationCoordinator?.registerClosed(schedule: schedule)
+                }
                 return
             }
             schedulerLog.write("End time for \(schedule.name) ignored: monitoring was not started by the scheduler")
@@ -412,11 +415,13 @@ final class SchedulerCoordinator {
         }
         // Only monitoring stops. The Zoom meeting itself is never ended.
         schedulerLog.write("End time reached for \(schedule.name); stopping Auto Admit only")
-        DispatchQueue.main.async { [stopAutoAdmit, stopAttendance] in
+        DispatchQueue.main.async { [stopAutoAdmit, stopAttendance, automationCoordinator] in
             stopAutoAdmit()
             // The register is closed at the configured end time, which is the
             // point at which "not seen yet" honestly becomes "absent".
             stopAttendance(true)
+            // Whoever joined after the last correction still has to reach the LMS.
+            automationCoordinator?.registerClosed(schedule: schedule)
         }
         report(schedule, kind: .zoomEnded, severity: .info, title: "Class ended", message: "End time reached; Auto Admit stopped and the register closed", notify: false)
         notify(title: "Auto Admit stopped", body: "End time reached for \(schedule.name)")

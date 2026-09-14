@@ -68,7 +68,8 @@ final class AIMatchValidationTests: XCTestCase {
         XCTAssertTrue(result.rejected[0].contains("unknown observed name id"))
     }
 
-    func testDuplicateStudentAssignmentIsRejected() {
+    /// The same student joining twice is normal: two observed names may both go to one student.
+    func testOneStudentMayTakeTwoObservedNames() {
         let observed = [observation("Mohamed Hassan"), observation("M. Hassan")]
         let response = AIMatchResponse(
             matches: [
@@ -80,7 +81,8 @@ final class AIMatchValidationTests: XCTestCase {
             response, students: students, observations: observed, requestIDs: ids(observed)
         )
 
-        XCTAssertEqual(result.matches.count, 1, "one student cannot be present twice over")
+        XCTAssertEqual(result.matches.count, 2, "both names are that student's")
+        XCTAssertEqual(Set(result.matches.map(\.studentID)).count, 1)
     }
 
     func testDuplicateZoomNameAssignmentIsRejected() {
@@ -240,8 +242,9 @@ final class AIReconciliationTests: XCTestCase {
         )
     }
 
-    /// Exactly matched students never reach the network.
-    func testOnlyUnresolvedStudentsAndFreeNamesAreSent() {
+    /// Students still missing go first; students already present go too, marked, so a second
+    /// Zoom name of theirs is recognised instead of being forced onto somebody missing.
+    func testUnresolvedAndAlreadyPresentStudentsAreSentWithFreeNames() {
         let matched = Student(officialName: "Sara Mostafa Ali")
         let unmatched = Student(officialName: "Ahmed Tarek")
         let current = session(
@@ -251,13 +254,34 @@ final class AIReconciliationTests: XCTestCase {
 
         let (request, ids) = AIReconciliation.request(for: current)
 
-        // Sara matched exactly and never leaves the machine; only the device
-        // name and the student it might belong to are worth asking about.
-        XCTAssertEqual(request.students.map(\.officialName), ["Ahmed Tarek"])
-        XCTAssertEqual(request.observedNames.map(\.displayName), ["Ahmed's iPhone"])
-        XCTAssertEqual(ids.students.count, 1)
+        XCTAssertEqual(request.students.map(\.officialName), ["Ahmed Tarek", "Sara Mostafa Ali"])
+        XCTAssertEqual(request.students.map(\.alreadyPresent), [false, true])
+        XCTAssertEqual(request.observedNames.map(\.displayName), ["Ahmed's iPhone"], "a claimed name is never sent")
+        XCTAssertEqual(ids.students.count, 2)
         XCTAssertEqual(ids.observations.count, 1)
-        XCTAssertFalse(request.students.contains { $0.officialName == "Sara Mostafa Ali" })
+        XCTAssertTrue(OpenRouterClient.prompt(for: request).contains("\"already_present\": true"))
+        XCTAssertTrue(OpenRouterClient.prompt(for: request).contains("A student MAY appear more than once"))
+    }
+
+    /// A second name the model pairs with a present student is linked to them, not made a new attendee.
+    func testASecondNameForAPresentStudentIsLinkedToThem() {
+        let sara = Student(officialName: "Sara Mostafa Ali")
+        let ahmed = Student(officialName: "Ahmed Tarek")
+        let current = session(
+            students: [sara, ahmed],
+            observations: [observation("Sara Mostafa Ali"), observation("sara phone")]
+        )
+        let (request, ids) = AIReconciliation.request(for: current)
+        let saraKey = request.students.first { $0.officialName == "Sara Mostafa Ali" }!.id
+        let response = AIMatchResponse(matches: [AIMatchProposal(studentID: saraKey, observedNameID: "z0", confidence: 0.95)])
+
+        let summary = AIReconciliation.apply(response, to: current, ids: ids, autoAcceptConfidence: 0.9)
+        let record = summary.session.records.first { $0.studentID == sara.id }
+        XCTAssertEqual(record?.status, .present)
+        XCTAssertEqual(record?.matchedZoomName, "Sara Mostafa Ali", "the name she was matched on stays")
+        XCTAssertEqual(record?.additionalZoomNames, ["sara phone"])
+        XCTAssertEqual(summary.session.records.first { $0.studentID == ahmed.id }?.status, .notSeenYet)
+        XCTAssertTrue(summary.session.unmatchedZoomNames.isEmpty)
     }
 
     /// Regression for the live case: local Latin/Arabic similarity is zero, but

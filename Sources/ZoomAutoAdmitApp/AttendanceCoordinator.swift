@@ -225,6 +225,22 @@ final class AttendanceCoordinator {
         }
     }
 
+    /// Why the live register may not be finalized by hand right now, or nil when it may.
+    ///
+    /// A register closed early stops counting late joiners, and the late-joiner correction on
+    /// the LMS then uploads that early picture. So a scheduled class's register stays open
+    /// until its end time, when the scheduler closes it and the final correction is sent.
+    func manualFinalizeBlocker(configuration: SchedulerConfiguration, at now: Date = Date()) -> String? {
+        queue.sync {
+            guard let current = session, current.endedAt == nil, timer != nil,
+                  let schedule = configuration.schedules.first(where: { $0.id == current.scheduleID }),
+                  let end = ScheduleTimeline.endDate(for: schedule, startedAt: current.startedAt), now < end else { return nil }
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            return "Attendance for \(current.groupName) stays open until the class ends at \(formatter.string(from: end)), so late joiners still reach the LMS. It closes by itself then and the final attendance is sent to the LMS."
+        }
+    }
+
     /// Takes a final snapshot and closes the register.
     @discardableResult
     func finalize(at now: Date = Date()) -> AttendanceSession? {
@@ -488,6 +504,13 @@ final class AttendanceCoordinator {
     @discardableResult
     private func persistLocked(finalizing: Bool, at now: Date) -> AttendanceSession? {
         guard var current = session, let recorder, let group else { return nil }
+
+        // The group's co-host candidates are staff, never students: they are kept out of the
+        // register even when they were added after the meeting started.
+        let liveGroup = configurationProvider?().studentGroups.first { $0.id == group.id } ?? group
+        let staff = liveGroup.coHostCandidates.flatMap { [$0.name] + $0.aliases }
+        let missing = staff.filter { name in !current.meetingIgnoredNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame } }
+        if !missing.isEmpty { current.meetingIgnoredNames.append(contentsOf: missing) }
 
         current.observations = recorder.observations
         current.snapshots = recorder.snapshots

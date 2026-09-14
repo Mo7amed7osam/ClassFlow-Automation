@@ -15,6 +15,7 @@ public enum OperationsEventKind: String, Codable, Equatable {
     case zoomEnded
     case lmsSessionStarted
     case lmsSessionFailed
+    case lmsSessionEnded
     case attendanceUploaded
     case attendanceCorrected
     case lmsStepFailed
@@ -23,6 +24,7 @@ public enum OperationsEventKind: String, Codable, Equatable {
     case recordingConflict
     case recordingFailed
     case recordingWaiting
+    case recordingZoomAttached
     case general
 }
 

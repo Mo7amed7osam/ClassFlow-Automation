@@ -6,15 +6,18 @@ public enum LmsFollowUpStep: String, Codable, CaseIterable, Equatable {
     case takeAttendance
     /// Move whoever turned up late from Not-joined to Joined, three hours in.
     case correctAttendance
-    /// Retired: recording links now come from the Google Sheet sync once the session has ended and
-    /// its attendance is done, not from a timer. Kept so older queue files still load.
+    /// The Zoom cloud recording's share link onto the ended session, when its record link is
+    /// empty. The Drive link from the recordings sheet replaces it later.
     case attachRecording
+    /// Press End on the dashboard session at the class's end time, after its final attendance.
+    case endSession
 
     public var displayName: String {
         switch self {
         case .takeAttendance: return "Take attendance"
         case .correctAttendance: return "Correct late joiners"
-        case .attachRecording: return "Attach recording"
+        case .attachRecording: return "Attach Zoom recording"
+        case .endSession: return "End session"
         }
     }
 }
@@ -120,6 +123,7 @@ public final class LmsFollowUpQueue {
         attendanceGroupID: UUID?,
         scheduleID: UUID?,
         recordingProfile: String? = nil,
+        dueAt: Date? = nil,
         calendar: Calendar = .current
     ) -> [LmsFollowUp] {
         let trimmed = group.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -135,7 +139,7 @@ public final class LmsFollowUpQueue {
                 sessionDate: date,
                 sessionStart: time,
                 step: step,
-                dueAt: start.addingTimeInterval(Self.delay(for: step)),
+                dueAt: dueAt ?? start.addingTimeInterval(Self.delay(for: step)),
                 attendanceGroupID: attendanceGroupID,
                 scheduleID: scheduleID,
                 recordingProfile: recordingProfile
@@ -153,6 +157,7 @@ public final class LmsFollowUpQueue {
         case .takeAttendance: return takeAttendanceAfter
         case .correctAttendance: return correctAttendanceAfter
         case .attachRecording: return attachRecordingAfter
+        case .endSession: return correctAttendanceAfter
         }
     }
 

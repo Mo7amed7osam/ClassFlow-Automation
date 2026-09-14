@@ -185,6 +185,9 @@ public enum AttendanceIgnoring {
 
         if !ignoredIDs.isEmpty {
             for index in updated.records.indices {
+                for id in ignoredIDs { updated.records[index].removeIdentity(id) }
+            }
+            for index in updated.records.indices {
                 guard let observationID = updated.records[index].matchedObservationID, ignoredIDs.contains(observationID) else { continue }
                 // An ignored person is never evidence for a student, manual or not.
                 updated.records[index].matchedObservationID = nil
@@ -239,7 +242,7 @@ public enum UnknownParticipantDetector {
         history: [AttendanceSession],
         minimumRecurrence: Int = 2
     ) -> [UnknownParticipant] {
-        let claimed = Set(session.records.filter { $0.status == .present || $0.status == .needsReview }.compactMap(\.matchedObservationID))
+        let claimed = Set(session.records.filter { $0.status == .present || $0.status == .needsReview }.flatMap(\.claimedObservationIDs))
         // Name parts worth comparing: "dr", "mr" and initials say nothing about who someone is.
         let rosterParts = Set(session.rosterSnapshot.flatMap { NameNormalizer.tokens($0.officialName) }.filter { $0.count >= 3 && !["prof", "eng"].contains($0) })
         let earlier = history.filter { $0.groupID == session.groupID && $0.id != session.id && $0.startedAt < session.startedAt }

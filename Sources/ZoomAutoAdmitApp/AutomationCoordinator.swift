@@ -61,6 +61,10 @@ final class AutomationCoordinator {
 
     // Co-host: who was already granted in this meeting, so each person is handled once.
     private var coHostGranted: Set<String> = []
+    /// Failed tries per person this meeting. Each try opens a menu in the live meeting, so it
+    /// stops after a few and asks the host to do it by hand once.
+    private var coHostFailures: [String: Int] = [:]
+    static let coHostMaximumTries = 3
     private var coHostSessionKey: UUID?
 
     init(
@@ -203,6 +207,48 @@ final class AutomationCoordinator {
         }
     }
 
+    /// The register closed at the class's end time: one last late-joiner correction, so the LMS
+    /// ends with the final attendance. When the timed correction is still queued it is that
+    /// step (nothing is added); when it already ran, the same step is queued again, due now.
+    func registerClosed(schedule: ZoomSchedule, at now: Date = Date()) {
+        let settings = self.settings
+        let configuration = configurationProvider()
+        guard hasLmsSignIn, let group = configuration.group(for: schedule) else { return }
+        let start = Self.scheduledStart(of: schedule, around: now)
+        var queuedAnything = false
+        if settings.correctAttendance {
+            let written = followUps.schedule(
+                group: group.dashboardGroupName,
+                sessionStartedAt: start,
+                steps: [.correctAttendance],
+                attendanceGroupID: group.id,
+                scheduleID: schedule.id
+            )
+            if written.isEmpty {
+                log("[LMS] Register closed for \(group.dashboardGroupName); its late-joiner correction is still queued and will send the final attendance.")
+            } else {
+                log("[LMS] Register closed for \(group.dashboardGroupName); final attendance correction queued, due now.")
+                queuedAnything = true
+            }
+        }
+        // Then End on the dashboard and the Zoom recording, in that order (perform keeps the order).
+        let endSteps = settings.endOfClassSteps
+        if !endSteps.isEmpty {
+            let written = followUps.schedule(
+                group: group.dashboardGroupName,
+                sessionStartedAt: start,
+                steps: endSteps,
+                attendanceGroupID: group.id,
+                scheduleID: schedule.id,
+                recordingProfile: configuration.profile(for: schedule)?.resolvedWebProfileName,
+                dueAt: now
+            )
+            for item in written { log("[LMS] Queued at the end of class: \(item.describe)") }
+            queuedAnything = queuedAnything || !written.isEmpty
+        }
+        if queuedAnything { processDueFollowUps() }
+    }
+
     /// The occurrence's own start time, not the moment the workflow finished; the dashboard
     /// lists sessions by the scheduled time.
     static func scheduledStart(of schedule: ZoomSchedule, around moment: Date, calendar: Calendar = .current) -> Date {
@@ -305,10 +351,77 @@ final class AutomationCoordinator {
                 reportFailure(item, reason: result.message)
             }
 
+        case .endSession:
+            // The final attendance goes first: a session is never ended with a correction still owed.
+            if let waiting = pendingBefore(item, steps: [.takeAttendance, .correctAttendance]) {
+                followUps.postpone(item, until: now.addingTimeInterval(5 * 60), reason: "Waiting for \(waiting.step.displayName) first.")
+                log("[LMS] \(item.describe) waits for \(waiting.step.displayName).")
+                return
+            }
+            let result = lms.endSession(group: item.group, date: item.sessionDate, startTime: item.sessionStart, settings: settings, onMessage: helperLine)
+            if result.success {
+                followUps.complete(item)
+                log("[LMS] ✓ \(result.message)")
+                let outcome = result.body["outcome"]?.string
+                report(event(for: item, kind: .lmsSessionEnded, severity: .success,
+                             title: outcome == "alreadyEnded" ? "LMS session already ended" : "LMS session ended ✅\(settings.dryRun ? " (rehearse)" : "")",
+                             message: result.message), notify: false)
+            } else {
+                followUps.fail(item, reason: result.message, at: now)
+                log("[LMS] ✗ \(result.message)")
+                reportFailure(item, reason: result.message)
+            }
+
         case .attachRecording:
-            // The old start + 4 hours timer. Recording links come from the Recording Sync now.
-            followUps.complete(item)
-            log("[RECORDINGS] Removed a queued start + 4h recording step for \(item.group) \(item.sessionDate); Recording Sync handles recording links.")
+            if let waiting = pendingBefore(item, steps: [.takeAttendance, .correctAttendance, .endSession]) {
+                followUps.postpone(item, until: now.addingTimeInterval(5 * 60), reason: "Waiting for \(waiting.step.displayName) first.")
+                return
+            }
+            let configuration = configurationProvider()
+            let profile = item.recordingProfile
+                ?? item.scheduleID.flatMap { id in configuration.schedules.first { $0.id == id } }.flatMap { configuration.profile(for: $0)?.resolvedWebProfileName }
+            guard let profile else {
+                followUps.fail(item, reason: "This class's schedule has no Zoom account profile.", at: now)
+                reportFailure(item, reason: "This class's schedule has no Zoom account profile.")
+                return
+            }
+            let zoomZone = UserDefaults.standard.string(forKey: "lms.zoomAccountTimeZone").flatMap(TimeZone.init(identifier:))
+            let result = lms.attachZoomRecording(group: item.group, date: item.sessionDate, startTime: item.sessionStart, profile: profile,
+                                                 zoomUtcOffsetMinutes: zoomZone.map { $0.secondsFromGMT() / 60 }, settings: settings, onMessage: helperLine)
+            let outcome = result.body["outcome"]?.string
+            let issue = result.body["issue"]?.string
+            if result.success {
+                followUps.complete(item)
+                log("[RECORDINGS] ✓ \(result.message)")
+                report(event(for: item, kind: .recordingZoomAttached, severity: .success,
+                             title: outcome == "keptExisting" ? "Record link already set" : "Zoom recording attached ✅\(settings.dryRun ? " (rehearse)" : "")",
+                             message: result.message), notify: false)
+            } else if issue == "recordingNotFound" || issue == "busy" || issue == "sessionNotEnded" {
+                // Zoom lists a recording only once the meeting has ended and it is processing: try again soon.
+                followUps.fail(item, reason: result.message, at: now, retryAfter: 15 * 60)
+                log("[RECORDINGS] … \(result.message) Trying again in 15 minutes.")
+                if item.attempts + 1 >= LmsFollowUpQueue.maximumAttempts { reportFailure(item, reason: result.message) }
+            } else {
+                followUps.fail(item, reason: result.message, at: now)
+                log("[RECORDINGS] ✗ \(result.message)")
+                if issue == "zoomNotSignedIn" {
+                    report(event(for: item, kind: .lmsStepFailed, severity: .failure, title: "Zoom recording: sign in needed ❌",
+                                 message: "\(result.message)\n\nFix: Schedules → Accounts → select the account → Sign in to Zoom Web."),
+                           notify: true, key: "zoom-signin|\(profile)")
+                } else {
+                    reportFailure(item, reason: result.message)
+                }
+            }
+        }
+    }
+
+    /// An earlier step of the same class that is still owed (and not given up on).
+    private func pendingBefore(_ item: LmsFollowUp, steps: [LmsFollowUpStep]) -> LmsFollowUp? {
+        followUps.read().first {
+            $0.id != item.id && steps.contains($0.step)
+                && LmsGroupMapping.key($0.group) == LmsGroupMapping.key(item.group)
+                && $0.sessionDate == item.sessionDate
+                && $0.attempts < LmsFollowUpQueue.maximumAttempts
         }
     }
 
@@ -557,6 +670,7 @@ final class AutomationCoordinator {
         if coHostSessionKey != session.id {
             coHostSessionKey = session.id
             coHostGranted = []
+            coHostFailures = [:]
         }
         let readout = ZoomAXSupport.participantsReadout(pid: zoom.pid)
         guard readout.listAvailable else { return }
@@ -565,7 +679,7 @@ final class AutomationCoordinator {
         for row in readout.admitted where !row.roles.contains(.me) {
             guard let match = CoHostMatcher.match(observedName: row.displayName, candidates: group.coHostCandidates, history: history, groupID: group.id) else { continue }
             let key = NameNormalizer.normalize(row.displayName)
-            guard !coHostGranted.contains(key) else { continue }
+            guard !coHostGranted.contains(key), coHostFailures[key, default: 0] < Self.coHostMaximumTries else { continue }
             if row.roles.contains(.coHost) || row.roles.contains(.host) {
                 coHostGranted.insert(key)
                 continue
@@ -581,7 +695,15 @@ final class AutomationCoordinator {
                                            title: "Co-host assigned", message: "\(row.displayName) (\(match.candidate.name))"), notify: operations == nil)
                 }
             } else {
-                log("[COHOST] ✗ \(row.displayName): \(outcome.message). Trying again next pass.")
+                let tries = coHostFailures[key, default: 0] + 1
+                coHostFailures[key] = tries
+                if tries < Self.coHostMaximumTries {
+                    log("[COHOST] ✗ \(row.displayName): \(outcome.message). Trying again next pass (\(tries)/\(Self.coHostMaximumTries)).")
+                } else {
+                    log("[COHOST] ✗ \(row.displayName): \(outcome.message). Gave up after \(tries) tries; make them co-host by hand.")
+                    report(OperationsEvent(kind: .general, severity: .warning, groupCode: group.dashboardGroupName, sessionDate: LmsFollowUpQueue.dashboardDateAndTime(session.startedAt).0, scheduleID: session.scheduleID,
+                                           title: "Co-host not assigned ⚠️", message: "\(row.displayName) (\(match.candidate.name)): Zoom refused (\(outcome.message)).\n\nMake them co-host by hand in Participants."), notify: true)
+                }
             }
         }
     }

@@ -56,37 +56,72 @@ public extension ZoomAXSupport {
     }
 
     /// Assigns co-host to the admitted participant shown as `displayName`.
+    ///
+    /// Zoom's answers to Accessibility actions are not trustworthy on their own: a press on a
+    /// row's More button can report an error (-25205) and still open the menu, or do nothing
+    /// until the row is hovered. So every step is judged by what Zoom shows next, not by the
+    /// error code: the menu is looked for after the press whatever it returned, the row's own
+    /// context menu (AXShowMenu) is tried when the More button opens nothing, and the result
+    /// is read back from the participants list.
     static func makeCoHost(displayName: String, pid: pid_t, menuWait: TimeInterval = 0.6, verifyWait: TimeInterval = 1.0) -> CoHostOutcome {
         guard let located = locateParticipantCell(displayName: displayName, pid: pid) else {
             return participantsReadout(pid: pid).listAvailable ? .participantNotFound : .participantsListUnavailable
         }
         if located.row.roles.contains(.coHost) || located.row.roles.contains(.host) { return .alreadyCoHost }
 
-        guard let buttonPath = firstPath(in: located.cellSnapshot, where: { isMoreOptionsButton($0, for: displayName) }),
-              let button = resolveElement(at: buttonPath, from: located.cellElement),
-              actionNames(of: button).contains(pressAction) else {
-            return .moreButtonUnavailable
+        let button = firstPath(in: located.cellSnapshot, where: { isMoreOptionsButton($0, for: displayName) })
+            .flatMap { resolveElement(at: $0, from: located.cellElement) }
+
+        var lastError: AXError = .success
+        var item: AXUIElement?
+        // 1. The row's More options button.
+        if let button {
+            if actionNames(of: button).contains(pressAction) {
+                lastError = press(button)
+                Thread.sleep(forTimeInterval: menuWait)
+                item = findMenuItem(pid: pid, titles: makeCoHostTitles)
+            }
+            // 2. The same button's context menu.
+            if item == nil, !menuIsOpen(pid: pid), actionNames(of: button).contains(kAXShowMenuAction as String) {
+                let shown = AXUIElementPerformAction(button, kAXShowMenuAction as CFString)
+                if shown != .success { lastError = shown }
+                Thread.sleep(forTimeInterval: menuWait)
+                item = findMenuItem(pid: pid, titles: makeCoHostTitles)
+            }
+        }
+        // 3. The row cell's own context menu, as a right-click would open it.
+        if item == nil, !menuIsOpen(pid: pid), actionNames(of: located.cellElement).contains(kAXShowMenuAction as String) {
+            let shown = AXUIElementPerformAction(located.cellElement, kAXShowMenuAction as CFString)
+            if shown != .success { lastError = shown }
+            Thread.sleep(forTimeInterval: menuWait)
+            item = findMenuItem(pid: pid, titles: makeCoHostTitles)
         }
 
-        let opened = press(button)
-        guard opened == .success else { return .axError(opened) }
-        Thread.sleep(forTimeInterval: menuWait)
-
-        guard let item = findMenuItem(pid: pid, titles: makeCoHostTitles) else {
-            // Leave Zoom as it was found: the same button closes the menu it opened.
-            _ = AXUIElementPerformAction(button, kAXCancelAction as CFString)
-            if menuIsOpen(pid: pid) { _ = press(button) }
-            return .menuItemUnavailable
+        guard let item else {
+            closeMenu(pid: pid, button: button)
+            if button == nil { return .moreButtonUnavailable }
+            return lastError == .success ? .menuItemUnavailable : .axError(lastError)
         }
         let pressed = press(item)
-        guard pressed == .success else { return .axError(pressed) }
         Thread.sleep(forTimeInterval: verifyWait)
 
         let readout = participantsReadout(pid: pid)
         let confirmed = readout.admitted.contains {
             normalized($0.displayName) == normalized(displayName) && $0.roles.contains(.coHost)
         }
-        return confirmed ? .assigned : .notConfirmed
+        if confirmed { return .assigned }
+        closeMenu(pid: pid, button: button)
+        return pressed == .success ? .notConfirmed : .axError(pressed)
+    }
+
+    /// Leaves Zoom as it was found when a menu is still open.
+    private static func closeMenu(pid: pid_t, button: AXUIElement?) {
+        guard menuIsOpen(pid: pid) else { return }
+        let application = freshZoomApplicationElement(pid: pid, messagingTimeout: 2)
+        for menu in children(of: application) where copyStringAttribute(menu, kAXRoleAttribute) == "AXMenu" {
+            _ = AXUIElementPerformAction(menu, kAXCancelAction as CFString)
+        }
+        if menuIsOpen(pid: pid), let button { _ = press(button) }
     }
 
     private struct LocatedCell {

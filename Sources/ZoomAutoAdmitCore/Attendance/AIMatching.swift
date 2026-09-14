@@ -10,10 +10,14 @@ public struct AIMatchRequest: Equatable {
     public struct Candidate: Equatable {
         public let id: String
         public let officialName: String
+        /// Already matched on another Zoom name: only a second identity of the same person may
+        /// be paired with them.
+        public let alreadyPresent: Bool
 
-        public init(id: String, officialName: String) {
+        public init(id: String, officialName: String, alreadyPresent: Bool = false) {
             self.id = id
             self.officialName = officialName
+            self.alreadyPresent = alreadyPresent
         }
     }
 
@@ -176,10 +180,8 @@ public enum AIMatchValidator {
                 continue
             }
 
-            guard !usedStudents.contains(studentID) else {
-                rejected.append("duplicate student assignment for \(proposal.observedNameID)")
-                continue
-            }
+            // One student may take several observed names (the same person joining twice); one
+            // observed name may never go to two students.
             guard !usedObservations.contains(observation.id) else {
                 rejected.append("duplicate observed name assignment: \(proposal.observedNameID)")
                 continue

@@ -13,19 +13,27 @@ public struct LmsSettings: Equatable {
     public var showBrowser: Bool
     /// Rehearse: open everything and report the decision, but press nothing that writes.
     public var dryRun: Bool
+    /// Press End on the dashboard session at the schedule's end time, after the final attendance.
+    public var endSessionAtEnd: Bool
+    /// Then put the Zoom cloud recording's share link on it, while its record link is empty.
+    public var attachZoomRecording: Bool
 
     public init(
         runSessionOnMeetingStart: Bool = false,
         takeAttendance: Bool = false,
         correctAttendance: Bool = false,
         showBrowser: Bool = false,
-        dryRun: Bool = false
+        dryRun: Bool = false,
+        endSessionAtEnd: Bool = false,
+        attachZoomRecording: Bool = false
     ) {
         self.runSessionOnMeetingStart = runSessionOnMeetingStart
         self.takeAttendance = takeAttendance
         self.correctAttendance = correctAttendance
         self.showBrowser = showBrowser
         self.dryRun = dryRun
+        self.endSessionAtEnd = endSessionAtEnd
+        self.attachZoomRecording = attachZoomRecording
     }
 
     public var followUpSteps: [LmsFollowUpStep] {
@@ -35,7 +43,15 @@ public struct LmsSettings: Equatable {
         return steps
     }
 
-    public var isAnythingEnabled: Bool { runSessionOnMeetingStart || !followUpSteps.isEmpty }
+    /// What runs once the class's end time is reached, in order.
+    public var endOfClassSteps: [LmsFollowUpStep] {
+        var steps: [LmsFollowUpStep] = []
+        if endSessionAtEnd { steps.append(.endSession) }
+        if attachZoomRecording { steps.append(.attachRecording) }
+        return steps
+    }
+
+    public var isAnythingEnabled: Bool { runSessionOnMeetingStart || !followUpSteps.isEmpty || !endOfClassSteps.isEmpty }
 
     private enum Key {
         static let run = "lms.runSessionOnMeetingStart"
@@ -43,6 +59,8 @@ public struct LmsSettings: Equatable {
         static let correct = "lms.correctAttendance"
         static let show = "lms.showBrowser"
         static let dryRun = "lms.dryRun"
+        static let endSession = "lms.endSessionAtEnd"
+        static let zoomRecording = "lms.attachZoomRecording"
     }
 
     public static func load(from defaults: UserDefaults = .standard) -> LmsSettings {
@@ -51,7 +69,9 @@ public struct LmsSettings: Equatable {
             takeAttendance: defaults.bool(forKey: Key.take),
             correctAttendance: defaults.bool(forKey: Key.correct),
             showBrowser: defaults.bool(forKey: Key.show),
-            dryRun: defaults.bool(forKey: Key.dryRun)
+            dryRun: defaults.bool(forKey: Key.dryRun),
+            endSessionAtEnd: defaults.bool(forKey: Key.endSession),
+            attachZoomRecording: defaults.bool(forKey: Key.zoomRecording)
         )
     }
 
@@ -61,6 +81,8 @@ public struct LmsSettings: Equatable {
         defaults.set(correctAttendance, forKey: Key.correct)
         defaults.set(showBrowser, forKey: Key.show)
         defaults.set(dryRun, forKey: Key.dryRun)
+        defaults.set(endSessionAtEnd, forKey: Key.endSession)
+        defaults.set(attachZoomRecording, forKey: Key.zoomRecording)
     }
 }
 
@@ -153,6 +175,19 @@ public final class LmsClient {
     /// except a Zoom recording link when `replaceZoomRecordingLinks` is on).
     public func syncRecordLink(group: String, date: String, driveURL: String, replaceZoomRecordingLinks: Bool, settings: LmsSettings, onMessage: AutomationHelper.LineHandler? = nil) -> AutomationResult {
         dashboard("lms-sync-record-link", group: group, date: date, startTime: nil, settings: settings, extra: ["driveUrl": driveURL, "replaceZoomRecordingLinks": replaceZoomRecordingLinks], onMessage: onMessage)
+    }
+
+    /// Presses End on the class's session (at its end time). A session already ended is left alone.
+    public func endSession(group: String, date: String, startTime: String?, settings: LmsSettings, onMessage: AutomationHelper.LineHandler? = nil) -> AutomationResult {
+        dashboard("lms-end-session", group: group, date: date, startTime: startTime, settings: settings, extra: [:], onMessage: onMessage)
+    }
+
+    /// Reads the class's Zoom cloud recording share link in `profile` and writes it on the session
+    /// when its record link is empty. Offsets are minutes east of UTC.
+    public func attachZoomRecording(group: String, date: String, startTime: String?, profile: String, zoomUtcOffsetMinutes: Int?, settings: LmsSettings, onMessage: AutomationHelper.LineHandler? = nil) -> AutomationResult {
+        var extra: [String: Any] = ["profile": profile, "localUtcOffsetMinutes": TimeZone.current.secondsFromGMT() / 60]
+        if let zoomUtcOffsetMinutes { extra["zoomUtcOffsetMinutes"] = zoomUtcOffsetMinutes }
+        return dashboard("zoom-recording-to-lms", group: group, date: date, startTime: startTime, settings: settings, extra: extra, onMessage: onMessage)
     }
 
     /// Health check: signs in headless and counts the group's sessions on `date`. Presses nothing.

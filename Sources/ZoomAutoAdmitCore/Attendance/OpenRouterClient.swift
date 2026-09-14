@@ -44,7 +44,7 @@ public final class OpenRouterClient {
     /// observation together. No local similarity score filters candidate pairs.
     public static func prompt(for request: AIMatchRequest) -> String {
         let students = request.students
-            .map { "  {\"id\": \"\($0.id)\", \"name\": \"\(escape($0.officialName))\"}" }
+            .map { "  {\"id\": \"\($0.id)\", \"name\": \"\(escape($0.officialName))\"\($0.alreadyPresent ? ", \"already_present\": true" : "")}" }
             .joined(separator: ",\n")
         let names = request.observedNames
             .map { "  {\"id\": \"\($0.id)\", \"name\": \"\(escape($0.displayName))\"}" }
@@ -64,7 +64,13 @@ public final class OpenRouterClient {
 
         Rules:
         - Only use the opaque student and observed-name IDs given below. Never invent an ID or identity.
-        - Each student may appear at most once. Each observed name may appear at most once.
+        - Each observed name may appear at most once. A student MAY appear more than once: the same \
+        student often joins twice (phone and laptop, or leaving and rejoining) under the same or a \
+        very close name, e.g. "Amir Girges" and "amir abdu", or "Zahraa Swelim" and "zahraa hagag \
+        abdelsamea". Pair every observed name that is clearly that same person with the student.
+        - Students marked "already_present": true were already matched on another Zoom name. Pair an \
+        observed name with them only when it is clearly a second identity of that same person, and \
+        never when a student without that mark fits it about as well.
         - Consider competing candidates before assigning. A shared first name with multiple plausible \
         students is ambiguous and must be marked needs_review or left unmatched, never chosen randomly.
         - The opposite case is a confident match, not a doubtful one. When a name element points at \

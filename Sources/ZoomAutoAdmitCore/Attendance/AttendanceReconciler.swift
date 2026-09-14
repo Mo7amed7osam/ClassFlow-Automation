@@ -27,7 +27,7 @@ public enum AttendanceReconciler {
         var updated = session
 
         let manualRecords = session.records.filter(\.isManual)
-        let manuallyUsedObservations = Set(manualRecords.compactMap(\.matchedObservationID))
+        let manuallyUsedObservations = Set(manualRecords.flatMap(\.claimedObservationIDs))
         let manuallyDecidedStudents = Set(manualRecords.map(\.studentID))
 
         // Manual decisions remove both the student and their observation from
@@ -60,6 +60,38 @@ public enum AttendanceReconciler {
                 confidence: candidate.score,
                 reason: candidate.reason
             ))
+        }
+
+        // A student who joined twice: the extra identity backs the same record.
+        for candidate in outcome.duplicates {
+            guard let observation = session.observation(withID: candidate.observationID),
+                  let index = records.firstIndex(where: { $0.studentID == candidate.studentID && $0.status == .present }) else {
+                continue
+            }
+            consumedObservations.insert(observation.id)
+            records[index].addIdentity(observation)
+            let note = "also joined as “\(observation.rawName)”"
+            records[index].reason = [records[index].reason, note].compactMap { $0 }.joined(separator: "; ")
+        }
+
+        // Students decided by hand are outside automatic matching, but a clear further Zoom name of
+        // one who is present is still the same person joining again.
+        let reviewObservations = Set(outcome.review.map(\.observationID))
+        for observation in observations where !consumedObservations.contains(observation.id) && !reviewObservations.contains(observation.id) {
+            let manualPresent = records.indices.filter { records[$0].isManual && records[$0].status == .present }
+            let scored = manualPresent.compactMap { index -> (Int, Double)? in
+                guard let student = session.rosterSnapshot.first(where: { $0.id == records[index].studentID }),
+                      let pairing = DeterministicMatcher.score(rawObservedName: observation.rawName, student: student) else { return nil }
+                return (index, pairing.score)
+            }
+            guard let best = scored.max(by: { $0.1 < $1.1 }), best.1 >= DeterministicMatcher.duplicateFloor else { continue }
+            let contested = students.contains { student in
+                !records.contains { $0.studentID == student.id }
+                    && (DeterministicMatcher.score(rawObservedName: observation.rawName, student: student)?.score ?? 0) >= best.1 - 0.05
+            }
+            guard !contested else { continue }
+            consumedObservations.insert(observation.id)
+            records[best.0].addIdentity(observation)
         }
 
         for candidate in outcome.review {
@@ -103,7 +135,7 @@ public enum AttendanceReconciler {
         updated.unmatchedZoomNames = session.observations
             .filter { !consumedObservations.contains($0.id) }
             .filter { observation in
-                !records.contains { $0.matchedObservationID == observation.id && $0.status == .present }
+                !records.contains { $0.claimedObservationIDs.contains(observation.id) && $0.status == .present }
             }
             .map(\.rawName)
 
@@ -130,7 +162,10 @@ public enum AttendanceReconciler {
         // Attendance still requires evidence, even by hand.
         let resolvedStatus: AttendanceStatus = (status == .present && observation == nil) ? .needsReview : status
 
-        let record = AttendanceRecord(
+        // Matching another Zoom name to a student who was already seen adds that name; the name
+        // they were already matched on stays linked. The same person often joins twice.
+        let previous = updated.records.first { $0.studentID == studentID }
+        var record = AttendanceRecord(
             studentID: student.id,
             studentName: student.officialName,
             status: resolvedStatus,
@@ -141,6 +176,20 @@ public enum AttendanceReconciler {
             reason: "Set manually",
             isManual: true
         )
+        if resolvedStatus == .present, let observation, let previous,
+           previous.status == .present || previous.status == .needsReview {
+            for earlier in previous.claimedObservationIDs where earlier != observation.id {
+                // Only a name nobody else holds, and only from a record that really was present
+                // on it or a review guess the operator is now confirming as the same person.
+                guard previous.status == .present,
+                      let earlierObservation = session.observation(withID: earlier),
+                      !updated.records.contains(where: { $0.studentID != studentID && $0.claimedObservationIDs.contains(earlier) }) else { continue }
+                record.addIdentity(earlierObservation)
+            }
+            if let names = record.additionalZoomNames, !names.isEmpty {
+                record.reason = "Set manually; also joined as " + names.map { "“\($0)”" }.joined(separator: ", ")
+            }
+        }
 
         if let index = updated.records.firstIndex(where: { $0.studentID == studentID }) {
             updated.records[index] = record
@@ -150,6 +199,10 @@ public enum AttendanceReconciler {
 
         // One observation cannot also be evidence for somebody else.
         if let observationID = observation?.id {
+            for index in updated.records.indices
+            where updated.records[index].studentID != studentID {
+                updated.records[index].removeIdentity(observationID)
+            }
             for index in updated.records.indices
             where updated.records[index].studentID != studentID
                 && updated.records[index].matchedObservationID == observationID {
@@ -163,8 +216,9 @@ public enum AttendanceReconciler {
             }
         }
 
+        let claimedNames = Set(updated.records.filter { $0.status == .present }.flatMap(\.claimedObservationIDs).compactMap { session.observation(withID: $0)?.rawName })
         updated.unmatchedZoomNames = updated.unmatchedZoomNames.filter { name in
-            observation.map { $0.rawName != name } ?? true
+            !claimedNames.contains(name) && (observation.map { $0.rawName != name } ?? true)
         }
         return updated
     }

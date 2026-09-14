@@ -157,13 +157,15 @@ final class DeterministicMatcherTests: XCTestCase {
         XCTAssertEqual(outcome.unmatchedStudentIDs.count, 1)
     }
 
-    /// And one student must not consume two Zoom identities.
-    func testOneStudentCannotConsumeTwoObservations() {
+    /// A student with two Zoom identities is still one attendee: the second identity is a
+    /// duplicate backing the same student, never a second acceptance.
+    func testOneStudentWithTwoObservationsIsOneAttendee() {
         let target = student("Mohamed Ahmed Hassan")
         let outcome = match([target], [observation("Mohamed Ahmed Hassan"), observation("Mohamed Hassan")])
 
         XCTAssertEqual(outcome.accepted.count, 1)
-        XCTAssertEqual(outcome.unmatchedObservationIDs.count + outcome.review.count, 1)
+        XCTAssertEqual(outcome.duplicates.map(\.studentID), [target.id])
+        XCTAssertTrue(outcome.unmatchedObservationIDs.isEmpty)
     }
 
     /// The strongest pairing wins, rather than whichever was compared first.

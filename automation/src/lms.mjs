@@ -233,6 +233,133 @@ export async function syncRecordLink(request) {
   }
 }
 
+/** "Complete Session" (the DEPI dashboard's label), or "End Session" - never "Cancel Session". */
+export const END_SESSION_NAME = /^\s*(Complete|End)(\s+Session)?\s*$/i;
+export function isEndSessionLabel(text) {
+  return END_SESSION_NAME.test(String(text ?? ""));
+}
+
+/** The confirming button of an "are you sure" dialog. Cancel-like words never match. */
+export function isConfirmLabel(text) {
+  return /^\s*((Complete|End)(\s+Session)?|Confirm|Yes(,?\s*(end|complete)(\s+session)?)?|OK|Continue)\s*$/i.test(String(text ?? ""));
+}
+
+/**
+ * Ends the class's session on the dashboard at its end time - after its final attendance -
+ * so the dashboard offers Add Record Link. A session that already offers the record link, or
+ * reads finished, was ended already and is left alone.
+ */
+export function endSession(request) {
+  return withSession(request, "ending the session", async (page, { group, date, state }) => {
+    state.step = "reading the session's state";
+    const recordButton = () => page.getByRole("button", { name: /^\s*(Add|Edit)\s+Record\s+Link\s*$/i }).filter({ visible: true }).first();
+    const endButton = () => page.getByRole("button", { name: END_SESSION_NAME }).filter({ visible: true }).first();
+    const status = await readStatus(page);
+    if (/finished|completed/i.test(status) || (await recordButton().count()) > 0) {
+      return ok(`${group} ${date}: the session was already ended${status ? ` (${status})` : ""}.`, { outcome: "alreadyEnded", status });
+    }
+    if (!(await waitVisible(endButton(), 20_000))) {
+      log.info(`[LMS] The session page offers: ${await listActions(page)}`);
+      return fail(LmsFailure.failed, `The session page for ${group} offers no Complete Session button${status ? `; it reads "${status}"` : ""}. Nothing was pressed.`, { issue: "noEndButton", status });
+    }
+    if (request.dryRun) return ok(`${group} ${date}: the session page offers End. Nothing was pressed (rehearse).`, { outcome: "wouldEnd", dryRun: true, status });
+
+    state.step = "pressing Complete Session";
+    await endButton().click({ timeout: 10_000 });
+    await page.waitForTimeout(1500);
+    const dialog = page.locator("[role='alertdialog'], [role='dialog']").filter({ visible: true }).first();
+    if ((await dialog.count()) > 0) {
+      state.step = "confirming End";
+      const buttons = await dialog.getByRole("button").all();
+      let confirmed = false;
+      for (const button of buttons) {
+        const label = (await button.innerText().catch(() => "")).trim();
+        if (isConfirmLabel(label)) {
+          await button.click({ timeout: 10_000 });
+          confirmed = true;
+          break;
+        }
+      }
+      if (!confirmed) {
+        const shown = (await dialog.innerText().catch(() => "")).replace(/\s*\n\s*/g, " | ").slice(0, 300);
+        log.info(`[LMS] The End dialog reads: ${shown}`);
+        await page.keyboard.press("Escape");
+        return fail(LmsFailure.failed, `${group} ${date}: End asked for a confirmation this app does not recognise; nothing was confirmed.`, { issue: "unknownConfirmation" });
+      }
+    }
+    const toast = await readToast(page);
+    await settle(page);
+    if (toast) log.success(`[LMS] The dashboard said: ${toast}`);
+
+    state.step = "reading the session back";
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForTimeout(1500);
+    const after = await readStatus(page);
+    const recordOffered = await waitVisible(recordButton(), 15_000);
+    const stillRunning = (await endButton().count()) > 0;
+    if (recordOffered || (/finished|completed/i.test(after) && !stillRunning)) {
+      log.success(`[LMS] Session ended for ${group} on ${date}.`);
+      return ok(`${group} ${date}: the session was ended and confirmed after a reload${after ? ` (${after})` : ""}.`, { outcome: "ended", status: after, toast });
+    }
+    return fail(LmsFailure.failed, `${group} ${date}: End was pressed but the session still ${stillRunning ? "offers End" : "does not offer Add Record Link"}${after ? ` and reads "${after}"` : ""}.`, { issue: "notConfirmed", status: after });
+  });
+}
+
+/**
+ * What to do with a Zoom recording link: only an empty record link gets it. The same link is
+ * done; anything else already there - a Drive link above all - is kept.
+ */
+export function decideZoomLinkUpdate(currentValue, zoomUrl) {
+  const current = String(currentValue ?? "").trim();
+  if (!current) return "add";
+  if (current === String(zoomUrl ?? "").trim()) return "same";
+  return "keep";
+}
+
+/** Writes a Zoom recording share link on the class's session when its record link is empty. */
+export function attachZoomLink(request) {
+  const zoomUrl = String(request.zoomUrl ?? "").trim();
+  if (!isZoomShareLink(zoomUrl)) return Promise.resolve(fail(LmsFailure.invalidLink, "That is not a Zoom recording share link; nothing was opened.", { issue: "invalidLink" }));
+  return withSession(request, "attaching the Zoom recording", async (page, { group, date, state }) => {
+    const lmsSessionUrl = page.url();
+    const current = await readRecordLink(page, state);
+    const before = { currentLink: current.value, recordLinkState: current.state };
+    if (current.state === "unavailable") {
+      return fail(LmsFailure.sessionNotFinished, `The ${group} session on ${date} offers no record link yet; it has not been ended.`, { issue: "sessionNotEnded", lmsSessionUrl, ...before });
+    }
+    const decision = decideZoomLinkUpdate(current.value, zoomUrl);
+    if (decision === "same") return ok(`${group} ${date}: the session already carries this Zoom recording.`, { outcome: "alreadyAttached", lmsSessionUrl, ...before });
+    if (decision === "keep") {
+      return ok(`${group} ${date}: the session already has a record link (${previewLink(current.value)}); it was kept.`, { outcome: "keptExisting", lmsSessionUrl, ...before });
+    }
+    if (request.dryRun) return ok(`${group} ${date}: the record link is empty and would get ${previewLink(zoomUrl)}. Nothing was saved (rehearse).`, { outcome: "wouldAttach", dryRun: true, lmsSessionUrl, ...before });
+
+    state.step = "saving the Zoom recording link";
+    const add = page.getByRole("button", { name: /^\s*(Add|Edit)\s+Record\s+Link\s*$/i }).filter({ visible: true }).first();
+    await add.click({ timeout: 10_000 });
+    const dialog = page.locator("[role='dialog']").filter({ has: page.locator("input[name='recorded_link'], input[placeholder='Enter session record link']") }).first();
+    const field = dialog.locator("input[name='recorded_link'], input[placeholder='Enter session record link']").first();
+    if (!(await waitVisible(field, 15_000))) return fail(LmsFailure.failed, `The record link box did not open for ${group} ${date}; nothing was saved.`, { issue: "boxDidNotOpen", lmsSessionUrl, ...before });
+    if ((await field.inputValue({ timeout: 5000 })).trim() !== "") {
+      await page.keyboard.press("Escape");
+      return fail(LmsFailure.failed, `${group} ${date}: a record link appeared while the Zoom link was being added; nothing was saved.`, { issue: "existingLinkDiffers", lmsSessionUrl, ...before });
+    }
+    await field.fill(zoomUrl);
+    await dialog.getByRole("button", { name: /^\s*Save\s*$/i }).first().click({ timeout: 10_000 });
+    const toast = await readToast(page);
+    await settle(page);
+    if (toast) log.success(`[LMS] The dashboard said: ${toast}`);
+
+    state.step = "reading the record link back";
+    await page.reload({ waitUntil: "networkidle" });
+    const after = await readRecordLink(page, state);
+    if (after.value !== zoomUrl) {
+      return fail(LmsFailure.failed, `${group} ${date}: after saving, the session reads ${after.value ? previewLink(after.value) : "no link"} instead of the Zoom recording.`, { issue: "notConfirmed", lmsSessionUrl, ...before });
+    }
+    return ok(`${group} ${date}: the Zoom recording link was saved and confirmed after a reload.`, { outcome: "attached", lmsSessionUrl, ...before });
+  });
+}
+
 /**
  * empty → "add"; the same Drive file (share variants of one link count as the same) → "same";
  * anything else → "conflict".
@@ -774,7 +901,7 @@ async function readToast(page) {
 
 async function readStatus(page) {
   try {
-    const status = page.getByText(/^\s*(pending|running|finished|cancelled)\s*$/i).filter({ visible: true }).first();
+    const status = page.getByText(/^\s*(pending|running|finished|completed|cancelled)\s*$/i).filter({ visible: true }).first();
     return (await status.count()) > 0 ? (await status.innerText()).trim() : "";
   } catch {
     return "";

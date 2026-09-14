@@ -38,22 +38,29 @@ public enum AIReconciliation {
                 .map(\.studentID)
         )
         let unresolved = session.rosterSnapshot.filter { !resolvedStudentIDs.contains($0.id) }
+        // Students already present go too, marked, so a second Zoom name of theirs is recognised
+        // as them instead of being forced onto somebody still missing.
+        let present = Set(session.records.filter { $0.status == .present }.map(\.studentID))
+        let alreadyPresent = session.rosterSnapshot.filter { present.contains($0.id) }
 
         let claimed = Set(
             session.records
                 .filter { $0.isManual || $0.status == .present }
-                .compactMap(\.matchedObservationID)
+                .flatMap(\.claimedObservationIDs)
         )
         let freeObservations = session.observations.filter { !claimed.contains($0.id) && !rules.matches($0.rawName) }
 
         var studentIDs: [String: UUID] = [:]
         var candidates: [AIMatchRequest.Candidate] = []
-        for (index, student) in unresolved.enumerated() {
+        for (index, student) in (unresolved + alreadyPresent).enumerated() {
             // Opaque per-request ids: the model never receives a real UUID and
             // cannot reference anything outside this request.
             let key = "s\(index)"
             studentIDs[key] = student.id
-            candidates.append(.init(id: key, officialName: student.officialName))
+            candidates.append(.init(id: key, officialName: student.officialName, alreadyPresent: present.contains(student.id)))
+        }
+        if freeObservationsAreEmpty(session: session, claimed: claimed, rules: rules) {
+            candidates = []
         }
 
         var observationIDs: [String: UUID] = [:]
@@ -68,6 +75,11 @@ public enum AIReconciliation {
             AIMatchRequest(students: candidates, observedNames: observedNames),
             AIMatchRequestIDs(students: studentIDs, observations: observationIDs)
         )
+    }
+
+    /// Nothing to ask about: every observation is already claimed or ignored.
+    private static func freeObservationsAreEmpty(session: AttendanceSession, claimed: Set<UUID>, rules: AttendanceIgnoreRules) -> Bool {
+        session.observations.allSatisfy { claimed.contains($0.id) || rules.matches($0.rawName) }
     }
 
     /// Folds validated proposals into the session.
@@ -89,8 +101,20 @@ public enum AIReconciliation {
         var review = 0
         var pairedObservations = Set<UUID>()
 
+        var assignedThisReply = Set<UUID>()
         for match in validated.matches {
             guard let index = updated.records.firstIndex(where: { $0.studentID == match.studentID }) else {
+                continue
+            }
+            let confident = !match.needsReview && match.confidence >= autoAcceptConfidence
+            // A second Zoom name of a student who is already present (or was just placed by this
+            // reply): it joins that student's identities. Never a status change, never a manual
+            // decision overwritten - an extra name only adds evidence.
+            if updated.records[index].status == .present || assignedThisReply.contains(match.studentID) {
+                guard confident, let observation = updated.observation(withID: match.observationID) else { continue }
+                updated.records[index].addIdentity(observation)
+                pairedObservations.insert(match.observationID)
+                applied += 1
                 continue
             }
             // A human decision is never overwritten by the model.
@@ -99,7 +123,7 @@ public enum AIReconciliation {
             guard updated.records[index].status != .present
                 || updated.records[index].matchSource == .ai else { continue }
 
-            let confident = !match.needsReview && match.confidence >= autoAcceptConfidence
+            assignedThisReply.insert(match.studentID)
             updated.records[index].status = confident ? .present : .needsReview
             updated.records[index].matchedObservationID = match.observationID
             updated.records[index].matchedZoomName = match.zoomName
@@ -114,7 +138,7 @@ public enum AIReconciliation {
         let claimed = Set(
             updated.records
                 .filter { $0.status == .present }
-                .compactMap(\.matchedObservationID)
+                .flatMap(\.claimedObservationIDs)
         )
         updated.unmatchedZoomNames = updated.observations
             .filter { !claimed.contains($0.id) }

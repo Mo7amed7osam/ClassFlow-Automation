@@ -10,6 +10,8 @@ final class AttendanceWindowController: NSWindowController {
     private let configurationWriter: (SchedulerConfiguration) -> Void
     private let liveSessionProvider: () -> AttendanceSession?
     private let finalizeHandler: () -> AttendanceSession?
+    /// Why the live register may not be finalized yet; nil when it may.
+    var finalizeBlocker: () -> String? = { nil }
 
     private var sessions: [AttendanceSession] = []
     private var selectedSession: AttendanceSession?
@@ -332,7 +334,7 @@ final class AttendanceWindowController: NSWindowController {
         let claimed = Set(
             session.records
                 .filter { $0.status == .present || $0.status == .needsReview }
-                .compactMap(\.matchedObservationID)
+                .flatMap(\.claimedObservationIDs)
         )
         let unresolved = session.observations
             .filter { !claimed.contains($0.id) }
@@ -453,6 +455,13 @@ final class AttendanceWindowController: NSWindowController {
 
     @objc private func finalizeAttendance() {
         guard let session = selectedSession else { return }
+        if let live = liveSessionProvider(), live.id == session.id, let reason = finalizeBlocker() {
+            let refused = NSAlert()
+            refused.messageText = "Attendance is still open"
+            refused.informativeText = reason
+            refused.runModal()
+            return
+        }
 
         let alert = NSAlert()
         alert.messageText = "Finalize attendance for \(session.groupName)?"
@@ -978,6 +987,9 @@ extension AttendanceWindowController: NSTableViewDataSource, NSTableViewDelegate
                 "seen \(formatter.string(from: first))–\(formatter.string(from: last))"
                 + " in \(seen) snapshot\(seen == 1 ? "" : "s")"
             )
+        }
+        if let also = record.additionalZoomNames, !also.isEmpty {
+            parts.append("also: " + also.joined(separator: ", "))
         }
         if record.isManual { parts.append("set manually") }
         else if record.matchSource != .none { parts.append(record.matchSource.rawValue) }

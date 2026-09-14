@@ -6,6 +6,8 @@
 //   lms-run-session           { credentials, group, day?, startTime?, headed?, dryRun? }
 //   lms-take-attendance       { credentials, group, present[], everyone?, day?, startTime?, dryRun? }
 //   lms-correct-attendance    { credentials, group, present[], everyone?, day?, startTime?, dryRun? }
+//   lms-end-session           { credentials, group, day, startTime?, dryRun? }   (at the class's end time)
+//   zoom-recording-to-lms     { credentials, group, day, startTime?, profile, zoomUtcOffsetMinutes?, localUtcOffsetMinutes?, dryRun? }
 //   lms-check-session         { credentials, group, day }   (health check: sign in and count listed sessions, read-only)
 //   lms-sync-record-link      { credentials, group, day, driveUrl, dryRun? }   (Google Sheet → LMS)
 //   web-meeting               { meetingUrl, profile, headless?, sessionId?, captureAttendance? }        (runs until stdin closes)
@@ -15,10 +17,10 @@
 //   version                   {}
 
 import process from "node:process";
-import { withDashboardLock } from "../src/lock.mjs";
+import { acquireProfileLock, withDashboardLock } from "../src/lock.mjs";
 import { firstLine } from "../src/browser.mjs";
 import { log, readFirstLine, readRequest, result } from "../src/io.mjs";
-import { checkSession, correctAttendance, runSession, syncRecordLink, takeAttendance, verifySignIn } from "../src/lms.mjs";
+import { attachZoomLink, checkSession, correctAttendance, endSession, runSession, syncRecordLink, takeAttendance, verifySignIn } from "../src/lms.mjs";
 import { parseRoster, parseTimetable, readFirstSheet } from "../src/workbooks.mjs";
 
 const command = process.argv[2];
@@ -31,11 +33,37 @@ const oneShot = {
   "lms-run-session": (request) => withDashboardLock(lockWait(request), () => runSession(request)),
   "lms-take-attendance": (request) => withDashboardLock(lockWait(request), () => takeAttendance(request)),
   "lms-correct-attendance": (request) => withDashboardLock(lockWait(request), () => correctAttendance(request)),
+  "lms-end-session": (request) => withDashboardLock(lockWait(request), () => endSession(request)),
+  "zoom-recording-to-lms": (request) => zoomRecordingToLms(request),
   "lms-check-session": (request) => withDashboardLock(lockWait(request), () => checkSession(request)),
   "lms-sync-record-link": (request) => withDashboardLock(lockWait(request), () => syncRecordLink(request)),
   "read-timetable": async (request) => ({ success: true, ...parseTimetable(await readFirstSheet(request.path)) }),
   "read-roster": async (request) => ({ success: true, ...parseRoster(await readFirstSheet(request.path)) }),
 };
+
+/**
+ * The class's Zoom cloud recording onto its session: the share link is read in the account's
+ * Zoom browser profile, then written on the dashboard. One profile is held at a time.
+ */
+async function zoomRecordingToLms(request) {
+  const { readRecordingLink } = await import("../src/zoom-recordings.mjs");
+  const profile = String(request.profile ?? "").trim();
+  if (!profile) return { success: false, failure: "failed", issue: "noProfile", message: "No Zoom browser profile is set for this class's account." };
+  const lock = await acquireProfileLock(profile, { waitMs: lockWait(request) });
+  if (!lock) return { success: false, failure: "busy", issue: "busy", message: `The '${profile}' browser profile is open elsewhere; the recording is tried again later.` };
+  let recording;
+  try {
+    recording = await readRecordingLink(request);
+  } finally {
+    lock.release();
+  }
+  if (!recording.success || !recording.shareUrl) {
+    const issue = { notFound: "recordingNotFound", timeMismatch: "recordingNotFound", notSignedIn: "zoomNotSignedIn" }[recording.failure] ?? "zoomFailed";
+    return { ...recording, success: false, issue };
+  }
+  const written = await withDashboardLock(lockWait(request), () => attachZoomLink({ ...request, zoomUrl: recording.shareUrl }));
+  return { ...written, zoomUrl: recording.shareUrl, recordingStartedAtUtc: recording.startedAtUtc ?? null };
+}
 
 /** Resolves when the app closes stdin or sends {"type":"stop"}, or on SIGTERM/SIGINT. */
 function stopSignal() {

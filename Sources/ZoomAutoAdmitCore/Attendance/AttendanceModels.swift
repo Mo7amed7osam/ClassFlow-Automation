@@ -297,6 +297,32 @@ public struct AttendanceRecord: Codable, Equatable, Identifiable, Hashable {
     public var reason: String?
     /// Manual decisions are never overwritten by a later automatic pass.
     public var isManual: Bool
+    /// More Zoom identities of the same student: joined twice (phone and laptop, a rejoin under
+    /// another name). Evidence for this one student, never anyone else's.
+    public var additionalObservationIDs: [UUID]?
+    public var additionalZoomNames: [String]?
+
+    /// Every observation this record stands on.
+    public var claimedObservationIDs: [UUID] {
+        (matchedObservationID.map { [$0] } ?? []) + (additionalObservationIDs ?? [])
+    }
+
+    /// Links another Zoom identity to this student, once.
+    public mutating func addIdentity(_ observation: ParticipantObservation) {
+        guard !claimedObservationIDs.contains(observation.id) else { return }
+        additionalObservationIDs = (additionalObservationIDs ?? []) + [observation.id]
+        additionalZoomNames = (additionalZoomNames ?? []) + [observation.rawName]
+    }
+
+    public mutating func removeIdentity(_ observationID: UUID) {
+        guard let index = additionalObservationIDs?.firstIndex(of: observationID) else { return }
+        additionalObservationIDs?.remove(at: index)
+        if let names = additionalZoomNames, names.indices.contains(index) { additionalZoomNames?.remove(at: index) }
+        if additionalObservationIDs?.isEmpty == true {
+            additionalObservationIDs = nil
+            additionalZoomNames = nil
+        }
+    }
 
     public init(
         id: UUID = UUID(),
