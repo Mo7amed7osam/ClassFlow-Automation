@@ -25,6 +25,8 @@ final class AutomationCoordinator {
     private let attendanceStore: AttendanceStore
     private let coHostHistory = CoHostHistoryStore()
     let allocator = ZoomEngineAllocator()
+    /// Google Sheet → LMS recording links.
+    let recordingSync: RecordingSyncCoordinator
 
     private let dashboardQueue = DispatchQueue(label: "com.mohamedhosam.ZoomAutoAdmit.lms", qos: .utility)
     private let rolesQueue = DispatchQueue(label: "com.mohamedhosam.ZoomAutoAdmit.roles", qos: .utility)
@@ -42,9 +44,6 @@ final class AutomationCoordinator {
     private(set) var recentLog: [String] = []
     private let logLock = NSLock()
 
-    // Recording API
-    private var apiProcess: RunningAutomation?
-    private(set) var apiStatus = "Stopped"
 
     // Web meetings, by schedule
     private struct WebMeeting {
@@ -73,6 +72,13 @@ final class AutomationCoordinator {
         self.lms = LmsClient(helper: helper, credentials: credentials)
         self.followUps = followUps
         self.attendanceStore = attendanceStore
+        self.recordingSync = RecordingSyncCoordinator(lms: LmsClient(helper: helper, credentials: credentials), followUps: followUps, attendanceStore: attendanceStore)
+        recordingSync.log = { [weak self] in self?.log($0) }
+        recordingSync.helperLine = { [weak self] in self?.helperLine($0) }
+        recordingSync.notify = { [weak self] in self?.notify(title: $0, body: $1) }
+        recordingSync.configurationProvider = { [weak self] in self?.configurationProvider() ?? SchedulerConfiguration() }
+        recordingSync.liveAttendanceSession = { [weak self] in self?.liveAttendanceSession() }
+        recordingSync.onChange = { [weak self] in self?.onChange?() }
     }
 
     var settings: LmsSettings { LmsSettings.load() }
@@ -92,16 +98,15 @@ final class AutomationCoordinator {
         coHostTimer = roles
         roles.resume()
 
-        if UserDefaults.standard.bool(forKey: RecordingAPISettings.enabledKey) {
-            startRecordingAPI()
-        }
+        recordingSync.start()
+
         syncLaunchAgent()
     }
 
     func stop() {
         followUpTimer?.cancel()
         coHostTimer?.cancel()
-        stopRecordingAPI()
+        recordingSync.stop()
         webLock.lock()
         let meetings = webMeetings.values
         webLock.unlock()
@@ -279,19 +284,9 @@ final class AutomationCoordinator {
             }
 
         case .attachRecording:
-            guard let profile = item.recordingProfile else {
-                followUps.fail(item, reason: "No Zoom Web profile is set for this account.", at: now)
-                return
-            }
-            let result = lms.attachRecordingFromZoom(group: item.group, date: item.sessionDate, startTime: item.sessionStart, profile: profile, settings: settings, onMessage: helperLine)
-            if result.success {
-                followUps.complete(item)
-                log("[RECORDINGS] ✓ \(result.message)")
-            } else {
-                // A recording is processed by Zoom for a while after class; not found yet is normal.
-                followUps.fail(item, reason: result.message, at: now, retryAfter: 30 * 60)
-                log("[RECORDINGS] ✗ \(result.message)")
-            }
+            // The old start + 4 hours timer. Recording links come from the Recording Sync now.
+            followUps.complete(item)
+            log("[RECORDINGS] Removed a queued start + 4h recording step for \(item.group) \(item.sessionDate); Recording Sync handles recording links.")
         }
     }
 
@@ -329,8 +324,6 @@ final class AutomationCoordinator {
         case runSession
         case takeAttendance(present: [String])
         case correctAttendance(present: [String])
-        case attachLink(String, replaceExisting: Bool)
-        case recordingFromZoom(profile: String)
     }
 
     func perform(_ action: ManualAction, group: String, date: String, time: String?, completion: @escaping (AutomationResult) -> Void) {
@@ -357,10 +350,6 @@ final class AutomationCoordinator {
             case .correctAttendance(let present):
                 result = self.lms.correctAttendance(group: group, date: date, startTime: time, present: present, settings: settings, onMessage: self.helperLine)
                 self.logPlan(result)
-            case .attachLink(let link, let replace):
-                result = self.lms.attachRecordLink(group: group, date: date, startTime: time, link: link, replaceExisting: replace, settings: settings, onMessage: self.helperLine)
-            case .recordingFromZoom(let profile):
-                result = self.lms.attachRecordingFromZoom(group: group, date: date, startTime: time, profile: profile, settings: settings, onMessage: self.helperLine)
             }
             self.log("[LMS] \(result.success ? "✓" : "✗") \(result.message)")
             DispatchQueue.main.async { completion(result) }
@@ -410,61 +399,6 @@ final class AutomationCoordinator {
             log("[PROFILE] ✗ \(error.localizedDescription)")
         }
     }
-
-    // MARK: - Recording API
-
-    func startRecordingAPI() {
-        stopRecordingAPI()
-        guard let account = credentials.read() else {
-            apiStatus = "Not started: save the LMS sign-in first."
-            log("[API] \(apiStatus)")
-            return
-        }
-        let settings = RecordingAPISettings.load()
-        guard let key = RecordingAPIKeyStore.load() else {
-            apiStatus = "Not started: generate an API key first."
-            log("[API] \(apiStatus)")
-            return
-        }
-        var request: [String: Any] = [
-            "credentials": ["email": account.email, "password": account.password],
-            "apiKey": key,
-            "port": settings.port,
-            "lockWaitSeconds": settings.lockWaitSeconds,
-            // Rehearse applies to n8n's requests too: nothing is saved while it is on.
-            "forceDryRun": LmsSettings.load().dryRun
-        ]
-        if !settings.host.isEmpty { request["host"] = settings.host }
-        if !settings.allowedClients.isEmpty { request["allowedClients"] = settings.allowedClients }
-
-        let started = helper.start("serve-api", request: request, onMessage: { [weak self] message in
-            guard let self else { return }
-            if case .log(_, let text) = message, text.contains("Recording API started") {
-                self.apiStatus = "Running on port \(settings.port)"
-            }
-            self.helperLine(message)
-        }, onExit: { [weak self] result in
-            guard let self else { return }
-            self.apiProcess = nil
-            self.apiStatus = result.map { $0.success ? "Stopped" : "Stopped: \($0.message)" } ?? "Stopped"
-            self.log("[API] \(self.apiStatus)")
-        })
-        switch started {
-        case .success(let process):
-            apiProcess = process
-            apiStatus = "Starting…"
-        case .failure(let error):
-            apiStatus = "Not started: \(error.localizedDescription)"
-            log("[API] \(apiStatus)")
-        }
-    }
-
-    func stopRecordingAPI() {
-        apiProcess?.stop(grace: 95)
-        apiProcess = nil
-    }
-
-    var isRecordingAPIRunning: Bool { apiProcess?.isRunning ?? false }
 
     // MARK: - Web meetings
 
@@ -594,11 +528,13 @@ final class AutomationCoordinator {
     // MARK: - Launch agent
 
     func syncLaunchAgent() {
-        let enabled = UserDefaults.standard.bool(forKey: "scheduler.openAppForMeetings")
-        let configuration = configurationProvider()
+        let meetings = UserDefaults.standard.bool(forKey: "scheduler.openAppForMeetings")
+        let sheetSync = RecordingSyncSettings.load().enabled
+        let configuration = meetings ? configurationProvider() : SchedulerConfiguration()
+        let dailyWake = sheetSync ? recordingSync.schedule : nil
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let message = LaunchAgentScheduler.install(configuration: configuration, enabled: enabled)
-            if enabled { self?.log("[SCHEDULER] \(message)") }
+            let message = LaunchAgentScheduler.install(configuration: configuration, enabled: meetings || sheetSync, dailyWake: dailyWake)
+            if meetings || sheetSync { self?.log("[SCHEDULER] \(message)") }
         }
     }
 
@@ -610,30 +546,5 @@ final class AutomationCoordinator {
         content.title = title
         content.body = body
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
-    }
-}
-
-/// Where the recording API listens. The key lives in the Keychain, not here.
-struct RecordingAPISettings: Equatable {
-    static let enabledKey = "api.enabled"
-    var port: Int
-    var host: String
-    var allowedClients: String
-    var lockWaitSeconds: Int
-
-    static func load(from defaults: UserDefaults = .standard) -> RecordingAPISettings {
-        RecordingAPISettings(
-            port: defaults.object(forKey: "api.port") as? Int ?? 47821,
-            host: defaults.string(forKey: "api.host") ?? "",
-            allowedClients: defaults.string(forKey: "api.allowedClients") ?? "",
-            lockWaitSeconds: defaults.object(forKey: "api.lockWaitSeconds") as? Int ?? 120
-        )
-    }
-
-    func save(to defaults: UserDefaults = .standard) {
-        defaults.set(port, forKey: "api.port")
-        defaults.set(host, forKey: "api.host")
-        defaults.set(allowedClients, forKey: "api.allowedClients")
-        defaults.set(lockWaitSeconds, forKey: "api.lockWaitSeconds")
     }
 }

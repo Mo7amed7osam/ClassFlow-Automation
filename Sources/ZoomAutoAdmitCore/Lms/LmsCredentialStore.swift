@@ -12,7 +12,7 @@ public struct LmsAccount: Equatable {
     }
 }
 
-/// Where the dashboard sign-in and the recording API key are kept: the macOS Keychain.
+/// Where the dashboard sign-in is kept: the macOS Keychain.
 ///
 /// Never in `schedules.json`, never in a log line. The password leaves this type only to be
 /// sent on the helper's stdin, which types it into the dashboard's sign-in form.
@@ -67,49 +67,5 @@ public struct LmsCredentialStore: LmsCredentialStoring {
 
     private var baseQuery: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
-    }
-}
-
-/// The key n8n sends as X-API-Key. Only this app reads it; the helper gets it on stdin.
-public enum RecordingAPIKeyStore {
-    public static let service = "com.mohamedhosam.ZoomAutoAdmit.RecordingAPI"
-    private static let account = "api-key"
-
-    public static func load() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    @discardableResult
-    public static func save(_ key: String) -> Bool {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
-        var attributes = query
-        attributes[kSecValueData as String] = Data(key.utf8)
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
-    }
-
-    /// 32 random bytes, URL-safe base64: long enough that guessing is not a strategy.
-    public static func generate() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return Data(bytes).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }

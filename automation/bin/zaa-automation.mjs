@@ -6,9 +6,7 @@
 //   lms-run-session           { credentials, group, day?, startTime?, headed?, dryRun? }
 //   lms-take-attendance       { credentials, group, present[], everyone?, day?, startTime?, dryRun? }
 //   lms-correct-attendance    { credentials, group, present[], everyone?, day?, startTime?, dryRun? }
-//   lms-attach-record-link    { credentials, group, recordLink, day?, startTime?, replaceExisting?, dryRun? }
-//   recording-from-zoom       { credentials, group, profile, day?, startTime?, zoomUtcOffsetMinutes?, ... }
-//   serve-api                 { credentials, apiKey, port?, host?, allowedClients?, lockWaitSeconds? }   (runs until stdin closes)
+//   lms-sync-record-link      { credentials, group, day, driveUrl, dryRun? }   (Google Sheet → LMS)
 //   web-meeting               { meetingUrl, profile, headless?, sessionId?, captureAttendance? }        (runs until stdin closes)
 //   read-timetable            { path }
 //   read-roster               { path }
@@ -16,10 +14,10 @@
 //   version                   {}
 
 import process from "node:process";
-import { attachProvidedLink, processFromZoom, withDashboardLock } from "../src/recordings.mjs";
+import { withDashboardLock } from "../src/lock.mjs";
 import { firstLine } from "../src/browser.mjs";
 import { log, readFirstLine, readRequest, result } from "../src/io.mjs";
-import { attachRecordLink, correctAttendance, runSession, takeAttendance, verifySignIn } from "../src/lms.mjs";
+import { correctAttendance, runSession, syncRecordLink, takeAttendance, verifySignIn } from "../src/lms.mjs";
 import { parseRoster, parseTimetable, readFirstSheet } from "../src/workbooks.mjs";
 
 const command = process.argv[2];
@@ -32,9 +30,7 @@ const oneShot = {
   "lms-run-session": (request) => withDashboardLock(lockWait(request), () => runSession(request)),
   "lms-take-attendance": (request) => withDashboardLock(lockWait(request), () => takeAttendance(request)),
   "lms-correct-attendance": (request) => withDashboardLock(lockWait(request), () => correctAttendance(request)),
-  "lms-attach-record-link": (request) => withDashboardLock(lockWait(request), () => attachRecordLink(request)),
-  "recording-attach-link": (request) => attachProvidedLink({ ...request, lockWaitMs: lockWait(request) }),
-  "recording-from-zoom": (request) => processFromZoom({ ...request, lockWaitMs: lockWait(request) }),
+  "lms-sync-record-link": (request) => withDashboardLock(lockWait(request), () => syncRecordLink(request)),
   "read-timetable": async (request) => ({ success: true, ...parseTimetable(await readFirstSheet(request.path)) }),
   "read-roster": async (request) => ({ success: true, ...parseRoster(await readFirstSheet(request.path)) }),
 };
@@ -58,21 +54,6 @@ async function main() {
   if (!command) {
     result({ success: false, message: "No command was given." });
     process.exitCode = 64;
-    return;
-  }
-
-  if (command === "serve-api") {
-    const { resolveOptions, startApiServer } = await import("../src/api-server.mjs");
-    const request = await readFirstLine();
-    const options = resolveOptions(request);
-    const credentials = request.credentials;
-    const forceDryRun = request.forceDryRun === true;
-    if (forceDryRun) log.info("[API] Rehearse is on: every request is a dry run and nothing is saved.");
-    const server = await startApiServer(options, (apiRequest) =>
-      attachProvidedLink({ ...apiRequest, credentials, dryRun: forceDryRun || apiRequest.dryRun }));
-    await stopSignal();
-    await server.close();
-    result({ success: true, message: "Recording API stopped." });
     return;
   }
 

@@ -84,3 +84,16 @@ function removeQuietly(file) {
     // Already gone.
   }
 }
+
+/** The dashboard profile is shared by every LMS step; each one takes it for its whole run. */
+export async function withDashboardLock(waitMs, work, profile = "lms-dashboard") {
+  const lock = await acquireProfileLock(profile, { waitMs: waitMs ?? 120_000 });
+  if (!lock) {
+    return { success: false, failure: "busy", message: "The dashboard browser profile is in use by another operation or an open browser. Try again shortly." };
+  }
+  try {
+    return await work();
+  } finally {
+    lock.release();
+  }
+}

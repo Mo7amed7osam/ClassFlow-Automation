@@ -69,7 +69,17 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
     private let groupRosterLabel = NSTextField(labelWithString: "")
     private let groupLmsCodeField = NSTextField()
     private let groupCoHostField = NSTextField()
-    private let groupRosterList = NSTextView()
+    /// The selected group's students, one row each, editable in place.
+    private let rosterTable = NSTableView()
+    private var rosterSearch = ""
+    private let rosterSearchField = NSSearchField()
+
+    /// The item each form currently shows. Forms write back to *these*, never to the table's
+    /// selected row: by the time AppKit reports a selection change the selected row is already
+    /// the new one, and writing the old form into it copied one group over another.
+    private var loadedScheduleID: UUID?
+    private var loadedProfileID: UUID?
+    private var loadedGroupID: UUID?
     private let groupNameError = SchedulerWindowController.errorLabel()
     private let groupEmptyState = NSStackView()
     private let groupFormContainer = NSView()
@@ -200,6 +210,9 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
         let view = NSView()
 
         configure(table: scheduleTable, columnTitle: "Schedules")
+        scheduleTable.identifier = NSUserInterfaceItemIdentifier("schedulesTable")
+        attendanceGroupPopUp.identifier = NSUserInterfaceItemIdentifier("scheduleGroupPopUp")
+        accountPopUp.identifier = NSUserInterfaceItemIdentifier("scheduleAccountPopUp")
         scheduleTable.delegate = self
         scheduleTable.dataSource = self
         let scroll = scrollView(for: scheduleTable)
@@ -499,6 +512,9 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
         let view = NSView()
 
         configure(table: groupTable, columnTitle: "Groups")
+        groupTable.identifier = NSUserInterfaceItemIdentifier("groupsTable")
+        groupNameField.identifier = NSUserInterfaceItemIdentifier("groupNameField")
+        groupLmsCodeField.identifier = NSUserInterfaceItemIdentifier("groupLmsCodeField")
         groupTable.delegate = self
         groupTable.dataSource = self
         let scroll = scrollView(for: groupTable)
@@ -524,16 +540,33 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
         groupThresholdField.delegate = self
         groupThresholdField.placeholderString = "90"
 
-        groupRosterList.isEditable = false
-        groupRosterList.drawsBackground = false
-        groupRosterList.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        for (id, title, width, editable) in [("order", "#", 34.0, false), ("name", "Official name", 250.0, true), ("aliases", "Zoom names (comma-separated)", 220.0, true), ("email", "Email", 150.0, true)] {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("roster.\(id)"))
+            column.title = title
+            column.width = width
+            column.isEditable = editable
+            rosterTable.addTableColumn(column)
+        }
+        rosterTable.identifier = NSUserInterfaceItemIdentifier("groupRosterTable")
+        rosterTable.usesAlternatingRowBackgroundColors = true
+        rosterTable.allowsMultipleSelection = true
+        rosterTable.rowHeight = 22
+        rosterTable.dataSource = self
+        rosterTable.delegate = self
         let rosterScroll = NSScrollView()
-        rosterScroll.documentView = groupRosterList
+        rosterScroll.documentView = rosterTable
         rosterScroll.hasVerticalScroller = true
+        rosterScroll.hasHorizontalScroller = true
         rosterScroll.borderType = .bezelBorder
         rosterScroll.translatesAutoresizingMaskIntoConstraints = false
-        rosterScroll.heightAnchor.constraint(equalToConstant: 180).isActive = true
-        rosterScroll.widthAnchor.constraint(equalToConstant: 380).isActive = true
+        rosterScroll.heightAnchor.constraint(equalToConstant: 320).isActive = true
+        rosterScroll.widthAnchor.constraint(equalToConstant: 620).isActive = true
+        rosterSearchField.placeholderString = "Search students"
+        rosterSearchField.target = self
+        rosterSearchField.action = #selector(rosterSearchChanged)
+        rosterSearchField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        let addStudentButton = NSButton(title: "Add Student", target: self, action: #selector(addStudent))
+        let removeStudentsButton = NSButton(title: "Remove Selected", target: self, action: #selector(removeSelectedStudents))
 
         let importButton = NSButton(title: "Import CSV…", target: self, action: #selector(importRoster))
         let importExcelButton = NSButton(title: "Import Excel…", target: self, action: #selector(importRosterWorkbook))
@@ -561,8 +594,10 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
                 // them below a 180pt list pushed them to the bottom of the
                 // window, where they were easy to miss entirely.
                 labelled("", horizontal([importButton, importExcelButton, pasteButton, clearRosterButton])),
-                labelled("", groupRosterLabel),
-                labelled("", rosterScroll)
+                labelled("", horizontal([groupRosterLabel, rosterSearchField])),
+                labelled("", rosterScroll),
+                labelled("", horizontal([addStudentButton, removeStudentsButton])),
+                labelled("", caption("Double-click a name, its Zoom names or email to edit. Names must match the DEPI dashboard exactly for the attendance upload."))
             ])
         ])
         form.orientation = .vertical
@@ -631,25 +666,26 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func loadSelectedGroup() {
-        guard let index = selectedGroupIndex else { return }
+        guard let index = selectedGroupIndex else {
+            loadedGroupID = nil
+            rosterTable.reloadData()
+            return
+        }
         let group = configuration.studentGroups[index]
+        loadedGroupID = group.id
         groupNameField.stringValue = group.name
         groupIgnoredField.stringValue = group.ignoredParticipantNames.joined(separator: ", ")
         groupThresholdField.stringValue = String(Int(group.autoAcceptConfidence * 100))
         groupLmsCodeField.stringValue = group.lmsGroupCode ?? ""
         groupCoHostField.stringValue = Self.coHostText(group.coHostCandidates)
-        groupRosterLabel.stringValue = "\(group.students.count) student(s)"
-        groupRosterList.string = group.students
-            .map { student in
-                let alias = student.aliases.isEmpty ? "" : "   (also: \(student.aliases.joined(separator: ", ")))"
-                return student.officialName + alias
-            }
-            .joined(separator: "\n")
+        rosterSearch = ""
+        rosterSearchField.stringValue = ""
+        reloadRoster()
         updateChrome()
     }
 
     private func storeSelectedGroup() {
-        guard let index = selectedGroupIndex else { return }
+        guard let loadedGroupID, let index = configuration.studentGroups.firstIndex(where: { $0.id == loadedGroupID }) else { return }
         configuration.studentGroups[index].name = groupNameField.stringValue
         configuration.studentGroups[index].ignoredParticipantNames = groupIgnoredField.stringValue
             .split(separator: ",")
@@ -663,6 +699,147 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
             from: groupCoHostField.stringValue,
             keeping: configuration.studentGroups[index].coHostCandidates
         )
+    }
+
+    // MARK: Student roster table
+
+    private var loadedGroupIndex: Int? {
+        loadedGroupID.flatMap { id in configuration.studentGroups.firstIndex { $0.id == id } }
+    }
+
+    /// Roster positions (into the group's students) of the rows currently shown.
+    private var visibleRoster: [Int] {
+        guard let index = loadedGroupIndex else { return [] }
+        let students = configuration.studentGroups[index].students
+        let query = rosterSearch.trimmingCharacters(in: .whitespaces).lowercased()
+        return students.indices.filter { position in
+            guard !query.isEmpty else { return true }
+            let student = students[position]
+            return ([student.officialName, student.email ?? ""] + student.aliases).contains { $0.lowercased().contains(query) }
+        }
+    }
+
+    private func reloadRoster() {
+        rosterTable.reloadData()
+        guard let index = loadedGroupIndex else {
+            groupRosterLabel.stringValue = ""
+            return
+        }
+        let count = configuration.studentGroups[index].students.count
+        let shown = visibleRoster.count
+        groupRosterLabel.stringValue = shown == count ? "\(count) student(s)" : "\(shown) of \(count) student(s)"
+    }
+
+    private func rosterCell(column: String, row: Int) -> NSView? {
+        let positions = visibleRoster
+        guard let groupIndex = loadedGroupIndex, positions.indices.contains(row) else { return nil }
+        let position = positions[row]
+        let student = configuration.studentGroups[groupIndex].students[position]
+        let text: String
+        switch column {
+        case "roster.order": text = String(position + 1)
+        case "roster.name": text = student.officialName
+        case "roster.aliases": text = student.aliases.joined(separator: ", ")
+        default: text = student.email ?? ""
+        }
+        let field = NSTextField(string: text)
+        field.isBordered = false
+        field.drawsBackground = false
+        field.lineBreakMode = .byTruncatingTail
+        field.toolTip = text
+        field.isEditable = column != "roster.order"
+        field.textColor = column == "roster.order" ? .secondaryLabelColor : .labelColor
+        // The student's id, not the row, identifies what an edit changes: search can reorder rows.
+        field.identifier = NSUserInterfaceItemIdentifier("\(column)|\(student.id.uuidString)")
+        field.target = self
+        field.action = #selector(rosterCellEdited(_:))
+        field.cell?.sendsActionOnEndEditing = true
+        return field
+    }
+
+    @objc private func rosterCellEdited(_ sender: NSTextField) {
+        guard let raw = sender.identifier?.rawValue, let groupIndex = loadedGroupIndex else { return }
+        let parts = raw.split(separator: "|")
+        guard parts.count == 2, let studentID = UUID(uuidString: String(parts[1])),
+              let position = configuration.studentGroups[groupIndex].students.firstIndex(where: { $0.id == studentID }) else { return }
+        let value = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        var student = configuration.studentGroups[groupIndex].students[position]
+        switch String(parts[0]) {
+        case "roster.name":
+            guard !value.isEmpty else {
+                sender.stringValue = student.officialName
+                NSSound.beep()
+                return
+            }
+            guard value != student.officialName else { return }
+            student.officialName = value
+        case "roster.aliases":
+            let aliases = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            guard aliases != student.aliases else { return }
+            student.aliases = aliases
+        case "roster.email":
+            let email = value.isEmpty ? nil : value
+            guard email != student.email else { return }
+            student.email = email
+        default:
+            return
+        }
+        configuration.studentGroups[groupIndex].students[position] = student
+        groupTable.reloadData(forRowIndexes: IndexSet(integer: groupIndex), columnIndexes: IndexSet(integer: 0))
+        markDirty()
+    }
+
+    @objc private func rosterSearchChanged() {
+        rosterSearch = rosterSearchField.stringValue
+        reloadRoster()
+    }
+
+    @objc private func addStudent() {
+        guard let groupIndex = loadedGroupIndex else { return }
+        let alert = NSAlert()
+        alert.messageText = "Add a student to \(configuration.studentGroups[groupIndex].name)"
+        alert.informativeText = "Use the name exactly as the DEPI dashboard lists it."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "Official name"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        if configuration.studentGroups[groupIndex].students.contains(where: { $0.normalizedOfficialName == NameNormalizer.normalize(name) }) {
+            showAlert("Already on the roster", "“\(name)” is already in this group.")
+            return
+        }
+        configuration.studentGroups[groupIndex].students.append(Student(officialName: name))
+        rosterSearch = ""
+        rosterSearchField.stringValue = ""
+        reloadRoster()
+        rosterTable.scrollRowToVisible(configuration.studentGroups[groupIndex].students.count - 1)
+        groupTable.reloadData(forRowIndexes: IndexSet(integer: groupIndex), columnIndexes: IndexSet(integer: 0))
+        markDirty()
+    }
+
+    @objc private func removeSelectedStudents() {
+        guard let groupIndex = loadedGroupIndex else { return }
+        let positions = visibleRoster
+        let chosen = rosterTable.selectedRowIndexes.compactMap { positions.indices.contains($0) ? positions[$0] : nil }
+        guard !chosen.isEmpty else { return }
+        let names = chosen.map { configuration.studentGroups[groupIndex].students[$0].officialName }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Remove \(names.count) student(s)?"
+        alert.informativeText = names.prefix(8).joined(separator: "\n") + (names.count > 8 ? "\n…" : "") + "\n\nPast attendance keeps them; their learned Zoom names go."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        for position in chosen.sorted(by: >) {
+            configuration.studentGroups[groupIndex].students.remove(at: position)
+        }
+        reloadRoster()
+        groupTable.reloadData(forRowIndexes: IndexSet(integer: groupIndex), columnIndexes: IndexSet(integer: 0))
+        markDirty()
     }
 
     /// "Mohab Mohamed, Sara Ali | Sara A." — people separated by commas, a person's Zoom names after "|".
@@ -807,16 +984,35 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
     private func rebuildAccountPopUp() {
         accountPopUp.removeAllItems()
         for profile in configuration.accountProfiles {
-            accountPopUp.addItem(withTitle: "\(profile.name) — \(profile.accountIdentifier)")
+            // Menu items, not addItem(withTitle:): that silently drops a duplicate title and shifts
+            // every later position off its profile.
+            accountPopUp.menu?.addItem(withTitle: "\(profile.name) — \(profile.accountIdentifier)", action: nil, keyEquivalent: "")
         }
         if configuration.accountProfiles.isEmpty {
-            accountPopUp.addItem(withTitle: "No Zoom accounts yet")
+            accountPopUp.menu?.addItem(withTitle: "No Zoom accounts yet", action: nil, keyEquivalent: "")
         }
+        reselectScheduleMenus()
+    }
+
+    /// After a menu is rebuilt it points at its first item. The loaded schedule's own account and
+    /// group are selected again from the model; otherwise the next store would write the first item
+    /// into the schedule (which is how a Save once unlinked a schedule from its group).
+    private func reselectScheduleMenus() {
+        guard let loadedScheduleID, let schedule = configuration.schedules.first(where: { $0.id == loadedScheduleID }) else { return }
+        if let account = configuration.accountProfiles.firstIndex(where: { $0.id == schedule.accountProfileID }) {
+            accountPopUp.selectItem(at: account)
+        }
+        let group = schedule.attendanceGroupID.flatMap { id in configuration.studentGroups.firstIndex { $0.id == id } }
+        attendanceGroupPopUp.selectItem(at: group.map { $0 + 1 } ?? 0)
     }
 
     private func loadSelectedSchedule() {
-        guard let index = selectedScheduleIndex else { return }
+        guard let index = selectedScheduleIndex else {
+            loadedScheduleID = nil
+            return
+        }
         let schedule = configuration.schedules[index]
+        loadedScheduleID = schedule.id
 
         nameField.stringValue = schedule.name
         enabledButton.state = schedule.isEnabled ? .on : .off
@@ -873,7 +1069,7 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
 
     /// Reads the form back into the model without touching disk.
     private func storeSelectedSchedule() {
-        guard let index = selectedScheduleIndex else { return }
+        guard let loadedScheduleID, let index = configuration.schedules.firstIndex(where: { $0.id == loadedScheduleID }) else { return }
         var schedule = configuration.schedules[index]
 
         schedule.name = nameField.stringValue
@@ -928,15 +1124,20 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
     /// "None" first, so a schedule without attendance stays the default.
     private func rebuildAttendanceGroupPopUp() {
         attendanceGroupPopUp.removeAllItems()
-        attendanceGroupPopUp.addItem(withTitle: "None — don't record attendance")
+        attendanceGroupPopUp.menu?.addItem(withTitle: "None — don't record attendance", action: nil, keyEquivalent: "")
         for group in configuration.studentGroups {
-            attendanceGroupPopUp.addItem(withTitle: "\(group.name) (\(group.students.count) students)")
+            attendanceGroupPopUp.menu?.addItem(withTitle: "\(group.name) (\(group.students.count) students)", action: nil, keyEquivalent: "")
         }
+        reselectScheduleMenus()
     }
 
     private func loadSelectedProfile() {
-        guard let index = selectedProfileIndex else { return }
+        guard let index = selectedProfileIndex else {
+            loadedProfileID = nil
+            return
+        }
         let profile = configuration.accountProfiles[index]
+        loadedProfileID = profile.id
         profileNameField.stringValue = profile.name
         selectAccount(profile.accountIdentifier)
         profileEnginePopUp.selectItem(at: ZoomEnginePreference.allCases.firstIndex(of: profile.preferredEngine) ?? 0)
@@ -945,7 +1146,7 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func storeSelectedProfile() {
-        guard let index = selectedProfileIndex else { return }
+        guard let loadedProfileID, let index = configuration.accountProfiles.firstIndex(where: { $0.id == loadedProfileID }) else { return }
         configuration.accountProfiles[index].name = profileNameField.stringValue
         configuration.accountProfiles[index].accountIdentifier = currentProfileAccountIdentifier()
         let engines = ZoomEnginePreference.allCases
@@ -1618,12 +1819,16 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
 
 extension SchedulerWindowController: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int {
+        if tableView === rosterTable { return visibleRoster.count }
         if tableView === scheduleTable { return configuration.schedules.count }
         if tableView === groupTable { return configuration.studentGroups.count }
         return configuration.accountProfiles.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === rosterTable {
+            return rosterCell(column: tableColumn?.identifier.rawValue ?? "", row: row)
+        }
         if tableView === scheduleTable {
             guard configuration.schedules.indices.contains(row) else { return nil }
             let schedule = configuration.schedules[row]
@@ -1672,6 +1877,7 @@ extension SchedulerWindowController: NSTableViewDataSource, NSTableViewDelegate 
     /// given 44pt for three lines of content — which clipped their titles in
     /// half. Deriving it from the line count keeps every list honest.
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if tableView === rosterTable { return 22 }
         let lines: Int
         if tableView === scheduleTable {
             lines = 4          // name · schedule · account+meeting · auto admit
@@ -1753,24 +1959,17 @@ extension SchedulerWindowController: NSTableViewDataSource, NSTableViewDelegate 
         return parts.joined(separator: " · ")
     }
 
-    func tableViewSelectionIsChanging(_ notification: Notification) {
-        guard let table = notification.object as? NSTableView else { return }
-        if table === scheduleTable {
-            storeSelectedSchedule()
-        } else if table === groupTable {
-            storeSelectedGroup()
-        } else {
-            storeSelectedProfile()
-        }
-    }
-
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let table = notification.object as? NSTableView else { return }
+        // Save the form into the item it was showing, then show the newly selected one.
         if table === scheduleTable {
+            storeSelectedSchedule()
             loadSelectedSchedule()
         } else if table === groupTable {
+            storeSelectedGroup()
             loadSelectedGroup()
-        } else {
+        } else if table === profileTable {
+            storeSelectedProfile()
             loadSelectedProfile()
         }
     }

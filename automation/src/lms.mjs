@@ -1,7 +1,7 @@
 import { QUIET_CHROME_SWITCHES, firstLine, firstPage, isTimeout, launchProfile } from "./browser.mjs";
 import { log } from "./io.mjs";
 import { buildAttendancePlan, crossGroupSuspicion } from "./plan.mjs";
-import { isAttachable } from "./recording-links.mjs";
+import { driveFileIdOf, isGoogleDriveFileLink, isZoomShareLink, previewLink } from "./recording-links.mjs";
 
 // Drives the DEPI dashboard the way a coordinator does by hand: sign in, open the day's
 // sessions, open the group's session, and press one button on that session's own page.
@@ -107,54 +107,218 @@ export function runSession(request) {
 }
 
 /**
- * Puts the recording's link on the session: Add Record Link, paste, Save. A session that
- * already carries a link is left alone unless `replaceExisting` is set.
+ * Moves a Google Drive recording link onto the one session of a group on a date.
+ *
+ * Matching is Group Code + Date and nothing else: exactly one session must be listed. None keeps
+ * the row pending; more than one is ambiguous and nothing is opened. On the session page the
+ * current record link is read first - empty gets the Drive link, the same Drive link is already
+ * done, anything else is a conflict that is never overwritten. A write is confirmed by reloading
+ * the page and reading the link back.
  */
-export function attachRecordLink(request) {
-  if (!isAttachable(request.recordLink)) {
-    return Promise.resolve(
-      fail(LmsFailure.invalidLink, "That is not a Zoom recording link or a Google Drive file link, so nothing was saved.")
-    );
+export async function syncRecordLink(request) {
+  const group = String(request.group ?? "").trim();
+  const day = String(request.day ?? "").trim();
+  const driveUrl = String(request.driveUrl ?? "").trim();
+  if (!group || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return fail(LmsFailure.failed, "A group and a yyyy-MM-dd date are required.", { issue: "invalidRequest" });
+  if (!isGoogleDriveFileLink(driveUrl)) {
+    return fail(LmsFailure.invalidLink, "That is not a Google Drive file link, so nothing was opened.", { issue: "invalidLink" });
   }
-  return withSession(request, "attaching a recording", async (page, { group, state }) => {
-    state.step = "looking for Add Record Link";
-    const add = page.getByRole("button", { name: /(Add|Edit)\s+Record\s+Link/i }).first();
-    if (!(await waitVisible(add, 20_000))) {
-      const status = await readStatus(page);
-      log.info(`[LMS] The session page offers: ${await listActions(page)}`);
-      return fail(
-        LmsFailure.sessionNotFinished,
-        `The session page for ${group} offers no Add Record Link${status ? `; it reads "${status}"` : ""}. ` +
-          "The dashboard only offers it once the session is finished."
-      );
+  const account = request.credentials;
+  if (!account?.email || !account?.password) {
+    return fail(LmsFailure.notSignedIn, "No LMS sign-in is saved. Add it in the app first.", { issue: "notSignedIn" });
+  }
+
+  const context = await launchProfile(DASHBOARD_PROFILE, { headless: !request.headed, args: QUIET_CHROME_SWITCHES });
+  const page = await firstPage(context, STEP_TIMEOUT);
+  const state = { step: "opening the sign-in page" };
+  try {
+    await signIn(page, account);
+
+    state.step = "finding the session";
+    let found = { matches: [], listed: [] };
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      await openDaysSessions(page, day);
+      found = await listGroupSessions(page, group);
+      if (found.matches.length > 0) break;
+      if (attempt === 1) await page.waitForTimeout(2500);
+    }
+    if (found.matches.length === 0) {
+      for (const entry of found.listed.slice(0, 12)) log.info(`[LMS] Listed that day: ${entry}`);
+      return fail(LmsFailure.sessionNotFound, `No session for ${group} is listed on ${day}. It stays pending and is tried again next sync.`, { issue: "noSession" });
+    }
+    if (found.matches.length > 1) {
+      return fail(LmsFailure.failed, `${found.matches.length} sessions for ${group} are listed on ${day}; the recording is not attached to any of them. Review it by hand.`, {
+        issue: "ambiguousSessions",
+        sessions: found.matches.map((match) => match.summary),
+      });
     }
 
-    const buttonText = (await add.innerText()).trim();
-    if (/edit/i.test(buttonText) && !request.replaceExisting) {
-      return ok(`${group}: the session already has a recording link, so it was left as it is.`, { alreadyExists: true });
+    state.step = "opening the session";
+    if (!(await openSessionPage(page, found.matches[0].link, group))) {
+      return fail(LmsFailure.failed, `The session for ${group} on ${day} did not open.`, { issue: "sessionDidNotOpen" });
     }
+    const lmsSessionUrl = page.url();
+    const status = await readStatus(page);
 
-    state.step = "opening the record link box";
-    await add.click();
-    const field = page.locator("input[placeholder='Enter session record link']").first();
-    if (!(await waitVisible(field, 15_000))) {
-      return fail(LmsFailure.failed, `The record link box did not open for ${group}, so nothing was saved.`);
+    state.step = "reading the record link";
+    const current = await readRecordLink(page, state);
+    // What the session held before anything was done, reported on every answer from here on.
+    const before = { currentLink: current.value, recordLinkState: current.state };
+    if (current.state === "unavailable") {
+      return fail(LmsFailure.sessionNotFinished, `The ${group} session on ${day} offers no record link yet${status ? ` (it reads "${status}")` : ""}. It stays pending until the session is ended.`, {
+        issue: "sessionNotEnded",
+        lmsSessionUrl,
+        status,
+        ...before,
+      });
     }
-    await field.fill(request.recordLink);
+    const decision = decideRecordLinkUpdate(current.value, driveUrl, { replaceZoomRecordingLinks: request.replaceZoomRecordingLinks === true });
+    log.info(`[LMS] ${group} ${day}: current record link ${current.value ? previewLink(current.value) : "(empty)"} → ${decision}.`);
+    if (decision === "same") {
+      return ok(`${group} ${day}: the session already carries this Drive link.`, { outcome: "alreadyAttached", lmsSessionUrl, status, ...before });
+    }
+    if (decision === "conflict") {
+      return fail(LmsFailure.failed, `${group} ${day}: the session already has a different record link (${previewLink(current.value)}). It was not overwritten.`, {
+        issue: "existingLinkDiffers",
+        lmsSessionUrl,
+        status,
+        ...before,
+      });
+    }
+    const replacing = decision === "replaceZoom";
     if (request.dryRun) {
-      return ok(`${group}: the record link box is open and holds the recording's link. Nothing was saved.`, { dryRun: true });
+      const what = replacing ? `the Zoom recording link ${previewLink(current.value)} would be replaced by ${previewLink(driveUrl)}` : `the record link is empty and would get ${previewLink(driveUrl)}`;
+      return ok(`${group} ${day}: ${what}. Nothing was saved (rehearse).`, { outcome: replacing ? "wouldReplaceZoom" : "wouldAttach", dryRun: true, lmsSessionUrl, status, ...before });
     }
 
     state.step = "saving the record link";
-    await page.getByRole("button", { name: /^\s*Save\s*$/i }).first().click();
+    const add = page.getByRole("button", { name: /^\s*(Add|Edit)\s+Record\s+Link\s*$/i }).filter({ visible: true }).first();
+    await add.click({ timeout: 10_000 });
+    const dialog = page.locator("[role='dialog']").filter({ has: page.locator("input[name='recorded_link'], input[placeholder='Enter session record link']") }).first();
+    const field = dialog.locator("input[name='recorded_link'], input[placeholder='Enter session record link']").first();
+    if (!(await waitVisible(field, 15_000))) return fail(LmsFailure.failed, `The record link box did not open for ${group} ${day}; nothing was saved.`, { issue: "boxDidNotOpen", lmsSessionUrl, ...before });
+    // The box must still hold exactly what was read a moment ago; if someone changed it in between, stop.
+    if ((await field.inputValue({ timeout: 5000 })).trim() !== current.value) {
+      await page.keyboard.press("Escape");
+      return fail(LmsFailure.failed, `${group} ${day}: the record link changed while it was being updated; nothing was saved.`, { issue: "existingLinkDiffers", lmsSessionUrl, ...before });
+    }
+    await field.fill(driveUrl);
+    await dialog.getByRole("button", { name: /^\s*Save\s*$/i }).first().click({ timeout: 10_000 });
     const toast = await readToast(page);
     await settle(page);
     if (toast) log.success(`[LMS] The dashboard said: ${toast}`);
-    if (await field.isVisible().catch(() => false)) {
-      return fail(LmsFailure.failed, `${group}: Save was pressed but the record link box is still open, so it was not saved.`);
+    if (await dialog.isVisible().catch(() => false)) {
+      return fail(LmsFailure.failed, `${group} ${day}: Save was pressed but the record link box is still open; it was not saved.`, { issue: "saveNotAccepted", lmsSessionUrl, ...before });
     }
-    return ok(`${group}: the recording link was saved on the session.`, { alreadyExists: false });
-  });
+
+    state.step = "reading the record link back";
+    await page.reload({ waitUntil: "networkidle" });
+    const after = await readRecordLink(page, state);
+    if (decideRecordLinkUpdate(after.value, driveUrl) !== "same") {
+      return fail(LmsFailure.failed, `${group} ${day}: after saving, the session reads ${after.value ? previewLink(after.value) : "no link"} instead of the Drive link.`, { issue: "notConfirmed", lmsSessionUrl, ...before });
+    }
+    return ok(`${group} ${day}: the Drive recording link was saved${replacing ? " in place of the Zoom recording link" : ""} and confirmed after a reload.`, {
+      outcome: replacing ? "replacedZoom" : "attached",
+      replacedLink: replacing ? current.value : undefined,
+      lmsSessionUrl,
+      status,
+      ...before,
+    });
+  } catch (error) {
+    log.warn(`[LMS] Failed while ${state.step}: ${error?.name ?? "Error"}.`);
+    if (error?.userFacing) return fail(LmsFailure.failed, error.message, { issue: "failed" });
+    return fail(LmsFailure.failed, `The dashboard did not respond while ${state.step}.`, { issue: "failed" });
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * empty → "add"; the same Drive file (share variants of one link count as the same) → "same";
+ * anything else → "conflict".
+ */
+export function decideRecordLinkUpdate(currentValue, driveUrl, { replaceZoomRecordingLinks = false } = {}) {
+  const current = String(currentValue ?? "").trim();
+  if (!current) return "add";
+  if (current === driveUrl.trim()) return "same";
+  const currentId = driveFileIdOf(current);
+  if (currentId && currentId === driveFileIdOf(driveUrl.trim())) return "same";
+  // Only a Zoom cloud recording share link may be treated as temporary, and only when allowed.
+  if (replaceZoomRecordingLinks && isZoomShareLink(current)) return "replaceZoom";
+  return "conflict";
+}
+
+/**
+ * The listed sessions of one group, once each. The dashboard renders every session twice (a wide
+ * and a narrow layout), so rows are keyed by their link, or by their text without spacing.
+ * The group must appear as a whole code: CAI5_IND1_G1 never matches CAI5_IND1_G10.
+ */
+export function distinctGroupRows(rows, group) {
+  const code = group.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(^|[^a-z0-9_])${code}($|[^a-z0-9_])`, "i");
+  const seen = new Set();
+  const matches = [];
+  for (const row of rows) {
+    if (!pattern.test(row.text)) continue;
+    const key = row.href || row.text.replace(/\s+/g, "").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    matches.push(row);
+  }
+  return matches;
+}
+
+async function listGroupSessions(page, group) {
+  const rows = page.locator("table tbody tr");
+  try {
+    await rows.first().waitFor({ state: "attached", timeout: 15_000 });
+  } catch (error) {
+    if (isTimeout(error)) return { matches: [], listed: [] };
+    throw error;
+  }
+  const collected = [];
+  for (const row of await rows.all()) {
+    let text;
+    try {
+      text = await row.innerText({ timeout: 3000 });
+    } catch {
+      continue;
+    }
+    const link = row.locator("td:first-child a, td:first-child button").first();
+    if ((await link.count()) === 0) continue;
+    const href = await link.getAttribute("href").catch(() => null);
+    collected.push({ text, href, link, summary: summarise(text) });
+  }
+  return { matches: distinctGroupRows(collected, group), listed: [...new Set(collected.map((row) => row.summary))] };
+}
+
+/** The session's current record link: unavailable (not ended), empty, or its value. */
+async function readRecordLink(page, state = {}) {
+  state.step = "waiting for the record link button";
+  // Only a visible button counts: the page keeps hidden copies of its controls for narrow layouts.
+  const button = page.getByRole("button", { name: /^\s*(Add|Edit)\s+Record\s+Link\s*$/i }).filter({ visible: true }).first();
+  if (!(await waitVisible(button, 20_000))) return { state: "unavailable", value: "" };
+  const label = (await button.innerText({ timeout: 5000 })).trim();
+  if (/^add/i.test(label)) return { state: "empty", value: "" };
+
+  state.step = "opening the record link box to read it";
+  await button.click({ timeout: 10_000 });
+  const dialog = page.locator("[role='dialog']").filter({ has: page.locator("input[name='recorded_link'], input[placeholder='Enter session record link']") }).first();
+  const field = dialog.locator("input[name='recorded_link'], input[placeholder='Enter session record link']").first();
+  if (!(await waitVisible(field, 15_000))) throw userFacing("The record link box did not open, so the current link could not be read.");
+  state.step = "reading the current record link";
+  const value = (await field.inputValue({ timeout: 5000 })).trim();
+  state.step = "closing the record link box without saving";
+  // Close without saving: Escape first, then the dialog's own Close button if it is still open.
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(600);
+  if (await dialog.isVisible().catch(() => false)) {
+    const close = dialog.getByRole("button", { name: /^\s*(Close|Cancel)\s*$/i }).first();
+    if ((await close.count()) > 0) await close.click({ timeout: 5000 });
+    await page.waitForTimeout(600);
+  }
+  if (await dialog.isVisible().catch(() => false)) throw userFacing("The record link box would not close without saving; nothing was changed.");
+  return { state: value ? "filled" : "empty", value };
 }
 
 /**
@@ -558,7 +722,7 @@ async function readToast(page) {
 
 async function readStatus(page) {
   try {
-    const status = page.getByText(/^\s*(pending|running|finished|cancelled)\s*$/i).first();
+    const status = page.getByText(/^\s*(pending|running|finished|cancelled)\s*$/i).filter({ visible: true }).first();
     return (await status.count()) > 0 ? (await status.innerText()).trim() : "";
   } catch {
     return "";

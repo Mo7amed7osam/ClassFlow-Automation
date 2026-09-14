@@ -269,9 +269,8 @@ These features were first built for the Windows app (branch `Windows_and_web`) a
 | Run Session | Automation → LMS | When a scheduled meeting linked to a group goes live, signs in to the DEPI dashboard and presses **Run Session** on that group's session, picked by the scheduled time. |
 | Attendance upload | Automation → LMS | 90 minutes in, ticks Joined for every student the register marks **Present** and Not-joined for everyone else the dashboard lists. Every row is decided first; if one row cannot be ticked, nothing is submitted. |
 | Late-joiner correction | Automation → LMS | 3 hours in, opens View details and flips only the rows that disagree, then reloads and confirms. |
-| Recording link | Automation → LMS / Follow-ups | Finds the group's cloud recording in My Recordings (longest one inside the session's hours, checked against the link's own start time) and puts its share link on the session. A link already there is left alone. |
-| Follow-up queue | Automation → Follow-ups | The steps above are written to `~/Library/Application Support/Zoom Auto Admit/LMS/follow-up.json`, retried every 15 minutes up to 8 times, and still run after a restart. |
-| Recording API | Automation → Recording API | `POST /api/recordings/process` with `X-API-Key` attaches a Google Drive link n8n sends. Loopback only by default; use a tunnel to reach it. Same contract and status codes as `Windows/RECORDING-API.md`. |
+| Recording sync (Google Sheet) | Automation → Recording Sync | Every day at 08:00 Cairo (and on **Sync Now**) the app reads the recordings spreadsheet through the Google Sheets API: each tab is a group's LMS code, columns A File Name, B Type, C Date, D Shared Link. A row's Drive link goes to that group's one LMS session on that date only after the class's attendance workflow is finished and the session has ended on the dashboard. The current record link is read first: empty → the Drive link is saved and read back; the same link → done; anything else → conflict, never overwritten (an existing Zoom recording link can optionally be treated as temporary). No session → stays pending; more than one → conflict. Progress is kept in `RecordingSync/records.json`; the sheet is never written. |
+| Follow-up queue | Automation → Follow-ups | The attendance steps are written to `~/Library/Application Support/Zoom Auto Admit/LMS/follow-up.json`, retried every 15 minutes up to 8 times, and still run after a restart. |
 | Excel timetable | Schedules → Import Excel… | Reads the DEPI `.xlsx` timetable and adds online sessions as one-time schedules; skips Physical, No Session, past dates and times already taken. Imported schedules stay disabled until enabled. |
 | Excel roster | Schedules → Groups → Import Excel… | `Order` + `Name` (or `FullName`) headers, optional `StudentId`, `Aliases` (`|`-separated), `Email`. Formulas are refused. |
 | Zoom Web meetings | Schedules → Zoom Accounts → Engine | **Web** always uses the browser, **Auto** uses the desktop app while it is free and the Zoom Web Client when it already holds a meeting, so classes can overlap. The web extension's own admit and attendance script runs inside the page; its attendance feeds the normal register. Sign in once per account with **Sign in to Zoom Web…**. |
@@ -646,3 +645,11 @@ Common causes:
 ## Notes
 
 The process uses macOS Accessibility only. It does not disable Waiting Room, modify Zoom preferences, use undocumented APIs, or interact with Breakout Rooms.
+
+### Google access for the recording sync
+
+1. In Google Cloud Console create a project, enable the **Google Sheets API**, configure the OAuth consent screen, and create an OAuth client of type **Desktop app**.
+2. In Automation → Recording Sync paste the client ID and secret, press **Save Client**, then **Connect Google…** and approve read-only access in the browser.
+3. Paste the spreadsheet ID and press **Test Connection**. The connected Google account must be able to open the sheet.
+
+While the consent screen's publishing status is *Testing*, Google expires refresh tokens after 7 days; publish it (or use an *Internal* app on Google Workspace) for a sync that keeps working.

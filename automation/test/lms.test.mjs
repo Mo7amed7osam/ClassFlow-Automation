@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseSessionRow, groupControlPairs, minutesApart, readRowTime } from "../src/lms.mjs";
+import { chooseSessionRow, decideRecordLinkUpdate, distinctGroupRows, groupControlPairs, minutesApart, readRowTime } from "../src/lms.mjs";
 import { normalizeName } from "../src/normalize.mjs";
 import { buildAttendancePlan, crossGroupSuspicion } from "../src/plan.mjs";
 
@@ -68,4 +68,40 @@ test("another group's register is refused before anything is sent", () => {
   const otherGroup = buildAttendancePlan(dashboard, ["Hanan X", "Amal Y", "Ahmed Ali"]);
   assert.match(crossGroupSuspicion(otherGroup, 3), /another group's register/);
   assert.equal(crossGroupSuspicion(buildAttendancePlan(dashboard, []), 0), null);
+});
+
+test("sessions are matched by whole group code and counted once", () => {
+  const rows = [
+    { text: "Week 9 - Session 3 U unknown 2026-09-14 17:00 CAI5_IND1_G1 second yth CAI Live Coach Pending Join Session", href: null },
+    { text: "Week 9 - Session 3Uunknown2026-09-1417:00CAI5_IND1_G1secondythCAIlivecoachpendingJoin Session", href: null },
+    { text: "Week 9 - Session 3 2026-09-14 17:00 CAI5_IND1_G10 Pending", href: null },
+    { text: "Week 9 - Session 3 2026-09-14 17:00 CAI5_IND1_G2 Pending", href: null },
+  ];
+  assert.equal(distinctGroupRows(rows, "CAI5_IND1_G1").length, 1, "the two layouts of one session are one session; G10 is not G1");
+  assert.equal(distinctGroupRows(rows, "CAI5_IND1_G3").length, 0);
+  const two = [
+    { text: "Session A 2026-09-14 10:00 CAI5_IND1_G1", href: "/group_admin/sessions/a" },
+    { text: "Session B 2026-09-14 17:00 CAI5_IND1_G1", href: "/group_admin/sessions/b" },
+    { text: "Session B 2026-09-14 17:00 CAI5_IND1_G1", href: "/group_admin/sessions/b" },
+  ];
+  assert.equal(distinctGroupRows(two, "CAI5_IND1_G1").length, 2, "two real sessions stay two - ambiguous");
+});
+
+test("the current record link decides add, same or conflict", () => {
+  const drive = "https://drive.google.com/file/d/1A1bzBcdEfGhIjKlMnOpQrStUv/view?usp=sharing";
+  assert.equal(decideRecordLinkUpdate("", drive), "add");
+  assert.equal(decideRecordLinkUpdate("  ", drive), "add");
+  assert.equal(decideRecordLinkUpdate(drive, drive), "same");
+  assert.equal(decideRecordLinkUpdate("https://drive.google.com/file/d/1A1bzBcdEfGhIjKlMnOpQrStUv/view", drive), "same", "the same file shared differently");
+  assert.equal(decideRecordLinkUpdate("https://drive.google.com/file/d/ZZZbzBcdEfGhIjKlMnOpQrStUv/view", drive), "conflict");
+  assert.equal(decideRecordLinkUpdate("https://us06web.zoom.us/rec/share/abc", drive), "conflict", "a Zoom link someone put there is never overwritten");
+});
+
+test("a Zoom recording link is replaced only when that is switched on", () => {
+  const drive = "https://drive.google.com/file/d/1A1bzBcdEfGhIjKlMnOpQrStUv/view";
+  const zoom = "https://zoom.us/rec/share/AzzuFagFqb4oihGc7Zp";
+  assert.equal(decideRecordLinkUpdate(zoom, drive), "conflict");
+  assert.equal(decideRecordLinkUpdate(zoom, drive, { replaceZoomRecordingLinks: true }), "replaceZoom");
+  assert.equal(decideRecordLinkUpdate("https://youtube.com/watch?v=x", drive, { replaceZoomRecordingLinks: true }), "conflict", "only Zoom recording links");
+  assert.equal(decideRecordLinkUpdate("http://zoom.us/rec/share/x", drive, { replaceZoomRecordingLinks: true }), "conflict", "https only");
 });

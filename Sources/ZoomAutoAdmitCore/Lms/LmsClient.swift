@@ -9,8 +9,6 @@ public struct LmsSettings: Equatable {
     public var takeAttendance: Bool
     /// Correct late joiners 3 hours in.
     public var correctAttendance: Bool
-    /// Put the Zoom recording's link on the session 4 hours in (needs a signed-in Web profile).
-    public var attachRecording: Bool
     /// Show the dashboard browser instead of running it hidden.
     public var showBrowser: Bool
     /// Rehearse: open everything and report the decision, but press nothing that writes.
@@ -20,14 +18,12 @@ public struct LmsSettings: Equatable {
         runSessionOnMeetingStart: Bool = false,
         takeAttendance: Bool = false,
         correctAttendance: Bool = false,
-        attachRecording: Bool = false,
         showBrowser: Bool = false,
         dryRun: Bool = false
     ) {
         self.runSessionOnMeetingStart = runSessionOnMeetingStart
         self.takeAttendance = takeAttendance
         self.correctAttendance = correctAttendance
-        self.attachRecording = attachRecording
         self.showBrowser = showBrowser
         self.dryRun = dryRun
     }
@@ -36,7 +32,6 @@ public struct LmsSettings: Equatable {
         var steps: [LmsFollowUpStep] = []
         if takeAttendance { steps.append(.takeAttendance) }
         if correctAttendance { steps.append(.correctAttendance) }
-        if attachRecording { steps.append(.attachRecording) }
         return steps
     }
 
@@ -46,7 +41,6 @@ public struct LmsSettings: Equatable {
         static let run = "lms.runSessionOnMeetingStart"
         static let take = "lms.takeAttendance"
         static let correct = "lms.correctAttendance"
-        static let recording = "lms.attachRecording"
         static let show = "lms.showBrowser"
         static let dryRun = "lms.dryRun"
     }
@@ -56,7 +50,6 @@ public struct LmsSettings: Equatable {
             runSessionOnMeetingStart: defaults.bool(forKey: Key.run),
             takeAttendance: defaults.bool(forKey: Key.take),
             correctAttendance: defaults.bool(forKey: Key.correct),
-            attachRecording: defaults.bool(forKey: Key.recording),
             showBrowser: defaults.bool(forKey: Key.show),
             dryRun: defaults.bool(forKey: Key.dryRun)
         )
@@ -66,7 +59,6 @@ public struct LmsSettings: Equatable {
         defaults.set(runSessionOnMeetingStart, forKey: Key.run)
         defaults.set(takeAttendance, forKey: Key.take)
         defaults.set(correctAttendance, forKey: Key.correct)
-        defaults.set(attachRecording, forKey: Key.recording)
         defaults.set(showBrowser, forKey: Key.show)
         defaults.set(dryRun, forKey: Key.dryRun)
     }
@@ -156,18 +148,11 @@ public final class LmsClient {
         dashboard("lms-correct-attendance", group: group, date: date, startTime: startTime, settings: settings, extra: ["present": present], onMessage: onMessage)
     }
 
-    public func attachRecordLink(group: String, date: String, startTime: String?, link: String, replaceExisting: Bool, settings: LmsSettings, onMessage: AutomationHelper.LineHandler? = nil) -> AutomationResult {
-        dashboard("lms-attach-record-link", group: group, date: date, startTime: startTime, settings: settings, extra: ["recordLink": link, "replaceExisting": replaceExisting], onMessage: onMessage)
-    }
-
-    /// Reads the recording from Zoom's My Recordings in `profile`, then attaches it.
-    public func attachRecordingFromZoom(group: String, date: String, startTime: String?, profile: String, settings: LmsSettings, timeZone: TimeZone = .current, onMessage: AutomationHelper.LineHandler? = nil) -> AutomationResult {
-        var extra: [String: Any] = ["profile": profile]
-        extra["localUtcOffsetMinutes"] = timeZone.secondsFromGMT() / 60
-        if let zoomZone = UserDefaults.standard.string(forKey: "lms.zoomAccountTimeZone").flatMap(TimeZone.init(identifier:)) {
-            extra["zoomUtcOffsetMinutes"] = zoomZone.secondsFromGMT() / 60
-        }
-        return dashboard("recording-from-zoom", group: group, date: date, startTime: startTime, settings: settings, extra: extra, onMessage: onMessage)
+    /// Moves a Drive recording link from the sheet onto the one session of `group` on `date`:
+    /// empty → attached, same link → already attached, anything else → conflict (never overwritten,
+    /// except a Zoom recording link when `replaceZoomRecordingLinks` is on).
+    public func syncRecordLink(group: String, date: String, driveURL: String, replaceZoomRecordingLinks: Bool, settings: LmsSettings, onMessage: AutomationHelper.LineHandler? = nil) -> AutomationResult {
+        dashboard("lms-sync-record-link", group: group, date: date, startTime: nil, settings: settings, extra: ["driveUrl": driveURL, "replaceZoomRecordingLinks": replaceZoomRecordingLinks], onMessage: onMessage)
     }
 
     private func dashboard(_ command: String, group: String, date: String, startTime: String?, settings: LmsSettings, extra: [String: Any], onMessage: AutomationHelper.LineHandler?) -> AutomationResult {

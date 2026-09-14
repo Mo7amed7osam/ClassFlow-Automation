@@ -21,11 +21,20 @@ public enum LaunchAgentScheduler {
     /// The wake-up moments: each upcoming start in the horizon, `leadMinutes` early.
     public static func launchDates(
         configuration: SchedulerConfiguration,
+        dailyWake: DailyJobSchedule? = nil,
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> [Date] {
         let horizon = now.addingTimeInterval(TimeInterval(horizonDays * 24 * 60 * 60))
         var dates = Set<Date>()
+        // A daily job (the recording sync at 08:00 Cairo) wakes the app a few minutes before it runs.
+        if let dailyWake {
+            for offset in 0...horizonDays {
+                guard let day = calendar.date(byAdding: .day, value: offset, to: now) else { continue }
+                let wake = dailyWake.runTime(onDayOf: day).addingTimeInterval(TimeInterval(-leadMinutes * 60))
+                if wake > now, wake <= horizon { dates.insert(wake) }
+            }
+        }
         for schedule in configuration.schedules where schedule.isEnabled {
             var cursor = now
             // A handful per schedule is plenty inside two weeks and keeps the plist small.
@@ -58,10 +67,11 @@ public enum LaunchAgentScheduler {
     public static func install(
         configuration: SchedulerConfiguration,
         enabled: Bool,
+        dailyWake: DailyJobSchedule? = nil,
         bundleIdentifier: String? = Bundle.main.bundleIdentifier,
         now: Date = Date()
     ) -> String {
-        let dates = launchDates(configuration: configuration, now: now)
+        let dates = launchDates(configuration: configuration, dailyWake: dailyWake, now: now)
         guard enabled, let bundleIdentifier, !dates.isEmpty else {
             uninstall()
             return enabled ? "No upcoming meetings to wake the app for." : "Opening the app for meetings is off."

@@ -6,7 +6,8 @@ public enum LmsFollowUpStep: String, Codable, CaseIterable, Equatable {
     case takeAttendance
     /// Move whoever turned up late from Not-joined to Joined, three hours in.
     case correctAttendance
-    /// Put the Zoom recording's link on the finished session.
+    /// Retired: recording links now come from the Google Sheet sync once the session has ended and
+    /// its attendance is done, not from a timer. Kept so older queue files still load.
     case attachRecording
 
     public var displayName: String {

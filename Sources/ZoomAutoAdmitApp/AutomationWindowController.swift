@@ -14,7 +14,6 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
     private let runSessionButton = NSButton(checkboxWithTitle: "Press Run Session when a scheduled meeting goes live", target: nil, action: nil)
     private let takeAttendanceButton = NSButton(checkboxWithTitle: "Upload attendance 90 minutes after the start", target: nil, action: nil)
     private let correctAttendanceButton = NSButton(checkboxWithTitle: "Correct late joiners 3 hours after the start", target: nil, action: nil)
-    private let attachRecordingButton = NSButton(checkboxWithTitle: "Attach the Zoom recording link 4 hours after the start", target: nil, action: nil)
     private let showBrowserButton = NSButton(checkboxWithTitle: "Show the browser while it works", target: nil, action: nil)
     private let dryRunButton = NSButton(checkboxWithTitle: "Rehearse only (open everything, press nothing that writes)", target: nil, action: nil)
     private let zoomTimeZoneField = NSTextField()
@@ -26,17 +25,21 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
     private let manualGroupField = NSTextField()
     private let manualDatePicker = NSDatePicker()
     private let manualTimeField = NSTextField()
-    private let manualLinkField = NSTextField()
     private let manualStatus = NSTextField(wrappingLabelWithString: "")
 
-    // Recording API
-    private let apiEnabledButton = NSButton(checkboxWithTitle: "Run the recording API while the app is open", target: nil, action: nil)
-    private let apiPortField = NSTextField()
-    private let apiHostField = NSTextField()
-    private let apiClientsField = NSTextField()
-    private let apiLockWaitField = NSTextField()
-    private let apiKeyStatus = NSTextField(labelWithString: "")
-    private let apiStatus = NSTextField(labelWithString: "")
+
+    // Recording Sync
+    private let googleClientIDField = NSTextField()
+    private let googleClientSecretField = NSSecureTextField()
+    private let googleStatus = NSTextField(wrappingLabelWithString: "")
+    private let spreadsheetField = NSTextField()
+    private let syncEnabledButton = NSButton(checkboxWithTitle: "Sync every day at 08:00 Cairo time", target: nil, action: nil)
+    private let replaceZoomButton = NSButton(checkboxWithTitle: "Treat an existing Zoom recording link (zoom.us/rec/…) as temporary and replace it", target: nil, action: nil)
+    private let syncStatus = NSTextField(wrappingLabelWithString: "")
+    private let syncTable = NSTableView()
+    private var syncRows: [RecordingSyncRecord] = []
+    private let syncDetail = NSTextView()
+    private let tabs = NSTabView()
 
     // More
     private let webHeadlessButton = NSButton(checkboxWithTitle: "Run Zoom Web meetings without a visible window (after the first sign-in)", target: nil, action: nil)
@@ -63,10 +66,9 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         window.setFrameAutosaveName("AutomationWindow")
         super.init(window: window)
 
-        let tabs = NSTabView()
         tabs.addTabViewItem(tab("LMS", makeLmsTab()))
         tabs.addTabViewItem(tab("Follow-ups", makeFollowUpTab()))
-        tabs.addTabViewItem(tab("Recording API", makeApiTab()))
+        tabs.addTabViewItem(tab("Recording Sync", makeRecordingSyncTab()))
         tabs.addTabViewItem(tab("Web & Co-host", makeMoreTab()))
         tabs.addTabViewItem(tab("Log", makeLogTab()))
         window.contentView = tabs
@@ -89,7 +91,6 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         runSessionButton.state = settings.runSessionOnMeetingStart ? .on : .off
         takeAttendanceButton.state = settings.takeAttendance ? .on : .off
         correctAttendanceButton.state = settings.correctAttendance ? .on : .off
-        attachRecordingButton.state = settings.attachRecording ? .on : .off
         showBrowserButton.state = settings.showBrowser ? .on : .off
         dryRunButton.state = settings.dryRun ? .on : .off
         zoomTimeZoneField.stringValue = UserDefaults.standard.string(forKey: "lms.zoomAccountTimeZone") ?? ""
@@ -109,14 +110,8 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         manualGroupPopUp.addItems(withTitles: groups.map(\.dashboardGroupName))
         if let selected { manualGroupPopUp.selectItem(withTitle: selected) }
 
-        let api = RecordingAPISettings.load()
-        apiEnabledButton.state = UserDefaults.standard.bool(forKey: RecordingAPISettings.enabledKey) ? .on : .off
-        apiPortField.stringValue = String(api.port)
-        apiHostField.stringValue = api.host
-        apiClientsField.stringValue = api.allowedClients
-        apiLockWaitField.stringValue = String(api.lockWaitSeconds)
-        apiKeyStatus.stringValue = RecordingAPIKeyStore.load().map { "Key stored (…\($0.suffix(4)))" } ?? "No key yet."
-        apiStatus.stringValue = coordinator.apiStatus
+
+        refreshRecordingSync()
 
         webHeadlessButton.state = UserDefaults.standard.bool(forKey: "web.headless") ? .on : .off
         rolesEnabledButton.state = (UserDefaults.standard.object(forKey: "roles.enabled") as? Bool ?? true) ? .on : .off
@@ -137,7 +132,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         emailField.placeholderString = "coordinator@example.com"
         passwordField.placeholderString = "Password"
         [emailField, passwordField].forEach { $0.widthAnchor.constraint(equalToConstant: 320).isActive = true }
-        for button in [runSessionButton, takeAttendanceButton, correctAttendanceButton, attachRecordingButton, showBrowserButton, dryRunButton] {
+        for button in [runSessionButton, takeAttendanceButton, correctAttendanceButton, showBrowserButton, dryRunButton] {
             button.target = self
             button.action = #selector(lmsSettingsChanged)
         }
@@ -162,7 +157,6 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
                 runSessionButton,
                 takeAttendanceButton,
                 correctAttendanceButton,
-                attachRecordingButton,
                 DesignKit.caption("""
                 The dashboard group is the group's LMS code (Schedules → Groups), or its name. Students marked \
                 Present are sent as Joined; everyone else the dashboard lists is Not-joined. If any row cannot be \
@@ -203,8 +197,6 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         manualDatePicker.dateValue = Date()
         manualTimeField.placeholderString = "19:00"
         manualTimeField.widthAnchor.constraint(equalToConstant: 70).isActive = true
-        manualLinkField.placeholderString = "https://drive.google.com/file/d/…/view  or a Zoom share link"
-        manualLinkField.widthAnchor.constraint(equalToConstant: 460).isActive = true
         manualStatus.preferredMaxLayoutWidth = 700
 
         return scrolling([
@@ -225,51 +217,283 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
                     button("Upload Attendance", #selector(manualTakeAttendance)),
                     button("Correct Late Joiners", #selector(manualCorrectAttendance))
                 ]),
-                DesignKit.horizontal([label("Recording link"), manualLinkField]),
-                DesignKit.horizontal([
-                    button("Attach Link", #selector(manualAttachLink)),
-                    button("Find in Zoom & Attach", #selector(manualRecordingFromZoom))
-                ]),
                 manualStatus,
                 DesignKit.caption("Attendance uses that day's register for the group. The start time picks between two sessions of one group on the same day.")
             ])
         ])
     }
 
-    private func makeApiTab() -> NSView {
-        apiEnabledButton.target = self
-        apiEnabledButton.action = #selector(apiEnabledChanged)
-        apiPortField.widthAnchor.constraint(equalToConstant: 80).isActive = true
-        apiHostField.placeholderString = "empty = 127.0.0.1 (loopback only)"
-        apiClientsField.placeholderString = "only with a private host, e.g. 100.64.0.0/10"
-        apiLockWaitField.widthAnchor.constraint(equalToConstant: 80).isActive = true
-        [apiHostField, apiClientsField].forEach { $0.widthAnchor.constraint(equalToConstant: 320).isActive = true }
+    // MARK: Recording Sync
+
+    private func makeRecordingSyncTab() -> NSView {
+        googleClientIDField.placeholderString = "OAuth client ID (Desktop app) from Google Cloud"
+        googleClientSecretField.placeholderString = "Client secret (stored in Keychain)"
+        spreadsheetField.placeholderString = "Spreadsheet ID from its URL: docs.google.com/spreadsheets/d/<ID>/edit"
+        [googleClientIDField, googleClientSecretField, spreadsheetField].forEach { $0.widthAnchor.constraint(equalToConstant: 460).isActive = true }
+        spreadsheetField.target = self
+        spreadsheetField.action = #selector(syncSettingsChanged)
+        for control in [syncEnabledButton, replaceZoomButton] {
+            control.target = self
+            control.action = #selector(syncSettingsChanged)
+        }
+        googleStatus.preferredMaxLayoutWidth = 700
+        syncStatus.preferredMaxLayoutWidth = 700
+
+        let columns: [(String, String, CGFloat, CGFloat)] = [("group", "Session", 112, 90), ("date", "Date", 92, 80), ("drive", "Drive", 70, 60), ("lms", "LMS", 150, 110), ("detail", "Details", 320, 160)]
+        for (id, title, width, minimum) in columns {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sync.\(id)"))
+            column.title = title
+            column.width = width
+            column.minWidth = minimum
+            column.resizingMask = [.userResizingMask, .autoresizingMask]
+            syncTable.addTableColumn(column)
+        }
+        // Details takes whatever width is left; the full text is in the panel under the table.
+        syncTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        syncTable.identifier = NSUserInterfaceItemIdentifier("recordingSyncTable")
+        syncTable.dataSource = self
+        syncTable.delegate = self
+        syncTable.allowsMultipleSelection = true
+        syncTable.usesAlternatingRowBackgroundColors = true
+        let scroll = NSScrollView()
+        scroll.documentView = syncTable
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.heightAnchor.constraint(equalToConstant: 260).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 760).isActive = true
+
+        syncDetail.isEditable = false
+        syncDetail.isSelectable = true
+        syncDetail.drawsBackground = false
+        syncDetail.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        syncDetail.textContainerInset = NSSize(width: 6, height: 6)
+        syncDetail.isVerticallyResizable = true
+        syncDetail.autoresizingMask = [.width]
+        syncDetail.string = "Select a row to see its details."
+        let detailScroll = NSScrollView()
+        detailScroll.documentView = syncDetail
+        detailScroll.hasVerticalScroller = true
+        detailScroll.borderType = .bezelBorder
+        detailScroll.heightAnchor.constraint(equalToConstant: 170).isActive = true
+        detailScroll.widthAnchor.constraint(equalToConstant: 760).isActive = true
 
         return scrolling([
-            DesignKit.section("Recording API for n8n", rows: [
-                apiEnabledButton,
-                DesignKit.horizontal([label("Port"), apiPortField, label("Wait for a busy profile"), apiLockWaitField, label("seconds")]),
-                DesignKit.horizontal([label("Listen on"), apiHostField]),
-                DesignKit.horizontal([label("Allowed clients"), apiClientsField]),
-                DesignKit.horizontal([button("Apply & Restart", #selector(applyApiSettings)), button("Stop", #selector(stopApi))]),
-                apiStatus
+            DesignKit.section("Google access", rows: [
+                DesignKit.horizontal([label("Client ID"), googleClientIDField]),
+                DesignKit.horizontal([label("Client secret"), googleClientSecretField]),
+                DesignKit.horizontal([button("Save Client", #selector(saveGoogleClient)), button("Connect Google…", #selector(connectGoogle)), button("Disconnect", #selector(disconnectGoogle))]),
+                googleStatus,
+                DesignKit.caption("Read-only access to spreadsheets. You sign in once in the browser; the refresh token is kept in the Keychain and the sync runs without a browser afterwards.", width: 700)
             ]),
-            DesignKit.section("API key", rows: [
-                apiKeyStatus,
-                DesignKit.horizontal([button("Generate New Key & Copy", #selector(generateApiKey)), button("Copy Key", #selector(copyApiKey))]),
-                DesignKit.caption("n8n sends it as the X-API-Key header. It is kept in your Keychain and never written to a file or a log.")
-            ]),
-            DesignKit.section("Calling it", rows: [
+            DesignKit.section("Recordings sheet", rows: [
+                DesignKit.horizontal([label("Spreadsheet ID"), spreadsheetField, button("Test Connection", #selector(testSheetConnection))]),
+                syncEnabledButton,
+                replaceZoomButton,
+                syncStatus,
                 DesignKit.caption("""
-                POST http://127.0.0.1:<port>/api/recordings/process
-                { "group": "CAI5_AIS4_S7", "recordLink": "https://drive.google.com/file/d/…/view", "date": "2026-09-03", "startTime": "19:00", "replaceExisting": false }
-
-                GET /health answers {"status":"ok"} without a key. The API listens on loopback by default; to reach it \
-                from another machine, run a tunnel (cloudflared, Tailscale) on this Mac. Answers: 200 attached or already \
-                there, 400 invalid request, 401 wrong key, 404 recording not found, 409 busy, 500 dashboard failure.
+                Each tab is a group's LMS code; columns A File Name, B Type, C Date, D Shared Link. The sheet is never changed. \
+                A link goes to the LMS only after that class's attendance is finished and its session has ended on the dashboard. \
+                Exactly one session per group per day is required; a different link already on the session is never overwritten.
                 """, width: 700)
+            ]),
+            DesignKit.section("Recordings", rows: [
+                scroll,
+                detailScroll,
+                DesignKit.horizontal([
+                    button("Sync Now", #selector(syncNowPressed)),
+                    button("Retry Failed", #selector(retryFailedPressed)),
+                    button("Retry Selected", #selector(retrySelectedPressed)),
+                    button("Open LMS Session", #selector(openSelectedSession)),
+                    button("View Logs", #selector(viewLogs))
+                ])
             ])
         ])
+    }
+
+    private func refreshRecordingSync() {
+        let sync = coordinator.recordingSync
+        let settings = sync.settings
+        if googleClientIDField.currentEditor() == nil { googleClientIDField.stringValue = settings.clientID }
+        if spreadsheetField.currentEditor() == nil { spreadsheetField.stringValue = settings.spreadsheetID }
+        syncEnabledButton.state = settings.enabled ? .on : .off
+        replaceZoomButton.state = settings.replaceZoomRecordingLinks ? .on : .off
+        if !googleStatus.stringValue.hasPrefix("…") {
+            googleStatus.stringValue = settings.clientID.isEmpty
+                ? "No OAuth client saved yet."
+                : (sync.isGoogleConnected ? "✓ Google connected." : "Not connected. Press Connect Google.")
+        }
+        var lines: [String] = []
+        if sync.isSyncing { lines.append("Syncing now…") }
+        lines.append("Last successful sync: " + (sync.lastSuccessAt.map { DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .short) } ?? "never"))
+        if let next = sync.nextRun { lines.append("Next scheduled run: " + DateFormatter.localizedString(from: next, dateStyle: .medium, timeStyle: .short)) }
+        if let summary = sync.lastSummary { lines.append("Last result: \(summary)") }
+        if LmsSettings.load().dryRun { lines.append("Rehearse is ON (Automation → LMS): links are checked but never saved.") }
+        syncStatus.stringValue = lines.joined(separator: "\n")
+        let selected = Set(syncTable.selectedRowIndexes.compactMap { syncRows.indices.contains($0) ? syncRows[$0].id : nil })
+        syncRows = sync.records.sorted { ($0.sessionDate, $0.groupCode) > ($1.sessionDate, $1.groupCode) }
+        syncTable.reloadData()
+        syncTable.selectRowIndexes(IndexSet(syncRows.indices.filter { selected.contains(syncRows[$0].id) }), byExtendingSelection: false)
+        showSyncDetail()
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard (notification.object as? NSTableView) === syncTable else { return }
+        showSyncDetail()
+    }
+
+    /// Everything known about the selected record, selectable so links can be copied.
+    private func showSyncDetail() {
+        guard syncRows.indices.contains(syncTable.selectedRow) else {
+            syncDetail.string = syncRows.isEmpty ? "No recordings yet. Press Sync Now." : "Select a row to see its details."
+            return
+        }
+        let record = syncRows[syncTable.selectedRow]
+        func stamp(_ date: Date?) -> String { date.map { DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .short) } ?? "—" }
+        var lines = [
+            "\(record.groupCode) · \(record.sessionDate) · \(Self.syncStatusText(record).text)",
+            "",
+            "Drive link:      \(record.driveURL)",
+            "Sheet:           \(record.sheetTab), row \(record.sheetRow)\(record.fileName.isEmpty ? "" : " – \(record.fileName)")",
+            "LMS session:     \(record.lmsSessionURL ?? "not opened yet")"
+        ]
+        if let replaced = record.replacedLink { lines.append("Replaced link:   \(replaced)") }
+        if let conflicting = record.conflictingLink { lines.append("On the LMS now:  \(conflicting)") }
+        if let message = record.lastMessage { lines.append("Last result:     \(message)") }
+        if let error = record.error, error != record.lastMessage { lines.append("Reason:          \(error)") }
+        lines.append("Attempts:        \(record.attempts)   Last try: \(stamp(record.lastAttemptAt))   Completed: \(stamp(record.completedAt))")
+        syncDetail.string = lines.joined(separator: "\n")
+    }
+
+    /// Short, fixed-length words for the LMS column; the long story is in Details and the panel.
+    static func syncStatusText(_ record: RecordingSyncRecord) -> (text: String, color: NSColor) {
+        switch record.state {
+        case .attached:
+            switch record.lmsOutcome {
+            case "replacedZoom": return ("Updated ✓ (Zoom replaced)", .systemGreen)
+            case "alreadyAttached": return ("Already on LMS ✓", .systemGreen)
+            default: return ("Updated ✓", .systemGreen)
+            }
+        case .processing: return ("Updating…", .labelColor)
+        case .pending:
+            switch record.issue {
+            case .rehearsed: return ("Rehearsed only", .secondaryLabelColor)
+            case .noSession: return ("Waiting: no session", .secondaryLabelColor)
+            case .sessionNotEnded: return ("Waiting: not ended", .secondaryLabelColor)
+            case .attendanceNotComplete: return ("Waiting: attendance", .secondaryLabelColor)
+            default: return ("Pending", .secondaryLabelColor)
+            }
+        case .conflict:
+            switch record.issue {
+            case .multipleDriveLinksInSheet: return ("Conflict: sheet links", .systemOrange)
+            case .existingLinkDiffers: return ("Conflict: other link", .systemOrange)
+            case .ambiguousSessions: return ("Conflict: 2+ sessions", .systemOrange)
+            case .sheetLinkChanged: return ("Conflict: link changed", .systemOrange)
+            default: return ("Conflict – review", .systemOrange)
+            }
+        case .failed: return ("Failed (\(record.attempts))", .systemRed)
+        }
+    }
+
+    private func syncCell(column: String, row: Int) -> NSView? {
+        guard syncRows.indices.contains(row) else { return nil }
+        let record = syncRows[row]
+        let text: String
+        var color = NSColor.labelColor
+        switch column {
+        case "sync.group": text = record.groupCode
+        case "sync.date": text = record.sessionDate
+        case "sync.drive": text = "Found ✓"
+        case "sync.lms":
+            let status = Self.syncStatusText(record)
+            text = status.text
+            color = status.color
+        default:
+            switch record.state {
+            case .attached:
+                text = record.replacedLink.map { "Replaced \(RecordingLinkRules.preview($0))" }
+                    ?? (record.lmsOutcome == "alreadyAttached" ? "The session already had this Drive link." : "Drive link saved and read back.")
+            case .conflict where record.conflictingLink != nil:
+                text = "LMS has \(RecordingLinkRules.preview(record.conflictingLink!))"
+            default:
+                text = record.error ?? ""
+            }
+        }
+        let field = NSTextField(labelWithString: text)
+        field.textColor = color
+        field.lineBreakMode = .byTruncatingTail
+        field.toolTip = column == "sync.drive" ? "\(record.driveURL)\n\(record.sheetTab) row \(record.sheetRow): \(record.fileName)" : text
+        return field
+    }
+
+    @objc private func saveGoogleClient() {
+        let secret = googleClientSecretField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        coordinator.recordingSync.saveClient(id: googleClientIDField.stringValue, secret: secret.isEmpty ? nil : secret)
+        googleClientSecretField.stringValue = ""
+        googleStatus.stringValue = "Client saved."
+        refresh()
+    }
+
+    @objc private func connectGoogle() {
+        saveGoogleClient()
+        googleStatus.stringValue = "… Finish signing in to Google in your browser."
+        coordinator.recordingSync.connectGoogle { [weak self] result in
+            switch result {
+            case .success: self?.googleStatus.stringValue = "✓ Google connected."
+            case .failure(let error): self?.googleStatus.stringValue = "✗ \(error.localizedDescription)"
+            }
+            self?.refresh()
+        }
+    }
+
+    @objc private func disconnectGoogle() {
+        coordinator.recordingSync.disconnectGoogle()
+        googleStatus.stringValue = "Disconnected."
+        refresh()
+    }
+
+    @objc private func syncSettingsChanged() {
+        var settings = coordinator.recordingSync.settings
+        let wasEnabled = settings.enabled
+        settings.spreadsheetID = spreadsheetField.stringValue
+        settings.enabled = syncEnabledButton.state == .on
+        settings.replaceZoomRecordingLinks = replaceZoomButton.state == .on
+        settings.save()
+        if wasEnabled != settings.enabled { coordinator.syncLaunchAgent() }
+        refresh()
+    }
+
+    @objc private func testSheetConnection() {
+        syncSettingsChanged()
+        syncStatus.stringValue = "Reading the sheet…"
+        coordinator.recordingSync.testConnection { [weak self] message in
+            self?.syncStatus.stringValue = message
+        }
+    }
+
+    @objc private func syncNowPressed() {
+        syncSettingsChanged()
+        coordinator.recordingSync.syncNow()
+    }
+
+    @objc private func retryFailedPressed() { coordinator.recordingSync.retryFailed() }
+
+    @objc private func retrySelectedPressed() {
+        let ids = syncTable.selectedRowIndexes.compactMap { syncRows.indices.contains($0) ? syncRows[$0].id : nil }
+        guard !ids.isEmpty else { return }
+        coordinator.recordingSync.retry(ids: ids)
+    }
+
+    @objc private func openSelectedSession() {
+        guard syncRows.indices.contains(syncTable.selectedRow) else { return }
+        let record = syncRows[syncTable.selectedRow]
+        let url = record.lmsSessionURL.flatMap(URL.init(string:))
+            ?? URL(string: "https://dashboard.depi.eyouthbusiness.com/group_admin/sessions?date_from=\(record.sessionDate)&date_to=\(record.sessionDate)")
+        if let url { NSWorkspace.shared.open(url) }
+    }
+
+    @objc private func viewLogs() {
+        tabs.selectTabViewItem(withIdentifier: "Log")
     }
 
     private func makeMoreTab() -> NSView {
@@ -326,7 +550,6 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
             runSessionOnMeetingStart: runSessionButton.state == .on,
             takeAttendance: takeAttendanceButton.state == .on,
             correctAttendance: correctAttendanceButton.state == .on,
-            attachRecording: attachRecordingButton.state == .on,
             showBrowser: showBrowserButton.state == .on,
             dryRun: dryRunButton.state == .on
         ).save()
@@ -355,7 +578,6 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
             // Cleared either way, so the password does not sit in an open window.
             self?.passwordField.stringValue = ""
             self?.signInStatus.stringValue = result.success ? "✓ \(result.message)" : "✗ \(result.message)"
-            if result.success, self?.apiEnabledButton.state == .on { self?.coordinator.startRecordingAPI() }
         }
     }
 
@@ -439,82 +661,6 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         runManual(.correctAttendance(present: present), "Correcting attendance (\(present.count) present)")
     }
 
-    @objc private func manualAttachLink() {
-        let link = manualLinkField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !link.isEmpty else {
-            manualStatus.stringValue = "Paste the recording link first."
-            return
-        }
-        runManual(.attachLink(link, replaceExisting: false), "Attaching the link")
-    }
-
-    @objc private func manualRecordingFromZoom() {
-        let configuration = configurationProvider()
-        let group = configuration.studentGroups.first { $0.dashboardGroupName == manualGroup }
-        let schedule = configuration.schedules.first { $0.attendanceGroupID == group?.id }
-        guard let profile = schedule.flatMap(configuration.profile(for:)) else {
-            manualStatus.stringValue = "No schedule links \(manualGroup) to a Zoom account, so its recordings profile is unknown."
-            return
-        }
-        runManual(.recordingFromZoom(profile: profile.resolvedWebProfileName), "Finding the recording in Zoom")
-    }
-
-    // MARK: API actions
-
-    @objc private func apiEnabledChanged() {
-        let enabled = apiEnabledButton.state == .on
-        UserDefaults.standard.set(enabled, forKey: RecordingAPISettings.enabledKey)
-        enabled ? applyApiSettings() : stopApi()
-    }
-
-    @objc private func applyApiSettings() {
-        RecordingAPISettings(
-            port: Int(apiPortField.stringValue) ?? 47821,
-            host: apiHostField.stringValue.trimmingCharacters(in: .whitespaces),
-            allowedClients: apiClientsField.stringValue.trimmingCharacters(in: .whitespaces),
-            lockWaitSeconds: Int(apiLockWaitField.stringValue) ?? 120
-        ).save()
-        if apiEnabledButton.state == .on {
-            coordinator.startRecordingAPI()
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.refresh() }
-    }
-
-    @objc private func stopApi() {
-        coordinator.stopRecordingAPI()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.refresh() }
-    }
-
-    @objc private func generateApiKey() {
-        if RecordingAPIKeyStore.load() != nil {
-            let alert = NSAlert()
-            alert.messageText = "Replace the API key?"
-            alert.informativeText = "n8n will need the new key; requests with the old one are refused."
-            alert.addButton(withTitle: "Cancel")
-            alert.addButton(withTitle: "Replace")
-            guard alert.runModal() == .alertSecondButtonReturn else { return }
-        }
-        let key = RecordingAPIKeyStore.generate()
-        guard RecordingAPIKeyStore.save(key) else {
-            apiKeyStatus.stringValue = "The Keychain refused the key."
-            return
-        }
-        copyToPasteboard(key)
-        apiKeyStatus.stringValue = "New key stored and copied to the clipboard."
-        if coordinator.isRecordingAPIRunning { coordinator.startRecordingAPI() }
-    }
-
-    @objc private func copyApiKey() {
-        guard let key = RecordingAPIKeyStore.load() else { return }
-        copyToPasteboard(key)
-        apiKeyStatus.stringValue = "Key copied to the clipboard."
-    }
-
-    private func copyToPasteboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
     // MARK: More actions
 
     @objc private func moreSettingsChanged() {
@@ -524,9 +670,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         let openApp = openAppButton.state == .on
         let changed = defaults.bool(forKey: "scheduler.openAppForMeetings") != openApp
         defaults.set(openApp, forKey: "scheduler.openAppForMeetings")
-        if changed {
-            if openApp { coordinator.syncLaunchAgent() } else { LaunchAgentScheduler.uninstall() }
-        }
+        if changed { coordinator.syncLaunchAgent() }
         let node = nodePathField.stringValue.trimmingCharacters(in: .whitespaces)
         if node.isEmpty {
             defaults.removeObject(forKey: AutomationEnvironment.nodePathDefaultsKey)
@@ -547,9 +691,12 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
 
     // MARK: Table
 
-    func numberOfRows(in tableView: NSTableView) -> Int { followUpRows.count }
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        tableView === syncTable ? syncRows.count : followUpRows.count
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === syncTable { return syncCell(column: tableColumn?.identifier.rawValue ?? "", row: row) }
         guard followUpRows.indices.contains(row), let id = tableColumn?.identifier.rawValue else { return nil }
         let item = followUpRows[row]
         let text: String
