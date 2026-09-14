@@ -105,6 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         attendanceCoordinator.resumeOpenSession(
             configuration: schedulerCoordinator.currentConfiguration
         )
+        attendanceCoordinator.finalizeAbandonedSessions(
+            configuration: schedulerCoordinator.currentConfiguration
+        )
         menuBarController.schedulerConfiguration = { [weak self] in
             self?.schedulerCoordinator.currentConfiguration ?? SchedulerConfiguration()
         }

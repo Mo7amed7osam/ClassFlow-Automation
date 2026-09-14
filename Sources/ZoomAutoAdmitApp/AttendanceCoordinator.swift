@@ -177,6 +177,43 @@ final class AttendanceCoordinator {
         }
     }
 
+    /// Closes registers a quit or relaunch left open past their class's end time.
+    ///
+    /// Such a register is never resumed and nothing else ever finalizes it, so it would stay
+    /// "in progress" for good - and the recording sync waits for a finalized register.
+    @discardableResult
+    func finalizeAbandonedSessions(
+        configuration: SchedulerConfiguration,
+        at now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Int {
+        queue.sync {
+            var closed = 0
+            for var open in store.loadAll() where open.endedAt == nil && open.id != session?.id {
+                let schedule = configuration.schedules.first(where: { $0.id == open.scheduleID })
+                let deadline = schedule.flatMap { ScheduleTimeline.endDate(for: $0, startedAt: open.startedAt, calendar: calendar) }
+                    ?? open.startedAt.addingTimeInterval(Self.maximumResumeAge)
+                guard now >= deadline else { continue }
+                open.endedAt = deadline
+                let group = configuration.studentGroups.first(where: { $0.id == open.groupID })
+                let finalized = AttendanceReconciler.reconcile(
+                    session: open,
+                    autoAcceptConfidence: group?.autoAcceptConfidence ?? 0.9,
+                    finalizing: true,
+                    at: deadline
+                )
+                if store.save(finalized) {
+                    closed += 1
+                    schedulerLog.write(
+                        "[attendance] abandoned-session-finalized id=\(open.id.uuidString) "
+                        + "group=\(open.groupName) endedAt=\(Self.iso8601(deadline)) present=\(finalized.presentCount)"
+                    )
+                }
+            }
+            return closed
+        }
+    }
+
     func stop(at now: Date = Date()) {
         queue.sync {
             guard let timer else { return }

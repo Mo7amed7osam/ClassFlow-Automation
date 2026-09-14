@@ -239,7 +239,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         googleStatus.preferredMaxLayoutWidth = 700
         syncStatus.preferredMaxLayoutWidth = 700
 
-        let columns: [(String, String, CGFloat, CGFloat)] = [("group", "Session", 112, 90), ("date", "Date", 92, 80), ("drive", "Drive", 70, 60), ("lms", "LMS", 150, 110), ("detail", "Details", 320, 160)]
+        let columns: [(String, String, CGFloat, CGFloat)] = [("group", "Session", 112, 90), ("date", "Date", 92, 80), ("drive", "Drive", 70, 60), ("found", "Found on LMS", 120, 90), ("lms", "LMS", 170, 110), ("detail", "Details", 320, 160)]
         for (id, title, width, minimum) in columns {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sync.\(id)"))
             column.title = title
@@ -248,8 +248,8 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
             column.resizingMask = [.userResizingMask, .autoresizingMask]
             syncTable.addTableColumn(column)
         }
-        // Details takes whatever width is left; the full text is in the panel under the table.
-        syncTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        // Details grows to its longest message and the table scrolls sideways to show it.
+        syncTable.columnAutoresizingStyle = .noColumnAutoresizing
         syncTable.identifier = NSUserInterfaceItemIdentifier("recordingSyncTable")
         syncTable.dataSource = self
         syncTable.delegate = self
@@ -333,6 +333,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         let selected = Set(syncTable.selectedRowIndexes.compactMap { syncRows.indices.contains($0) ? syncRows[$0].id : nil })
         syncRows = sync.records.sorted { ($0.sessionDate, $0.groupCode) > ($1.sessionDate, $1.groupCode) }
         syncTable.reloadData()
+        fitDetailsColumn()
         syncTable.selectRowIndexes(IndexSet(syncRows.indices.filter { selected.contains(syncRows[$0].id) }), byExtendingSelection: false)
         showSyncDetail()
     }
@@ -340,6 +341,37 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard (notification.object as? NSTableView) === syncTable else { return }
         showSyncDetail()
+    }
+
+    /// Wide enough for the longest message on any row, so nothing is cut; the scroller does the rest.
+    private func fitDetailsColumn() {
+        guard let column = syncTable.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("sync.detail")) else { return }
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let widest = syncRows.map { (Self.syncDetailText($0) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        column.width = max(320, ceil(widest) + 28)
+    }
+
+    static func syncFoundText(_ record: RecordingSyncRecord) -> (text: String, color: NSColor) {
+        switch record.foundLinkKind {
+        case .none: return ("—", .tertiaryLabelColor)
+        case .empty?: return ("Empty", .secondaryLabelColor)
+        case .zoomLink?: return ("Zoom link", .systemBlue)
+        case .sameDriveLink?: return ("Same Drive link", .systemGreen)
+        case .otherDriveLink?: return ("Other Drive link", .systemOrange)
+        case .otherLink?: return ("Other link", .systemOrange)
+        }
+    }
+
+    static func syncDetailText(_ record: RecordingSyncRecord) -> String {
+        switch record.state {
+        case .attached:
+            return record.replacedLink.map { "Replaced \($0) with the Drive link." }
+                ?? (record.lmsOutcome == "alreadyAttached" ? "The session already had this Drive link." : "Drive link saved and read back.")
+        case .conflict where record.conflictingLink != nil:
+            return "Not overwritten. The LMS has \(record.conflictingLink!)"
+        default:
+            return record.error ?? record.lastMessage ?? ""
+        }
     }
 
     /// Everything known about the selected record, selectable so links can be copied.
@@ -357,6 +389,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
             "Sheet:           \(record.sheetTab), row \(record.sheetRow)\(record.fileName.isEmpty ? "" : " – \(record.fileName)")",
             "LMS session:     \(record.lmsSessionURL ?? "not opened yet")"
         ]
+        lines.append("Found on LMS:    \(record.foundLinkKind?.displayName ?? "not read yet")\(record.foundLink.map { " – \($0)" } ?? "")")
         if let replaced = record.replacedLink { lines.append("Replaced link:   \(replaced)") }
         if let conflicting = record.conflictingLink { lines.append("On the LMS now:  \(conflicting)") }
         if let message = record.lastMessage { lines.append("Last result:     \(message)") }
@@ -404,24 +437,22 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         case "sync.group": text = record.groupCode
         case "sync.date": text = record.sessionDate
         case "sync.drive": text = "Found ✓"
+        case "sync.found":
+            let found = Self.syncFoundText(record)
+            text = found.text
+            color = found.color
         case "sync.lms":
             let status = Self.syncStatusText(record)
             text = status.text
             color = status.color
         default:
-            switch record.state {
-            case .attached:
-                text = record.replacedLink.map { "Replaced \(RecordingLinkRules.preview($0))" }
-                    ?? (record.lmsOutcome == "alreadyAttached" ? "The session already had this Drive link." : "Drive link saved and read back.")
-            case .conflict where record.conflictingLink != nil:
-                text = "LMS has \(RecordingLinkRules.preview(record.conflictingLink!))"
-            default:
-                text = record.error ?? ""
-            }
+            text = Self.syncDetailText(record)
         }
         let field = NSTextField(labelWithString: text)
         field.textColor = color
-        field.lineBreakMode = .byTruncatingTail
+        // Details is sized to its text; the other columns are short labels.
+        field.lineBreakMode = column == "sync.detail" ? .byClipping : .byTruncatingTail
+        field.isSelectable = column == "sync.detail"
         field.toolTip = column == "sync.drive" ? "\(record.driveURL)\n\(record.sheetTab) row \(record.sheetRow): \(record.fileName)" : text
         return field
     }

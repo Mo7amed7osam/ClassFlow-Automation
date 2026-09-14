@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseSessionRow, decideRecordLinkUpdate, distinctGroupRows, groupControlPairs, minutesApart, readRowTime } from "../src/lms.mjs";
+import { chooseSessionRow, decideRecordLinkUpdate, distinctGroupRows, rowMentionsGroup, groupControlPairs, minutesApart, readRowTime } from "../src/lms.mjs";
 import { normalizeName } from "../src/normalize.mjs";
 import { buildAttendancePlan, crossGroupSuspicion } from "../src/plan.mjs";
 
@@ -104,4 +104,12 @@ test("a Zoom recording link is replaced only when that is switched on", () => {
   assert.equal(decideRecordLinkUpdate(zoom, drive, { replaceZoomRecordingLinks: true }), "replaceZoom");
   assert.equal(decideRecordLinkUpdate("https://youtube.com/watch?v=x", drive, { replaceZoomRecordingLinks: true }), "conflict", "only Zoom recording links");
   assert.equal(decideRecordLinkUpdate("http://zoom.us/rec/share/x", drive, { replaceZoomRecordingLinks: true }), "conflict", "https only");
+});
+
+test("a session row matches a whole group code only", () => {
+  assert.equal(rowMentionsGroup("CAI5_IND1_G1\n2026-09-12 13:55", "CAI5_IND1_G1"), true);
+  assert.equal(rowMentionsGroup("cai5_ind1_g1 | Running", "CAI5_IND1_G1"), true);
+  assert.equal(rowMentionsGroup("CAI5_IND1_G10\n2026-09-12 13:55", "CAI5_IND1_G1"), false);
+  assert.equal(rowMentionsGroup("XCAI5_IND1_G1 session", "CAI5_IND1_G1"), false);
+  assert.equal(rowMentionsGroup("anything", "  "), false);
 });

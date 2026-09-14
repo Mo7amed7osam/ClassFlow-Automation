@@ -29,6 +29,38 @@ public enum RecordingSyncIssue: String, Codable, Equatable {
     case failed
 }
 
+/// What a session's record link held when the app first read it, before anything was written.
+public enum LmsRecordLinkFound: String, Codable, Equatable {
+    case empty
+    case zoomLink
+    case sameDriveLink
+    case otherDriveLink
+    case otherLink
+
+    public static func classify(_ current: String, driveURL: String) -> LmsRecordLinkFound {
+        let value = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return .empty }
+        if let id = RecordingLinkRules.driveFileID(value) {
+            return id == RecordingLinkRules.driveFileID(driveURL) ? .sameDriveLink : .otherDriveLink
+        }
+        if let url = URLComponents(string: value), url.scheme == "https",
+           url.host?.lowercased().hasSuffix("zoom.us") == true, url.path.lowercased().contains("/rec/") {
+            return .zoomLink
+        }
+        return .otherLink
+    }
+
+    public var displayName: String {
+        switch self {
+        case .empty: return "Empty"
+        case .zoomLink: return "Zoom link"
+        case .sameDriveLink: return "Same Drive link"
+        case .otherDriveLink: return "Other Drive link"
+        case .otherLink: return "Other link"
+        }
+    }
+}
+
 /// One Drive recording link on its way from the Google Sheet to one LMS session.
 public struct RecordingSyncRecord: Codable, Equatable, Identifiable {
     public var id: String
@@ -49,6 +81,9 @@ public struct RecordingSyncRecord: Codable, Equatable, Identifiable {
     public var replacedLink: String?
     /// How the last LMS step ended: attached, alreadyAttached, replacedZoom, wouldAttach, ...
     public var lmsOutcome: String?
+    /// The record link the session held when the app first read it, and what kind of link it was.
+    public var foundLink: String?
+    public var foundLinkKind: LmsRecordLinkFound?
     /// The helper's own sentence for the last LMS step, kept for the detail view.
     public var lastMessage: String?
     public var attempts: Int
@@ -146,7 +181,13 @@ public final class RecordingSyncStore {
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([RecordingSyncRecord].self, from: data)) ?? []
+        do {
+            return try decoder.decode([RecordingSyncRecord].self, from: data)
+        } catch {
+            // The next write would replace an unreadable file with an empty list; keep a copy first.
+            UnreadableFile.preserve(fileURL)
+            return []
+        }
     }
 
     private func write(_ records: [RecordingSyncRecord]) {
@@ -222,6 +263,16 @@ public enum RecordingSyncPlanner {
             if var record = byID[id] {
                 let sameFile = RecordingLinkRules.driveFileID(record.driveURL).map { distinctFiles == [$0] } ?? false
                 if sameFile {
+                    if record.state == .conflict, record.issue == .multipleDriveLinksInSheet {
+                        // The sheet was cleaned up down to the link already recorded: back to pending.
+                        record.state = .pending
+                        record.issue = nil
+                        record.error = nil
+                        record.sheetRow = first.rowNumber
+                        record.fileName = first.fileName
+                        record.updatedAt = now
+                        byID[id] = record
+                    }
                     report.unchanged += 1
                     continue
                 }
@@ -292,6 +343,8 @@ public enum RecordingSyncGate {
                 && $0.sessionDate == record.sessionDate
                 && ($0.step == .takeAttendance || $0.step == .correctAttendance)
                 && $0.attempts < LmsFollowUpQueue.maximumAttempts
+                // A step too old to ever run again must not hold the recording back for a week.
+                && Date().timeIntervalSince($0.dueAt) <= LmsFollowUpQueue.tooOld
         }
         if let first = open.first {
             return (.attendanceNotComplete, "The attendance workflow is not finished yet (\(first.step.displayName) is still queued).")
@@ -319,6 +372,12 @@ public enum RecordingSyncOutcome {
         let issue = result.body["issue"]?.string
         updated.lmsOutcome = outcome ?? issue
         updated.lastMessage = result.message
+        // Only the first reading counts: after a write the session holds our own link.
+        if updated.foundLinkKind == nil, result.body["recordLinkState"]?.string != nil {
+            let current = result.body["currentLink"]?.string ?? ""
+            updated.foundLink = current.isEmpty ? nil : current
+            updated.foundLinkKind = LmsRecordLinkFound.classify(current, driveURL: record.driveURL)
+        }
 
         if result.success {
             switch outcome {

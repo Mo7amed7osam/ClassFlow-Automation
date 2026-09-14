@@ -92,6 +92,25 @@ final class RecordingSyncPlannerTests: XCTestCase {
         let record = RecordingSyncPlanner.merge(tabs: tabs, groups: [g1], existing: []).records.first
         XCTAssertEqual(record?.state, .conflict)
         XCTAssertEqual(record?.issue, .multipleDriveLinksInSheet)
+
+        // The sheet is cleaned up down to the first link: the conflict clears on the next read.
+        let cleaned = [RecordingSheetTab(title: "CAI5_IND1_G1", rows: [row("CAI5_IND1_G1", 2, "2026-09-12", drive1)])]
+        let fixed = RecordingSyncPlanner.merge(tabs: cleaned, groups: [g1], existing: [record!]).records.first
+        XCTAssertEqual(fixed?.state, .pending)
+        XCTAssertNil(fixed?.issue)
+        // Down to the other link: also back to pending, with that link.
+        let other = [RecordingSheetTab(title: "CAI5_IND1_G1", rows: [row("CAI5_IND1_G1", 3, "2026-09-12", drive2)])]
+        let switched = RecordingSyncPlanner.merge(tabs: other, groups: [g1], existing: [record!]).records.first
+        XCTAssertEqual(switched?.state, .pending)
+        XCTAssertEqual(switched?.driveURL, drive2)
+    }
+
+    func testAnLmsConflictIsNotClearedByReadingTheSameSheetAgain() {
+        var conflict = RecordingSyncRecord(groupCode: "CAI5_IND1_G1", sessionDate: "2026-09-12", sheetTab: "CAI5_IND1_G1", sheetRow: 2, fileName: "f", driveURL: drive1, now: Date())
+        conflict.state = .conflict
+        conflict.issue = .existingLinkDiffers
+        let same = [RecordingSheetTab(title: "CAI5_IND1_G1", rows: [row("CAI5_IND1_G1", 2, "2026-09-12", drive1)])]
+        XCTAssertEqual(RecordingSyncPlanner.merge(tabs: same, groups: [g1], existing: [conflict]).records.first?.state, .conflict)
     }
 
     func testAlreadyProcessedRowsAreNeverUpdatedTwice() {
@@ -127,6 +146,9 @@ final class RecordingSyncGateTests: XCTestCase {
         var givenUp = queued
         givenUp.attempts = LmsFollowUpQueue.maximumAttempts
         XCTAssertNil(RecordingSyncGate.blocker(for: record, configuration: configuration, followUps: [givenUp], sessions: [], calendar: calendar), "a step that was given up on does not block forever")
+        var stale = queued
+        stale.dueAt = Date().addingTimeInterval(-(LmsFollowUpQueue.tooOld + 60))
+        XCTAssertNil(RecordingSyncGate.blocker(for: record, configuration: configuration, followUps: [stale], sessions: [], calendar: calendar), "a step too old to run does not block for a week")
 
         var register = AttendanceSession(groupID: group.id, groupName: group.name, meetingName: "m", startedAt: cairoDate(2026, 9, 12, 13, 55), rosterSnapshot: [])
         XCTAssertEqual(RecordingSyncGate.blocker(for: record, configuration: configuration, followUps: [], sessions: [register], calendar: calendar)?.issue, .attendanceNotComplete)
@@ -286,5 +308,29 @@ final class GoogleOAuthTests: XCTestCase {
         XCTAssertEqual(query["code"], "4/0Ad")
         XCTAssertEqual(query["state"], "abc")
         XCTAssertTrue(LoopbackRedirectReceiver.parseRequestLine("GET /favicon.ico HTTP/1.1").isEmpty)
+    }
+}
+
+final class RecordingFoundLinkTests: XCTestCase {
+    func testWhatTheSessionHeldIsClassified() {
+        XCTAssertEqual(LmsRecordLinkFound.classify("", driveURL: drive1), .empty)
+        XCTAssertEqual(LmsRecordLinkFound.classify("https://zoom.us/rec/share/AzzuFag", driveURL: drive1), .zoomLink)
+        XCTAssertEqual(LmsRecordLinkFound.classify("https://us06web.zoom.us/rec/play/x", driveURL: drive1), .zoomLink)
+        XCTAssertEqual(LmsRecordLinkFound.classify("https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAAA/view", driveURL: drive1), .sameDriveLink)
+        XCTAssertEqual(LmsRecordLinkFound.classify(drive2, driveURL: drive1), .otherDriveLink)
+        XCTAssertEqual(LmsRecordLinkFound.classify("https://youtu.be/x", driveURL: drive1), .otherLink)
+    }
+
+    func testTheFirstReadingIsKeptAcrossLaterAnswers() {
+        var record = RecordingSyncRecord(groupCode: "CAI5_IND1_G1", sessionDate: "2026-09-12", sheetTab: "t", sheetRow: 2, fileName: "f", driveURL: drive1, now: Date())
+        record = RecordingSyncOutcome.apply(AutomationResult(body: ["success": .bool(true), "message": .string("m"), "outcome": .string("wouldReplaceZoom"), "recordLinkState": .string("filled"), "currentLink": .string("https://zoom.us/rec/share/x")]), to: record, dryRun: true)
+        XCTAssertEqual(record.foundLinkKind, .zoomLink)
+        record = RecordingSyncOutcome.apply(AutomationResult(body: ["success": .bool(true), "message": .string("m"), "outcome": .string("alreadyAttached"), "recordLinkState": .string("filled"), "currentLink": .string(drive1)]), to: record, dryRun: false)
+        XCTAssertEqual(record.foundLinkKind, .zoomLink, "after our own write the session holds our link; the original finding stays")
+        let empty = RecordingSyncOutcome.apply(AutomationResult(body: ["success": .bool(true), "message": .string("m"), "outcome": .string("attached"), "recordLinkState": .string("empty"), "currentLink": .string("")]), to: RecordingSyncRecord(groupCode: "G", sessionDate: "2026-09-12", sheetTab: "t", sheetRow: 2, fileName: "f", driveURL: drive1, now: Date()), dryRun: false)
+        XCTAssertEqual(empty.foundLinkKind, .empty)
+        XCTAssertNil(empty.foundLink)
+        let noSession = RecordingSyncOutcome.apply(AutomationResult(body: ["success": .bool(false), "message": .string("m"), "issue": .string("noSession")]), to: RecordingSyncRecord(groupCode: "G", sessionDate: "2026-09-12", sheetTab: "t", sheetRow: 2, fileName: "f", driveURL: drive1, now: Date()), dryRun: false)
+        XCTAssertNil(noSession.foundLinkKind, "nothing was read when no session was found")
     }
 }

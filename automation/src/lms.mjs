@@ -44,9 +44,9 @@ async function withSession(request, verb, work) {
     headless: !request.headed,
     args: QUIET_CHROME_SWITCHES,
   });
-  const page = await firstPage(context, STEP_TIMEOUT);
   const state = { step: "opening the sign-in page" };
   try {
+    const page = await firstPage(context, STEP_TIMEOUT);
     await signIn(page, account);
     state.step = "opening the session";
     const opened = await openSession(page, group, date, request.startTime ?? null);
@@ -129,9 +129,9 @@ export async function syncRecordLink(request) {
   }
 
   const context = await launchProfile(DASHBOARD_PROFILE, { headless: !request.headed, args: QUIET_CHROME_SWITCHES });
-  const page = await firstPage(context, STEP_TIMEOUT);
   const state = { step: "opening the sign-in page" };
   try {
+    const page = await firstPage(context, STEP_TIMEOUT);
     await signIn(page, account);
 
     state.step = "finding the session";
@@ -253,13 +253,17 @@ export function decideRecordLinkUpdate(currentValue, driveUrl, { replaceZoomReco
  * and a narrow layout), so rows are keyed by their link, or by their text without spacing.
  * The group must appear as a whole code: CAI5_IND1_G1 never matches CAI5_IND1_G10.
  */
-export function distinctGroupRows(rows, group) {
+export function rowMentionsGroup(text, group) {
   const code = group.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`(^|[^a-z0-9_])${code}($|[^a-z0-9_])`, "i");
+  if (!code) return false;
+  return new RegExp(`(^|[^a-z0-9_])${code}($|[^a-z0-9_])`, "i").test(text);
+}
+
+export function distinctGroupRows(rows, group) {
   const seen = new Set();
   const matches = [];
   for (const row of rows) {
-    if (!pattern.test(row.text)) continue;
+    if (!rowMentionsGroup(row.text, group)) continue;
     const key = row.href || row.text.replace(/\s+/g, "").toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -334,11 +338,15 @@ export function takeAttendance(request) {
     if (!(await waitVisible(take, 20_000))) {
       const status = await readStatus(page);
       log.info(`[LMS] The session page offers: ${await listActions(page)}`);
+      // Only View details proves the attendance was taken. Without it the session is simply not
+      // ready (not running yet, or a slow page) and the step must be tried again, not dropped.
+      const details = page.getByRole("button", { name: /^\s*View\s+details\s*$/i }).filter({ visible: true }).first();
+      const alreadyTaken = (await details.count().catch(() => 0)) > 0;
       return fail(
         LmsFailure.failed,
         `The session page for ${group} offers no Take Session Attendance${status ? `; it reads "${status}"` : ""}. ` +
-          "Attendance may already have been taken.",
-        { alreadyTaken: true }
+          (alreadyTaken ? "Attendance was already taken." : "It will be tried again."),
+        { alreadyTaken }
       );
     }
     await take.click();
@@ -362,10 +370,23 @@ export function takeAttendance(request) {
     state.step = "ticking the attendance list";
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
-      const box = plan.marks[index].joined ? row.joined : row.notJoined;
+      const wanted = plan.marks[index].joined;
+      if (row.singleControl) {
+        // One switch per student: set it to the wanted state rather than toggling blindly.
+        if (!row.joined) return fail(LmsFailure.failed, `${group}: ${row.studentName} has no box to tick, so nothing was submitted.`, { plan });
+        if ((await isOn(row.joined)) !== wanted) {
+          await row.joined.scrollIntoViewIfNeeded();
+          await row.joined.click();
+        }
+        continue;
+      }
+      const box = wanted ? row.joined : row.notJoined;
       if (!box) return fail(LmsFailure.failed, `${group}: ${row.studentName} has no box to tick, so nothing was submitted.`, { plan });
-      await box.scrollIntoViewIfNeeded();
-      await box.click();
+      // Clicking a box that is already ticked would untick it.
+      if (!(await isOn(box))) {
+        await box.scrollIntoViewIfNeeded();
+        await box.click();
+      }
     }
 
     state.step = "submitting the attendance";
@@ -560,7 +581,8 @@ async function findSessionRow(page, group, startTime) {
     }
     rowsSeen += 1;
     listed.push(summarise(text));
-    if (!text.toLowerCase().includes(group.toLowerCase())) continue;
+    // A whole code only: CAI5_IND1_G1 must never open a CAI5_IND1_G10 session.
+    if (!rowMentionsGroup(text, group)) continue;
     const link = row.locator("td:first-child a, td:first-child button").first();
     if ((await link.count()) === 0) continue;
     matches.push({ link, time: readRowTime(text) });
@@ -634,7 +656,9 @@ async function openDetails(page, group) {
 async function isOn(toggle) {
   if (!toggle) return false;
   const state = await toggle.getAttribute("aria-checked");
-  return String(state).toLowerCase() === "true";
+  if (state !== null) return String(state).toLowerCase() === "true";
+  // A native checkbox carries no aria-checked.
+  return toggle.isChecked().catch(() => false);
 }
 
 /**
@@ -672,6 +696,7 @@ async function readAttendanceRows(dialog) {
     studentName: row.name,
     joined: controls.nth(row.joinedIndex),
     notJoined: controls.nth(row.notJoinedIndex),
+    singleControl: row.joinedIndex === row.notJoinedIndex,
   }));
 }
 

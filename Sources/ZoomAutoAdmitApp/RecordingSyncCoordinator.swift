@@ -56,7 +56,14 @@ final class RecordingSyncCoordinator {
     private let attendanceStore: AttendanceStore
     private let queue = DispatchQueue(label: "com.mohamedhosam.ZoomAutoAdmit.recording-sync", qos: .utility)
     private var timer: DispatchSourceTimer?
-    private var syncing = false
+    /// Set and cleared on `queue`; read from the main thread too, so it is not read through the
+    /// queue (that would block the UI for as long as a sync runs).
+    private var syncing: Bool {
+        get { syncingLock.withLock { syncingValue } }
+        set { syncingLock.withLock { syncingValue = newValue } }
+    }
+    private var syncingValue = false
+    private let syncingLock = NSLock()
 
     var configurationProvider: () -> SchedulerConfiguration = { SchedulerConfiguration() }
     var liveAttendanceSession: () -> AttendanceSession? = { nil }
@@ -80,7 +87,7 @@ final class RecordingSyncCoordinator {
     }
 
     var settings: RecordingSyncSettings { RecordingSyncSettings.load() }
-    var isSyncing: Bool { queue.sync { syncing } }
+    var isSyncing: Bool { syncing }
     var isGoogleConnected: Bool { oauth.isAuthorized }
     var lastSuccessAt: Date? { UserDefaults.standard.object(forKey: RecordingSyncSettings.lastSuccessKey) as? Date }
     var lastSummary: String? { UserDefaults.standard.string(forKey: RecordingSyncSettings.lastSummaryKey) }

@@ -313,6 +313,9 @@ final class SchedulerCoordinator {
                 scheduler.registerMonitoring(for: schedule, startedAt: Date())
                 DispatchQueue.main.async { [startAutoAdmit] in startAutoAdmit() }
                 schedulerLog.write("Auto Admit started via the existing monitor")
+            } else if configuration.group(for: schedule) != nil {
+                // No Auto Admit, but the register still has to close at the end time.
+                scheduler.registerMonitoring(for: schedule, startedAt: Date())
             }
             DispatchQueue.main.async { [state] in
                 state.setRunOutcome(.succeeded(
@@ -374,6 +377,14 @@ final class SchedulerCoordinator {
             return
         }
         guard schedulerStartedMonitoring.remove(schedule.id) != nil else {
+            // After a relaunch mid-class, or for a class run without Auto Admit, the register is
+            // live but Auto Admit was not started here. Auto Admit is left alone; the register
+            // still closes at the end time.
+            if automationCoordinator?.liveAttendanceSession()?.scheduleID == schedule.id {
+                schedulerLog.write("End time reached for \(schedule.name); closing its attendance register only")
+                DispatchQueue.main.async { [stopAttendance] in stopAttendance(true) }
+                return
+            }
             schedulerLog.write("End time for \(schedule.name) ignored: monitoring was not started by the scheduler")
             return
         }

@@ -218,7 +218,13 @@ public final class LmsFollowUpQueue {
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([LmsFollowUp].self, from: data)) ?? []
+        do {
+            return try decoder.decode([LmsFollowUp].self, from: data)
+        } catch {
+            // The next write would replace an unreadable queue with an empty one; keep a copy first.
+            UnreadableFile.preserve(fileURL)
+            return []
+        }
     }
 
     private func save(_ items: [LmsFollowUp]) {
@@ -228,5 +234,15 @@ public final class LmsFollowUpQueue {
         guard let data = try? encoder.encode(items) else { return }
         try? fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: fileURL, options: .atomic)
+    }
+}
+
+/// Keeps a copy of a data file that no longer decodes, before anything overwrites it.
+public enum UnreadableFile {
+    public static func preserve(_ url: URL, now: Date = Date()) {
+        let stamp = ISO8601DateFormatter().string(from: now).replacingOccurrences(of: ":", with: "-")
+        let copy = url.deletingPathExtension().appendingPathExtension("unreadable-\(stamp).json")
+        guard !FileManager.default.fileExists(atPath: copy.path) else { return }
+        try? FileManager.default.copyItem(at: url, to: copy)
     }
 }
