@@ -33,6 +33,8 @@ final class AttendanceCoordinator {
 
     private(set) var liveSummary: AttendanceLiveSummary?
     var onChange: (() -> Void)?
+    /// Raised once per meeting, on its first readable snapshot, with the people worth asking about.
+    var onUnknownParticipants: ((AttendanceSession, [UnknownParticipant]) -> Void)?
 
     /// Supplied by the app delegate so a finalized register can teach the
     /// roster. Optional: the coordinator records attendance perfectly well
@@ -269,6 +271,70 @@ final class AttendanceCoordinator {
 
     // MARK: Timer
 
+    // MARK: Ignore list and unknown participants
+
+    /// The first readable snapshot of a meeting is when a trainer or coordinator is most likely
+    /// already there; ask about them once, then never again for this meeting.
+    private func checkUnknownParticipantsLocked() {
+        guard var current = session, !current.unknownParticipantsReviewed,
+              let recorder, !recorder.snapshots.isEmpty else { return }
+        current.unknownParticipantsReviewed = true
+        session = current
+        let unknown = UnknownParticipantDetector.detect(session: current, history: store.sessions(forGroup: current.groupID))
+        persistLocked(finalizing: false, at: Date())
+        schedulerLog.write("[attendance] unknown-participants checked found=\(unknown.count) [\(unknown.map(\.name).joined(separator: " | "))]")
+        guard !unknown.isEmpty, let snapshot = session else { return }
+        DispatchQueue.main.async { [weak self] in self?.onUnknownParticipants?(snapshot, unknown) }
+    }
+
+    /// Re-reconciles the live register after the global ignore list changed.
+    func ignoreListChanged() {
+        queue.async { [weak self] in
+            guard let self, self.session != nil else { return }
+            self.persistLocked(finalizing: false, at: Date())
+        }
+    }
+
+    /// "Ignore this meeting only": kept on the session, gone with it.
+    func ignoreForThisMeeting(_ names: [String], sessionID: UUID) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if var current = self.session, current.id == sessionID {
+                current.meetingIgnoredNames = Array(Set(current.meetingIgnoredNames + names))
+                self.session = current
+                self.persistLocked(finalizing: false, at: Date())
+            } else if var stored = self.store.load(id: sessionID) {
+                stored.meetingIgnoredNames = Array(Set(stored.meetingIgnoredNames + names))
+                let group = self.configurationProvider?().studentGroups.first { $0.id == stored.groupID }
+                self.store.save(AttendanceReconciler.reconcile(session: stored, autoAcceptConfidence: group?.autoAcceptConfidence ?? 0.9, finalizing: stored.isFinalized))
+            }
+            self.schedulerLog.write("[attendance] ignored-for-meeting session=\(sessionID.uuidString) count=\(names.count)")
+        }
+    }
+
+    /// "Add as student": onto the group's roster for good, and onto this meeting's roster so the
+    /// name is matched now rather than next week.
+    func addStudents(_ names: [String], sessionID: UUID) {
+        queue.async { [weak self] in
+            guard let self, let provider = self.configurationProvider, let writer = self.configurationWriter else { return }
+            var configuration = provider()
+            let groupID = self.session?.id == sessionID ? self.session?.groupID : self.store.load(id: sessionID)?.groupID
+            guard let groupID, let index = configuration.studentGroups.firstIndex(where: { $0.id == groupID }) else { return }
+            let known = Set(configuration.studentGroups[index].students.map(\.normalizedOfficialName))
+            let new = names.filter { !known.contains(NameNormalizer.normalize($0)) }.map { Student(officialName: $0) }
+            guard !new.isEmpty else { return }
+            configuration.studentGroups[index].students.append(contentsOf: new)
+            writer(configuration)
+            if var current = self.session, current.id == sessionID {
+                current.rosterSnapshot.append(contentsOf: new)
+                self.session = current
+                self.group = configuration.studentGroups[index]
+                self.persistLocked(finalizing: false, at: Date())
+            }
+            self.schedulerLog.write("[attendance] students-added group=\(groupID.uuidString) count=\(new.count)")
+        }
+    }
+
     private func tick() {
         guard let recorder, session != nil else { return }
         let now = Date()
@@ -278,8 +344,11 @@ final class AttendanceCoordinator {
             schedulerLog.write("[attendance] meeting_started snapshot firing")
             takeSnapshotLocked(reason: .meetingStarted, at: now)
             persistLocked(finalizing: false, at: now)
+            checkUnknownParticipantsLocked()
             return
         }
+        // The first snapshot may have missed (panel closed); ask on the first one that read.
+        checkUnknownParticipantsLocked()
 
         if coalescer.isPending, coalescer.isDue(at: now) {
             schedulerLog.write("[attendance] post-admit snapshot firing")

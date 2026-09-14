@@ -41,6 +41,18 @@ export function buildAttendancePlan(studentsOnTheDashboard, present, everyone = 
   return withSummary({ marks, notOnTheDashboard });
 }
 
+/**
+ * A roster from another group looks like this: most of the names sent are not on the session at
+ * all. Writing it would mark the session's real attendees Not-joined, so it is refused outright.
+ * Half is generous: a class's own register normally matches every present name.
+ */
+export function crossGroupSuspicion(plan, presentCount) {
+  if (presentCount === 0) return null;
+  const missing = plan.notOnTheDashboard.length;
+  if (missing * 2 < presentCount) return null;
+  return `${missing} of the ${presentCount} present names are not on this dashboard session - this looks like another group's register. Nothing was sent.`;
+}
+
 function withSummary(plan) {
   const joinedCount = plan.marks.filter((mark) => mark.joined).length;
   const notJoinedCount = plan.marks.length - joinedCount;

@@ -66,7 +66,10 @@ async function main() {
     const request = await readFirstLine();
     const options = resolveOptions(request);
     const credentials = request.credentials;
-    const server = await startApiServer(options, (apiRequest) => attachProvidedLink({ ...apiRequest, credentials }));
+    const forceDryRun = request.forceDryRun === true;
+    if (forceDryRun) log.info("[API] Rehearse is on: every request is a dry run and nothing is saved.");
+    const server = await startApiServer(options, (apiRequest) =>
+      attachProvidedLink({ ...apiRequest, credentials, dryRun: forceDryRun || apiRequest.dryRun }));
     await stopSignal();
     await server.close();
     result({ success: true, message: "Recording API stopped." });

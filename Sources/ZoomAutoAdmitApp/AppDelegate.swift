@@ -15,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var attendanceWindowController: AttendanceWindowController?
     private var automationWindowController: AutomationWindowController?
     private let automationCoordinator = AutomationCoordinator()
+    private let ignoreStore = AttendanceIgnoreStore()
+    private var unknownParticipantsWindows: [UUID: UnknownParticipantsWindowController] = [:]
     private var automationRefreshPending = false
     private lazy var attendanceCoordinator = AttendanceCoordinator(
         configurationProvider: { [weak self] in
@@ -28,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        // Every attendance path reads the global ignore list through this one provider.
+        let ignoreStore = self.ignoreStore
+        AttendanceIgnoreRules.currentProvider = { ignoreStore.rules }
         // Never displayed for an accessory app, but required for ⌘C/⌘V to reach
         // text fields in the app's own windows.
         MainMenu.install()
@@ -60,6 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The scheduler drives the same monitor the menu commands drive, so a
         // scheduled start can never create a second Waiting Room loop.
         attendanceCoordinator.onChange = { [weak self] in self?.menuBarController.refresh() }
+        attendanceCoordinator.onUnknownParticipants = { [weak self] session, unknown in
+            self?.presentUnknownParticipants(session: session, unknown: unknown)
+        }
+        ignoreStore.onChange = { [weak self] in
+            self?.attendanceCoordinator.ignoreListChanged()
+        }
         automationCoordinator.configurationProvider = { [weak self] in
             self?.schedulerCoordinator?.currentConfiguration ?? SchedulerConfiguration()
         }
@@ -204,6 +215,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func presentUnknownParticipants(session: AttendanceSession, unknown: [UnknownParticipant]) {
+        guard unknownParticipantsWindows[session.id] == nil else { return }
+        let controller = UnknownParticipantsWindowController(session: session, unknown: unknown)
+        controller.onApply = { [weak self] permanent, thisMeeting, students in
+            guard let self else { return }
+            if !permanent.isEmpty { self.ignoreStore.add(permanent, source: .detected) }
+            if !thisMeeting.isEmpty { self.attendanceCoordinator.ignoreForThisMeeting(thisMeeting, sessionID: session.id) }
+            if !students.isEmpty { self.attendanceCoordinator.addStudents(students, sessionID: session.id) }
+            SchedulerLog.shared.write("[attendance] unknown-participants decided permanent=\(permanent.count) meeting=\(thisMeeting.count) students=\(students.count)")
+            self.unknownParticipantsWindows[session.id] = nil
+        }
+        unknownParticipantsWindows[session.id] = controller
+        controller.present()
+    }
+
     private func openAutomationWindow() {
         if automationWindowController == nil {
             automationWindowController = AutomationWindowController(
@@ -250,6 +276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openSettingsWindow() {
         if settingsWindowController == nil {
             let controller = SettingsWindowController()
+            controller.ignoreStore = ignoreStore
             controller.onOpenAccessibilitySettings = { [weak self] in self?.openAccessibilitySettings() }
             controller.onCheckAccessibility = { [weak self] in
                 self?.checkAccessibilityFromScratch(source: "Check Again")

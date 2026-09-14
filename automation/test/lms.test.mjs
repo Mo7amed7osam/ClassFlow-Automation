@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { chooseSessionRow, groupControlPairs, minutesApart, readRowTime } from "../src/lms.mjs";
 import { normalizeName } from "../src/normalize.mjs";
-import { buildAttendancePlan } from "../src/plan.mjs";
+import { buildAttendancePlan, crossGroupSuspicion } from "../src/plan.mjs";
 
 test("normalization matches the app's Swift rules", () => {
   assert.equal(normalizeName("  Mohamed   AHMED (Host)"), "mohamed ahmed");
@@ -57,4 +57,15 @@ test("consecutive controls beside one name are one student", () => {
     { name: "Mona", joinedIndex: 2, notJoinedIndex: 3 },
   ]);
   assert.deepEqual(groupControlPairs([{ name: "Solo", index: 7 }]), [{ name: "Solo", joinedIndex: 7, notJoinedIndex: 7 }]);
+});
+
+test("another group's register is refused before anything is sent", () => {
+  const dashboard = ["Ahmed Ali", "Mona Samir", "Omar Adel", "Sara Hany"];
+  const own = buildAttendancePlan(dashboard, ["Ahmed Ali", "Omar Adel"]);
+  assert.equal(crossGroupSuspicion(own, 2), null);
+  const oneStranger = buildAttendancePlan(dashboard, ["Ahmed Ali", "Omar Adel", "Late Visitor"]);
+  assert.equal(crossGroupSuspicion(oneStranger, 3), null, "a single unknown name is not another group");
+  const otherGroup = buildAttendancePlan(dashboard, ["Hanan X", "Amal Y", "Ahmed Ali"]);
+  assert.match(crossGroupSuspicion(otherGroup, 3), /another group's register/);
+  assert.equal(crossGroupSuspicion(buildAttendancePlan(dashboard, []), 0), null);
 });

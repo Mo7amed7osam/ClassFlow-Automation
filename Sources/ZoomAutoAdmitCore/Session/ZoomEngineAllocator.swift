@@ -107,7 +107,7 @@ public final class WebAttendanceRecorder {
         defer { lock.unlock() }
         let participants = names.compactMap { name -> SnapshotParticipant? in
             let parsed = Self.stripRole(name)
-            guard !parsed.isHost, !group.isIgnored(parsed.name) else { return nil }
+            guard !parsed.isHost, !group.isIgnored(parsed.name), !AttendanceIgnoreRules.current.matches(parsed.name) else { return nil }
             let normalized = NameNormalizer.normalize(parsed.name)
             return normalized.isEmpty ? nil : SnapshotParticipant(rawZoomName: parsed.name, normalizedZoomName: normalized)
         }

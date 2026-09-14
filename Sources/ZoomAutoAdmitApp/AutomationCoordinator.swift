@@ -151,6 +151,12 @@ final class AutomationCoordinator {
             return
         }
 
+        if let problem = LmsGroupMapping.problem(for: group, in: configurationProvider()) {
+            log("[LMS] ✗ Dashboard steps for \(schedule.name) refused: \(problem.message)")
+            notify(title: "Dashboard steps refused", body: problem.message)
+            return
+        }
+
         let dashboardGroup = group.dashboardGroupName
         let sessionStart = Self.scheduledStart(of: schedule, around: startedAt)
         let (date, time) = LmsFollowUpQueue.dashboardDateAndTime(sessionStart)
@@ -224,6 +230,12 @@ final class AutomationCoordinator {
         let settings = self.settings
         guard hasLmsSignIn else {
             followUps.fail(item, reason: "No LMS sign-in is saved.", at: now)
+            return
+        }
+        if let problem = LmsGroupMapping.problem(for: item, in: configurationProvider()) {
+            // Not an attempt: nothing was sent, and retrying cannot fix a mapping.
+            followUps.postpone(item, until: now.addingTimeInterval(LmsFollowUpQueue.retryAfter), reason: problem.message)
+            log("[LMS] ✗ \(item.describe) refused: \(problem.message)")
             return
         }
         log("[LMS] Running \(item.describe)")
@@ -308,7 +320,7 @@ final class AutomationCoordinator {
             }
         }
         webLock.unlock()
-        return LmsPresentNames.session(for: item, in: sessions)
+        return LmsPresentNames.session(for: item, in: sessions).map { AttendanceIgnoring.apply(.current, to: $0) }
     }
 
     // MARK: - Dashboard: manual actions from the Automation window
@@ -323,6 +335,16 @@ final class AutomationCoordinator {
 
     func perform(_ action: ManualAction, group: String, date: String, time: String?, completion: @escaping (AutomationResult) -> Void) {
         let settings = self.settings
+        let configuration = configurationProvider()
+        if let problem = LmsGroupMapping.sharedDashboardGroups(in: configuration).first(where: {
+            if case .sharedDashboardGroup(let code, _) = $0 { return LmsGroupMapping.key(code) == LmsGroupMapping.key(group) }
+            return false
+        }) {
+            let refused = AutomationResult(success: false, message: problem.message, failure: "ambiguousGroup")
+            log("[LMS] ✗ \(refused.message)")
+            completion(refused)
+            return
+        }
         dashboardQueue.async { [weak self] in
             guard let self else { return }
             let result: AutomationResult
@@ -408,7 +430,9 @@ final class AutomationCoordinator {
             "credentials": ["email": account.email, "password": account.password],
             "apiKey": key,
             "port": settings.port,
-            "lockWaitSeconds": settings.lockWaitSeconds
+            "lockWaitSeconds": settings.lockWaitSeconds,
+            // Rehearse applies to n8n's requests too: nothing is saved while it is on.
+            "forceDryRun": LmsSettings.load().dryRun
         ]
         if !settings.host.isEmpty { request["host"] = settings.host }
         if !settings.allowedClients.isEmpty { request["allowedClients"] = settings.allowedClients }

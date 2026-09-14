@@ -1,6 +1,6 @@
 import { QUIET_CHROME_SWITCHES, firstLine, firstPage, isTimeout, launchProfile } from "./browser.mjs";
 import { log } from "./io.mjs";
-import { buildAttendancePlan } from "./plan.mjs";
+import { buildAttendancePlan, crossGroupSuspicion } from "./plan.mjs";
 import { isAttachable } from "./recording-links.mjs";
 
 // Drives the DEPI dashboard the way a coordinator does by hand: sign in, open the day's
@@ -191,6 +191,8 @@ export function takeAttendance(request) {
 
     const plan = buildAttendancePlan(rows.map((row) => row.studentName), present, Boolean(request.everyone));
     log.info(`[LMS] ${group}: ${plan.summary}.`);
+    const suspicious = crossGroupSuspicion(plan, present.length);
+    if (suspicious) return fail(LmsFailure.failed, `${group}: ${suspicious}`, { plan, crossGroup: true });
     if (request.dryRun) return ok(`${group}: ${plan.summary}. Nothing was ticked.`, { plan, dryRun: true });
 
     state.step = "ticking the attendance list";
@@ -226,6 +228,8 @@ export function correctAttendance(request) {
     if (!before.rows) return fail(LmsFailure.failed, before.reason, { notTakenYet: before.notTakenYet });
 
     const plan = buildAttendancePlan(before.rows.map((row) => row.studentName), present, Boolean(request.everyone));
+    const suspicious = crossGroupSuspicion(plan, present.length);
+    if (suspicious) return fail(LmsFailure.failed, `${group}: ${suspicious}`, { plan, crossGroup: true });
     const changes = [];
     for (let index = 0; index < before.rows.length; index += 1) {
       const now = await isOn(before.rows[index].joined);

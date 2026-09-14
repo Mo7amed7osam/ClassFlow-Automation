@@ -278,6 +278,11 @@ These features were first built for the Windows app (branch `Windows_and_web`) a
 | Co-host | Schedules → Groups → Co-host candidates | Every 20 seconds during a register, a listed person who has joined is made co-host through the row's *More options → Make co-host*, confirmed from Zoom's list. Nobody who is not listed is ever made co-host. |
 | Open before meetings | Automation → Web & Co-host | A LaunchAgent opens the app (by bundle id) a few minutes before each meeting in the next two weeks, so a class starts even after the app was quit. |
 
+| Ignored participants | Settings → Attendance → Ignored participants | A global list of people who are never students (trainers, coordinators, admins). They are removed before matching: never unmatched, never sent to OpenRouter, never in review, never counted. Role tags and Zoom participant IDs are ignored when comparing. Import/export as text. |
+| Unknown participants | Prompt on a meeting's first snapshot | Names not on the roster that look like staff, have a host role, or keep turning up unmatched are offered as *Ignore permanently*, *Ignore this meeting only* or *Add as student*. |
+
+Before any dashboard step, the app refuses groups that share a dashboard code, steps whose group code changed since they were queued, and an upload where most present names are not on that session (another group's register).
+
 The dashboard group is the group's **LMS group code**, or its name when that is empty. The dashboard sign-in and the API key are stored in the Keychain. **Rehearse only** opens everything and logs the decision without pressing anything that writes.
 
 Run the helper's tests with `cd automation && npm test`.

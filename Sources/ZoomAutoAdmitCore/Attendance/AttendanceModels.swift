@@ -339,6 +339,13 @@ public struct AttendanceSession: Codable, Equatable, Identifiable {
     /// Immutable copy of the roster as it stood when the meeting began.
     public var rosterSnapshot: [Student]
     public var observations: [ParticipantObservation]
+    /// Observations of people on the ignore list, kept as evidence but out of every attendance
+    /// decision. Moved back into `observations` if the name is taken off the list.
+    public var ignoredObservations: [ParticipantObservation]
+    /// Names ignored for this meeting only ("Ignore this meeting only").
+    public var meetingIgnoredNames: [String]
+    /// The unknown-participants question was already asked for this meeting.
+    public var unknownParticipantsReviewed: Bool
     public var records: [AttendanceRecord]
     /// Zoom names that matched nobody.
     public var unmatchedZoomNames: [String]
@@ -364,8 +371,14 @@ public struct AttendanceSession: Codable, Equatable, Identifiable {
         unmatchedZoomNames: [String] = [],
         snapshots: [AttendanceSnapshot] = [],
         missedSnapshotCount: Int = 0,
-        evidenceSource: AttendanceEvidenceSource = .accessibilitySnapshots
+        evidenceSource: AttendanceEvidenceSource = .accessibilitySnapshots,
+        ignoredObservations: [ParticipantObservation] = [],
+        meetingIgnoredNames: [String] = [],
+        unknownParticipantsReviewed: Bool = false
     ) {
+        self.ignoredObservations = ignoredObservations
+        self.meetingIgnoredNames = meetingIgnoredNames
+        self.unknownParticipantsReviewed = unknownParticipantsReviewed
         self.id = id
         self.groupID = groupID
         self.groupName = groupName
@@ -387,6 +400,7 @@ public struct AttendanceSession: Codable, Equatable, Identifiable {
         case id, groupID, groupName, scheduleID, meetingName, startedAt, endedAt, finalizedAt
         case rosterSnapshot, observations, records, unmatchedZoomNames
         case snapshots, missedSnapshotCount, evidenceSource
+        case ignoredObservations, meetingIgnoredNames, unknownParticipantsReviewed
     }
 
     // Sessions written before snapshots existed must keep loading.
@@ -410,6 +424,9 @@ public struct AttendanceSession: Codable, Equatable, Identifiable {
             AttendanceEvidenceSource.self,
             forKey: .evidenceSource
         ) ?? .accessibilitySnapshots
+        ignoredObservations = try container.decodeIfPresent([ParticipantObservation].self, forKey: .ignoredObservations) ?? []
+        meetingIgnoredNames = try container.decodeIfPresent([String].self, forKey: .meetingIgnoredNames) ?? []
+        unknownParticipantsReviewed = try container.decodeIfPresent(Bool.self, forKey: .unknownParticipantsReviewed) ?? false
     }
 
     public var lastSnapshotAt: Date? { snapshots.map(\.capturedAt).max() }

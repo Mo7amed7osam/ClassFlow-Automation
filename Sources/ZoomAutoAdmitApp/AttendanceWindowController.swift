@@ -267,11 +267,12 @@ final class AttendanceWindowController: NSWindowController {
     // MARK: Data
 
     private func reload() {
-        var all = store.loadAll()
+        // The ignore list applies to history too: a name added today disappears from last week's review.
+        var all = store.loadAll().map { AttendanceIgnoring.apply(.current, to: $0) }
         // A meeting in progress is not on disk as "the current one" yet.
         if let live = liveSessionProvider() {
             all.removeAll { $0.id == live.id }
-            all.insert(live, at: 0)
+            all.insert(AttendanceIgnoring.apply(.current, to: live), at: 0)
         }
         sessions = all
 

@@ -58,7 +58,7 @@ public final class AttendanceSnapshotRecorder {
         for row in readout.admitted {
             // The host is running the app, not sitting the class.
             guard !row.isSelfOrHost else { continue }
-            guard !group.isIgnored(row.displayName) else { continue }
+            guard !group.isIgnored(row.displayName), !AttendanceIgnoreRules.current.matches(row.displayName) else { continue }
 
             let normalized = NameNormalizer.normalize(row.displayName)
             guard !normalized.isEmpty else { continue }

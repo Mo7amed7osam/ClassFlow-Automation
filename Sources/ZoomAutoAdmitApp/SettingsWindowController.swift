@@ -6,7 +6,7 @@ import ZoomAutoAdmitCore
 /// Settings, including the diagnostic tools that used to sit in the main menu.
 ///
 /// Everyday use never needs this window; it exists so the menu can stay short.
-final class SettingsWindowController: NSWindowController {
+final class SettingsWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
     var onOpenAccessibilitySettings: (() -> Void)?
     var onCheckAccessibility: (() -> Void)?
     var onCaptureZoomUI: (() -> Void)?
@@ -14,6 +14,12 @@ final class SettingsWindowController: NSWindowController {
     var onOpenSchedulerLog: (() -> Void)?
 
     private let accessibilityStatusLabel = NSTextField(labelWithString: "")
+    /// The global ignore list. Set by the app delegate before the window is shown.
+    var ignoreStore: AttendanceIgnoreStore?
+    private let ignoredTable = NSTableView()
+    private var ignoredNames: [IgnoredParticipant] = []
+    private let ignoredNameField = NSTextField()
+    private let ignoredStatusLabel = NSTextField(labelWithString: "")
     private let periodicSnapshotButton = NSButton(
         checkboxWithTitle: "Periodic participant snapshots",
         target: nil,
@@ -99,6 +105,12 @@ final class SettingsWindowController: NSWindowController {
         postAdmitSnapshotButton.state = snapshots.postAdmitEnabled ? .on : .off
         postAdmitDelayField.stringValue = String(Int(snapshots.postAdmitDelay))
 
+        ignoredNames = ignoreStore?.participants ?? []
+        ignoredTable.reloadData()
+        if ignoredStatusLabel.stringValue.isEmpty || ignoredStatusLabel.stringValue.hasSuffix("on the list.") {
+            ignoredStatusLabel.stringValue = "\(ignoredNames.count) name(s) on the list."
+        }
+
         microphoneDefaultButton.state = SchedulerDefaults.mutesMicrophone ? .on : .off
         cameraDefaultButton.state = SchedulerDefaults.disablesCamera ? .on : .off
         autoAdmitDefaultButton.state = SchedulerDefaults.enablesAutoAdmit ? .on : .off
@@ -148,6 +160,21 @@ final class SettingsWindowController: NSWindowController {
                 microphoneDefaultButton,
                 cameraDefaultButton,
                 autoAdmitDefaultButton
+            ]),
+            section("Attendance → Ignored participants", views: [
+                caption("""
+                People who appear in Zoom but are never students - trainers, coordinators, admins, guests. \
+                They are removed before matching: never unmatched, never sent to OpenRouter, never in review, \
+                never counted present or absent. Applies to every group and every meeting.
+                """),
+                makeIgnoredTable(),
+                row([ignoredNameField, NSButton(title: "Add", target: self, action: #selector(addIgnoredName))]),
+                row([
+                    NSButton(title: "Remove Selected", target: self, action: #selector(removeIgnoredNames)),
+                    NSButton(title: "Import…", target: self, action: #selector(importIgnoredNames)),
+                    NSButton(title: "Export…", target: self, action: #selector(exportIgnoredNames))
+                ]),
+                ignoredStatusLabel
             ]),
             section("Attendance backup", views: [
                 periodicSnapshotButton,
@@ -210,6 +237,79 @@ final class SettingsWindowController: NSWindowController {
             stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -20)
         ])
         return scrollView
+    }
+
+    private func makeIgnoredTable() -> NSView {
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ignored"))
+        column.title = "Name"
+        column.width = 280
+        ignoredTable.addTableColumn(column)
+        let added = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("added"))
+        added.title = "Added"
+        added.width = 140
+        ignoredTable.addTableColumn(added)
+        ignoredTable.allowsMultipleSelection = true
+        ignoredTable.usesAlternatingRowBackgroundColors = true
+        ignoredTable.dataSource = self
+        ignoredTable.delegate = self
+        ignoredTable.identifier = NSUserInterfaceItemIdentifier("ignoredParticipantsTable")
+        let scroll = NSScrollView()
+        scroll.documentView = ignoredTable
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.widthAnchor.constraint(equalToConstant: 440).isActive = true
+        scroll.heightAnchor.constraint(equalToConstant: 140).isActive = true
+        ignoredNameField.placeholderString = "e.g. Yossef ayoub"
+        ignoredNameField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        ignoredNameField.target = self
+        ignoredNameField.action = #selector(addIgnoredName)
+        ignoredStatusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        ignoredStatusLabel.textColor = .secondaryLabelColor
+        return scroll
+    }
+
+    @objc private func addIgnoredName() {
+        let name = ignoredNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let ignoreStore else { return }
+        let added = ignoreStore.add([name])
+        ignoredNameField.stringValue = ""
+        ignoredStatusLabel.stringValue = added > 0 ? "Added “\(name)”." : "“\(name)” is already on the list."
+        refresh()
+    }
+
+    @objc private func removeIgnoredNames() {
+        guard let ignoreStore else { return }
+        let names = ignoredTable.selectedRowIndexes.compactMap { ignoredNames.indices.contains($0) ? ignoredNames[$0].name : nil }
+        guard !names.isEmpty else { return }
+        let removed = ignoreStore.remove(names)
+        ignoredStatusLabel.stringValue = "Removed \(removed) name(s). Their earlier sightings count again from the next reconciliation."
+        refresh()
+    }
+
+    @objc private func importIgnoredNames() {
+        guard let ignoreStore else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.plainText, .commaSeparatedText]
+        guard panel.runModal() == .OK, let url = panel.url, let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let names = AttendanceIgnoreStore.parseImport(text)
+        let added = ignoreStore.add(names, source: .imported)
+        ignoredStatusLabel.stringValue = "Imported \(added) new name(s) of \(names.count) in the file."
+        refresh()
+    }
+
+    @objc private func exportIgnoredNames() {
+        guard let ignoreStore else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "ignored-participants.txt"
+        panel.allowedContentTypes = [.plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try ignoreStore.exportText().write(to: url, atomically: true, encoding: .utf8)
+            ignoredStatusLabel.stringValue = "Exported \(ignoredNames.count) name(s)."
+        } catch {
+            presentError("Couldn't export the list", detail: error.localizedDescription)
+        }
     }
 
     private func section(_ title: String, views: [NSView]) -> NSView {
@@ -288,6 +388,19 @@ final class SettingsWindowController: NSWindowController {
         alert.messageText = message
         alert.informativeText = detail
         alert.runModal()
+    }
+}
+
+extension SettingsWindowController {
+    func numberOfRows(in tableView: NSTableView) -> Int { ignoredNames.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard ignoredNames.indices.contains(row) else { return nil }
+        let entry = ignoredNames[row]
+        let text = tableColumn?.identifier.rawValue == "added"
+            ? DateFormatter.localizedString(from: entry.addedAt, dateStyle: .short, timeStyle: .none) + (entry.source == .manual ? "" : " · \(entry.source.rawValue)")
+            : entry.name
+        return NSTextField(labelWithString: text)
     }
 }
 

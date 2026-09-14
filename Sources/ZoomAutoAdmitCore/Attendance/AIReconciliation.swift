@@ -22,7 +22,13 @@ public enum AIReconciliation {
     ///
     /// Only students with no decision yet and Zoom names nobody claimed are
     /// included; anything already resolved stays local and costs nothing.
-    public static func request(for session: AttendanceSession) -> (request: AIMatchRequest, ids: AIMatchRequestIDs) {
+    public static func request(
+        for session: AttendanceSession,
+        ignoring ignoreRules: AttendanceIgnoreRules = .current
+    ) -> (request: AIMatchRequest, ids: AIMatchRequestIDs) {
+        // Belt and braces: an ignored name never reaches OpenRouter, even from a session that
+        // was not reconciled since the name was added to the list.
+        let rules = AttendanceIgnoring.rules(for: session, global: ignoreRules)
         // Derive unresolved students from the session roster itself, not from
         // fuzzy candidate generation. This also behaves correctly for a session
         // whose records have not yet been reconciled.
@@ -38,7 +44,7 @@ public enum AIReconciliation {
                 .filter { $0.isManual || $0.status == .present }
                 .compactMap(\.matchedObservationID)
         )
-        let freeObservations = session.observations.filter { !claimed.contains($0.id) }
+        let freeObservations = session.observations.filter { !claimed.contains($0.id) && !rules.matches($0.rawName) }
 
         var studentIDs: [String: UUID] = [:]
         var candidates: [AIMatchRequest.Candidate] = []

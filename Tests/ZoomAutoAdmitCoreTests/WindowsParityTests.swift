@@ -262,3 +262,39 @@ final class AutomationMessageTests: XCTestCase {
         XCTAssertEqual(missing.message, "No group was given.")
     }
 }
+
+final class LmsGroupMappingTests: XCTestCase {
+    /// The real data problem: G2's roster renamed to G1's name.
+    func testTwoRostersAnsweringToOneDashboardGroupAreRefused() {
+        let g1 = StudentGroup(name: "CAI5_IND1_G1", students: Array(repeating: Student(officialName: "a"), count: 24))
+        let g2 = StudentGroup(name: "CAI5_IND1_G1", students: Array(repeating: Student(officialName: "b"), count: 19))
+        let broken = SchedulerConfiguration(studentGroups: [g1, g2])
+        XCTAssertEqual(LmsGroupMapping.sharedDashboardGroups(in: broken).count, 1)
+        XCTAssertNotNil(LmsGroupMapping.problem(for: g2, in: broken))
+
+        var fixedG1 = g1
+        fixedG1.lmsGroupCode = "CAI5_IND1_G1"
+        var fixedG2 = g2
+        fixedG2.name = "CAI5_IND1_G2"
+        fixedG2.lmsGroupCode = "CAI5_IND1_G2"
+        let fixed = SchedulerConfiguration(studentGroups: [fixedG1, fixedG2])
+        XCTAssertTrue(LmsGroupMapping.sharedDashboardGroups(in: fixed).isEmpty)
+        XCTAssertNil(LmsGroupMapping.problem(for: fixedG2, in: fixed))
+
+        // A code shared through different spellings is still shared.
+        var sneaky = fixedG2
+        sneaky.lmsGroupCode = " cai5_ind1_g1 "
+        XCTAssertNotNil(LmsGroupMapping.problem(for: sneaky, in: SchedulerConfiguration(studentGroups: [fixedG1, sneaky])))
+    }
+
+    func testAQueuedStepStopsWhenItsGroupNowMapsElsewhere() {
+        var group = StudentGroup(name: "CAI5_IND1_G2", lmsGroupCode: "CAI5_IND1_G2")
+        let item = LmsFollowUp(group: "CAI5_IND1_G1", sessionDate: "2026-09-15", sessionStart: "17:55", step: .takeAttendance, dueAt: Date(), attendanceGroupID: group.id)
+        let configuration = SchedulerConfiguration(studentGroups: [group])
+        XCTAssertEqual(LmsGroupMapping.problem(for: item, in: configuration), .changedSinceScheduled(expected: "CAI5_IND1_G1", now: "CAI5_IND1_G2"))
+
+        group.lmsGroupCode = "CAI5_IND1_G1"
+        XCTAssertNil(LmsGroupMapping.problem(for: item, in: SchedulerConfiguration(studentGroups: [group])))
+        XCTAssertEqual(LmsGroupMapping.problem(for: item, in: SchedulerConfiguration()), .groupMissing)
+    }
+}

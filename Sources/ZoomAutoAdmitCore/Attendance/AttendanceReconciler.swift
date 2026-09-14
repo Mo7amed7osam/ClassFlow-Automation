@@ -19,8 +19,11 @@ public enum AttendanceReconciler {
         session: AttendanceSession,
         autoAcceptConfidence: Double,
         finalizing: Bool = false,
-        at now: Date = Date()
+        at now: Date = Date(),
+        ignoring ignoreRules: AttendanceIgnoreRules = .current
     ) -> AttendanceSession {
+        // Ignored people leave the register before anything is matched.
+        let session = AttendanceIgnoring.apply(ignoreRules, to: session)
         var updated = session
 
         let manualRecords = session.records.filter(\.isManual)
