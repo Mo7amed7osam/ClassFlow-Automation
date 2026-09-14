@@ -24,7 +24,8 @@ public enum AIReconciliation {
     /// included; anything already resolved stays local and costs nothing.
     public static func request(
         for session: AttendanceSession,
-        ignoring ignoreRules: AttendanceIgnoreRules = .current
+        ignoring ignoreRules: AttendanceIgnoreRules = .current,
+        includePresentStudents: Bool = true
     ) -> (request: AIMatchRequest, ids: AIMatchRequestIDs) {
         // Belt and braces: an ignored name never reaches OpenRouter, even from a session that
         // was not reconciled since the name was added to the list.
@@ -41,7 +42,8 @@ public enum AIReconciliation {
         // Students already present go too, marked, so a second Zoom name of theirs is recognised
         // as them instead of being forced onto somebody still missing.
         let present = Set(session.records.filter { $0.status == .present }.map(\.studentID))
-        let alreadyPresent = session.rosterSnapshot.filter { present.contains($0.id) }
+        // The automatic run at finalize sends only unresolved students, never matched ones.
+        let alreadyPresent = includePresentStudents ? session.rosterSnapshot.filter { present.contains($0.id) } : []
 
         let claimed = Set(
             session.records

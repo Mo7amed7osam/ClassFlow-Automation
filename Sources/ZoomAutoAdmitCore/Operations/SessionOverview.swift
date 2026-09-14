@@ -297,7 +297,7 @@ public enum SessionOverviewBuilder {
             card.recordingDetail = "\(zoom.title); the Drive link from the sheet replaces it"
         } else if let pending = queued.first(where: { $0.step == .attachRecording }) {
             card.recording = pending.attempts >= LmsFollowUpQueue.maximumAttempts ? .failed : .waiting
-            card.recordingDetail = pending.attempts > 0 ? "Waiting for the Zoom recording: \(pending.lastError ?? "not listed yet")" : "Zoom recording link after End session"
+            card.recordingDetail = (pending.attempts > 0 || pending.lastError != nil) ? "Waiting for the Zoom recording: \(pending.lastError ?? "not listed yet")" : "Zoom recording link after End session"
         } else {
             card.recording = .waiting
             card.recordingDetail = inputs.recordingSyncEnabled ? "Waiting for Drive link" : "Recording sync is off"
@@ -377,6 +377,9 @@ public enum SessionOverviewBuilder {
         if let corrected { lines.append("✓ \(corrected.message)") }
 
         if let ended = events.last(where: { $0.kind == .lmsSessionEnded }) { lines.append("✓ \(ended.title)") }
+        if let run = queued.first(where: { $0.step == .runSession }), run.attempts < LmsFollowUpQueue.maximumAttempts {
+            lines.append("⏳ Run Session\(run.attempts > 0 ? " retrying (attempt \(run.attempts + 1)): \(run.lastError ?? "")" : "")")
+        }
         if let end = queued.first(where: { $0.step == .endSession }), end.attempts < LmsFollowUpQueue.maximumAttempts {
             lines.append("⏳ End session\(end.attempts > 0 ? " retrying (attempt \(end.attempts + 1))" : "")")
         }

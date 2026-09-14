@@ -30,6 +30,11 @@ final class AttendanceCoordinator {
     /// the recorder's `lastSnapshotAt`, which only counts readable lists.
     private var lastAttemptAt: Date?
     private var lastAttemptFailed = false
+    /// Reads in a row where Zoom's panel state could not be told. Two in a row wake the watchdog.
+    private var unknownPanelReads = 0
+    private var warnedPanelSessionID: UUID?
+    /// Raised once per meeting when the participants list stays unreadable.
+    var onParticipantsUnreadable: ((AttendanceSession) -> Void)?
 
     private(set) var liveSummary: AttendanceLiveSummary?
     var onChange: (() -> Void)?
@@ -259,7 +264,61 @@ final class AttendanceCoordinator {
                 + "missed=\(finalized.missedSnapshotCount)"
             )
             learnConfirmedAliasesLocked(from: finalized)
+            startAutomaticAIMatchingLocked(for: finalized)
             return finalized
+        }
+    }
+
+    // MARK: Automatic AI matching at finalize
+
+    /// Registers the AI pass is still working on. The LMS steps wait for these.
+    private var aiMatchingSessionIDs: Set<UUID> = []
+
+    func isAIMatching(sessionID: UUID) -> Bool {
+        queue.sync { aiMatchingSessionIDs.contains(sessionID) }
+    }
+
+    /// Asks OpenRouter about what local matching left unresolved, once, when the register closes.
+    ///
+    /// Only unresolved students and unclaimed Zoom names are sent - never a matched student, never
+    /// an ignored participant. Confident answers become Present and are learned as aliases; the
+    /// rest stay Needs Review. Without an API key, or with nothing unresolved, nothing is sent.
+    private func startAutomaticAIMatchingLocked(for finalized: AttendanceSession) {
+        guard APIKeyStore.hasKey else { return }
+        let (request, ids) = AIReconciliation.request(for: finalized, includePresentStudents: false)
+        guard request.isWorthSending else {
+            schedulerLog.write("[attendance] ai-at-finalize skipped reason=nothing-unresolved")
+            return
+        }
+        let sessionID = finalized.id
+        let threshold = group?.autoAcceptConfidence ?? 0.9
+        aiMatchingSessionIDs.insert(sessionID)
+        schedulerLog.write("[attendance] ai-at-finalize sending students=\(request.students.count) names=\(request.observedNames.count)")
+        let client = OpenRouterClient(configuration: .init(model: SchedulerDefaults.aiModel))
+        Task { [weak self] in
+            let exchange = await client.proposeMatches(for: request)
+            self?.queue.async {
+                guard let self else { return }
+                defer {
+                    self.aiMatchingSessionIDs.remove(sessionID)
+                    DispatchQueue.main.async { [weak self] in self?.onChange?() }
+                }
+                guard let response = exchange.response else {
+                    self.schedulerLog.write("[attendance] ai-at-finalize unavailable: \(exchange.error?.message ?? "no answer"); local results stand")
+                    return
+                }
+                // The stored register is the truth by now; a manual change made meanwhile is kept.
+                guard let latest = self.store.load(id: sessionID) else { return }
+                let summary = AIReconciliation.apply(response, to: latest, ids: ids, autoAcceptConfidence: threshold)
+                guard self.store.save(summary.session) else { return }
+                if self.session?.id == sessionID { self.session = summary.session }
+                self.learnConfirmedAliasesLocked(from: summary.session)
+                self.schedulerLog.write(
+                    "[attendance] ai-at-finalize applied=\(summary.appliedCount) review=\(summary.reviewCount) "
+                    + "unmatched=\(summary.unmatchedObservedNameCount) rejected=\(summary.rejected.count) "
+                    + "present=\(summary.session.presentCount) absent=\(summary.session.absentCount)"
+                )
+            }
         }
     }
 
@@ -443,6 +502,12 @@ final class AttendanceCoordinator {
                 let outcome = openParticipantsPanel(reading: reading)
                 schedulerLog.write("[attendance] participants-panel open-outcome=\(outcome)")
             }
+            if reading.state == .unknown {
+                unknownPanelReads += 1
+                if unknownPanelReads >= 2, panelWatchdogLocked(pid: process.pid) {
+                    unknownPanelReads = 0
+                }
+            }
 
             // Whether the panel was opened or Zoom merely returned a transient
             // partial tree, discard every old AX reference and retry once.
@@ -450,6 +515,7 @@ final class AttendanceCoordinator {
             diagnostics = ZoomAXSupport.participantsReadoutDiagnostics(pid: process.pid)
             if diagnostics.readout.listAvailable { panelState = .open }
         }
+        if diagnostics.readout.listAvailable { unknownPanelReads = 0 }
 
         let readout = diagnostics.readout
         schedulerLog.write(
@@ -482,6 +548,43 @@ final class AttendanceCoordinator {
                 + "missed=\(recorder.missedSnapshots) union=\(recorder.observedIdentityCount)"
             )
         }
+    }
+
+    /// Zoom's panel state could not be read twice in a row, so the normal path refuses to press a
+    /// toggle blind. The menu command is pressed once; if the list then reads, the panel is open.
+    /// If it still does not read, the same command is pressed again so Zoom is left as it was,
+    /// and the operator is told once for this meeting. Returns whether the list reads now.
+    private func panelWatchdogLocked(pid: pid_t) -> Bool {
+        guard let menu = ZoomAXSupport.zoomMenuBarReading(pid: pid),
+              let command = ZoomAXSupport.participantsMenuCommand(inMenuBar: menu.root), command.enabled else {
+            schedulerLog.write("[attendance] panel-watchdog no-menu-command")
+            warnPanelUnreadableLocked()
+            return false
+        }
+        let reading = ZoomAXSupport.ParticipantsReading(state: command.state, toggle: nil, menuCommand: command, menuBarElement: menu.menuBarElement, windowElement: nil, windowSnapshot: nil)
+        let first = ZoomAXSupport.pressParticipantsMenuCommand(command, in: reading)
+        schedulerLog.write("[attendance] panel-watchdog pressed=\(first) title=\(command.title)")
+        Thread.sleep(forTimeInterval: 1.0)
+        if ZoomAXSupport.participantsReadoutDiagnostics(pid: pid).readout.listAvailable {
+            schedulerLog.write("[attendance] panel-watchdog list-readable=yes")
+            return true
+        }
+        if case .pressed = first {
+            // It did not help: press again so a panel that was open somewhere is not left closed.
+            if let again = ZoomAXSupport.zoomMenuBarReading(pid: pid),
+               let restore = ZoomAXSupport.participantsMenuCommand(inMenuBar: again.root) {
+                let undo = ZoomAXSupport.ParticipantsReading(state: restore.state, toggle: nil, menuCommand: restore, menuBarElement: again.menuBarElement, windowElement: nil, windowSnapshot: nil)
+                schedulerLog.write("[attendance] panel-watchdog restored=\(ZoomAXSupport.pressParticipantsMenuCommand(restore, in: undo))")
+            }
+        }
+        warnPanelUnreadableLocked()
+        return false
+    }
+
+    private func warnPanelUnreadableLocked() {
+        guard let current = session, warnedPanelSessionID != current.id else { return }
+        warnedPanelSessionID = current.id
+        DispatchQueue.main.async { [weak self] in self?.onParticipantsUnreadable?(current) }
     }
 
     private func openParticipantsPanel(reading: ZoomAXSupport.ParticipantsReading) -> String {

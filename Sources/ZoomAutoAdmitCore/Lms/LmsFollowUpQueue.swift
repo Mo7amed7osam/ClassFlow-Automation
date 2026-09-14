@@ -11,13 +11,16 @@ public enum LmsFollowUpStep: String, Codable, CaseIterable, Equatable {
     case attachRecording
     /// Press End on the dashboard session at the class's end time, after its final attendance.
     case endSession
+    /// Press Run Session when the meeting is live; queued so a dashboard hiccup is retried.
+    case runSession
 
     public var displayName: String {
         switch self {
         case .takeAttendance: return "Take attendance"
         case .correctAttendance: return "Correct late joiners"
         case .attachRecording: return "Attach Zoom recording"
-        case .endSession: return "End session"
+        case .endSession: return "Complete session"
+        case .runSession: return "Run session"
         }
     }
 }
@@ -158,6 +161,7 @@ public final class LmsFollowUpQueue {
         case .correctAttendance: return correctAttendanceAfter
         case .attachRecording: return attachRecordingAfter
         case .endSession: return correctAttendanceAfter
+        case .runSession: return 0
         }
     }
 

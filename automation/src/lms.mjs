@@ -75,6 +75,10 @@ export function runSession(request) {
     // The session page draws its actions after the row is opened, so the button is waited for.
     if (!(await waitVisible(run, 20_000))) {
       const status = await readStatus(page);
+      // Started already (by hand, or an earlier try that timed out after pressing): nothing to redo.
+      if (/running|finished|completed/i.test(status)) {
+        return ok(`${group}: the session is already ${status.toLowerCase()} on the dashboard; Run Session was not needed.`, { outcome: "alreadyRunning", status });
+      }
       return fail(
         LmsFailure.failed,
         `The session page for ${group} has no Run Session button${status ? `; it reads "${status}"` : ""}. Nothing was pressed.`,

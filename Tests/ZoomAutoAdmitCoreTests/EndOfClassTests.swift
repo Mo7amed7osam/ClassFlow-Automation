@@ -55,3 +55,36 @@ final class EndOfClassTests: XCTestCase {
         XCTAssertTrue(card.lmsDetail.contains("✓ LMS session ended ✅"))
     }
 }
+
+final class LifecycleReliabilityTests: XCTestCase {
+    func testAutomaticAIRequestNeverSendsMatchedStudents() {
+        let present = Student(officialName: "Amir Girges Abdou Girges")
+        let missing = Student(officialName: "Amany Esmat Mohammed Mahmoud")
+        let seen = ParticipantObservation(rawName: "amir abdu", normalizedName: "amir abdu", observedAt: [Date()])
+        let unknown = ParticipantObservation(rawName: "Dr-wafaa Osman", normalizedName: "dr wafaa osman", observedAt: [Date()])
+        var session = AttendanceSession(groupID: UUID(), groupName: "G1", meetingName: "m", startedAt: Date(), rosterSnapshot: [present, missing], observations: [seen, unknown])
+        session.records = [
+            AttendanceRecord(studentID: present.id, studentName: present.officialName, status: .present, matchedObservationID: seen.id, matchedZoomName: seen.rawName, matchSource: .alias, confidence: 1),
+            AttendanceRecord(studentID: missing.id, studentName: missing.officialName, status: .absent)
+        ]
+        let (request, _) = AIReconciliation.request(for: session, ignoring: AttendanceIgnoreRules(names: [String]()), includePresentStudents: false)
+        XCTAssertEqual(request.students.map(\.officialName), ["Amany Esmat Mohammed Mahmoud"])
+        XCTAssertEqual(request.observedNames.map(\.displayName), ["Dr-wafaa Osman"])
+
+        let ignored = AIReconciliation.request(for: session, ignoring: AttendanceIgnoreRules(names: ["Dr-wafaa Osman"]), includePresentStudents: false).request
+        XCTAssertTrue(ignored.observedNames.isEmpty, "an ignored participant never reaches the AI")
+    }
+
+    func testRunSessionIsAQueuedStepDueImmediately() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("follow-up.json")
+        let queue = LmsFollowUpQueue(fileURL: url)
+        let now = Date()
+        let written = queue.schedule(group: "CAI5_IND1_G2", sessionStartedAt: now, steps: [.runSession], attendanceGroupID: nil, scheduleID: nil, dueAt: now)
+        XCTAssertEqual(written.first?.step, .runSession)
+        XCTAssertEqual(LmsFollowUpQueue.delay(for: .runSession), 0)
+        queue.fail(written[0], reason: "The dashboard did not respond while opening the session.", at: now)
+        let retried = queue.read().first!
+        XCTAssertEqual(retried.attempts, 1)
+        XCTAssertEqual(retried.dueAt.timeIntervalSince(now), LmsFollowUpQueue.retryAfter, accuracy: 1, "a failed Run Session is retried, not dropped")
+    }
+}

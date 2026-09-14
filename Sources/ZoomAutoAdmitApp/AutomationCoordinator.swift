@@ -36,6 +36,8 @@ final class AutomationCoordinator {
 
     /// The live desktop register, so a follow-up during class reads what is known right now.
     var liveAttendanceSession: () -> AttendanceSession? = { nil }
+    /// Whether the automatic AI pass at finalize is still working on a register.
+    var attendanceBeingMatched: (UUID) -> Bool = { _ in false }
     var configurationProvider: () -> SchedulerConfiguration = { SchedulerConfiguration() }
     /// Web meetings report admissions and attendance through these.
     var onWebAdmitted: (() -> Void)?
@@ -158,24 +160,28 @@ final class AutomationCoordinator {
             log("[LMS] \(schedule.name) has no attendance group, so the dashboard steps were skipped.")
             return
         }
-        guard hasLmsSignIn else {
-            log("[LMS] No dashboard sign-in is saved; the dashboard steps for \(group.dashboardGroupName) were skipped.")
-            report(OperationsEvent(kind: .lmsSessionFailed, severity: .failure, groupCode: group.dashboardGroupName, sessionDate: LmsFollowUpQueue.dashboardDateAndTime(startedAt).0, scheduleID: schedule.id,
-                                   title: "LMS sign-in missing ❌", message: "No dashboard steps will run for this class.\n\nFix: add the sign-in in Automation → LMS."), notify: true)
-            return
-        }
-
-        if let problem = LmsGroupMapping.problem(for: group, in: configurationProvider()) {
-            log("[LMS] ✗ Dashboard steps for \(schedule.name) refused: \(problem.message)")
-            report(OperationsEvent(kind: .lmsSessionFailed, severity: .failure, groupCode: group.dashboardGroupName, sessionDate: LmsFollowUpQueue.dashboardDateAndTime(startedAt).0, scheduleID: schedule.id,
-                                   title: "Dashboard steps refused ❌", message: problem.message), notify: true)
-            return
-        }
-
         let dashboardGroup = group.dashboardGroupName
         let sessionStart = Self.scheduledStart(of: schedule, around: startedAt)
-        let (date, time) = LmsFollowUpQueue.dashboardDateAndTime(sessionStart)
+        let date = LmsFollowUpQueue.dashboardDateAndTime(sessionStart).0
 
+        // Problems are reported, but the steps are still queued: each one retries until the
+        // sign-in or the mapping is fixed, instead of the class silently getting nothing.
+        if !hasLmsSignIn {
+            log("[LMS] No dashboard sign-in is saved; the dashboard steps for \(dashboardGroup) are queued and wait for it.")
+            report(OperationsEvent(kind: .lmsSessionFailed, severity: .failure, groupCode: dashboardGroup, sessionDate: date, scheduleID: schedule.id,
+                                   title: "LMS sign-in missing ❌", message: "The dashboard steps are queued and retry once it is added.\n\nFix: add the sign-in in Automation → LMS."), notify: true)
+        }
+        if let problem = LmsGroupMapping.problem(for: group, in: configurationProvider()) {
+            log("[LMS] ✗ Group mapping for \(schedule.name): \(problem.message) The dashboard steps are queued and wait for it to be fixed.")
+            report(OperationsEvent(kind: .lmsSessionFailed, severity: .failure, groupCode: dashboardGroup, sessionDate: date, scheduleID: schedule.id,
+                                   title: "Group mapping problem ❌", message: problem.message), notify: true)
+        }
+
+        if settings.runSessionOnMeetingStart {
+            let written = followUps.schedule(group: dashboardGroup, sessionStartedAt: sessionStart, steps: [.runSession],
+                                             attendanceGroupID: group.id, scheduleID: schedule.id, recordingProfile: profile?.resolvedWebProfileName, dueAt: Date())
+            if !written.isEmpty { log("[LMS] Meeting live for \(dashboardGroup) (\(engine.rawValue)); Run Session queued, due now.") }
+        }
         let steps = settings.followUpSteps
         if !steps.isEmpty {
             let written = followUps.schedule(
@@ -190,21 +196,7 @@ final class AutomationCoordinator {
                 log("[LMS] Due \(DateFormatter.localizedString(from: item.dueAt, dateStyle: .short, timeStyle: .short)): \(item.describe)")
             }
         }
-
-        guard settings.runSessionOnMeetingStart else { return }
-        dashboardQueue.async { [weak self] in
-            guard let self else { return }
-            self.log("[LMS] Meeting live for \(dashboardGroup) (\(engine.rawValue)); starting its dashboard session.")
-            let result = self.lms.runSession(group: dashboardGroup, date: date, startTime: time, settings: settings, onMessage: self.helperLine)
-            self.log("[LMS] \(result.success ? "✓" : "✗") \(result.message)")
-            if result.success {
-                self.report(OperationsEvent(kind: .lmsSessionStarted, severity: .success, groupCode: dashboardGroup, sessionDate: date, scheduleID: schedule.id,
-                                            title: "LMS session started\(settings.dryRun ? " (rehearse)" : "")", message: result.message), notify: false)
-            } else {
-                self.report(OperationsEvent(kind: .lmsSessionFailed, severity: .failure, groupCode: dashboardGroup, sessionDate: date, scheduleID: schedule.id,
-                                            title: "Run Session did not complete ❌", message: "Reason:\n\(result.message)"), notify: true)
-            }
-        }
+        processDueFollowUps()
     }
 
     /// The register closed at the class's end time: one last late-joiner correction, so the LMS
@@ -304,7 +296,30 @@ final class AutomationCoordinator {
         log("[LMS] Running \(item.describe)")
 
         switch item.step {
+        case .runSession:
+            let result = lms.runSession(group: item.group, date: item.sessionDate, startTime: item.sessionStart, settings: settings, onMessage: helperLine)
+            if result.success {
+                followUps.complete(item)
+                log("[LMS] ✓ \(result.message)")
+                report(event(for: item, kind: .lmsSessionStarted, severity: .success,
+                             title: "LMS session started\(settings.dryRun ? " (rehearse)" : "")", message: result.message), notify: false)
+            } else {
+                followUps.fail(item, reason: result.message, at: now)
+                log("[LMS] ✗ \(result.message) Trying again in 15 minutes.")
+                reportFailure(item, reason: result.message)
+            }
+
         case .takeAttendance, .correctAttendance:
+            if let waiting = pendingBefore(item, steps: [.runSession]) {
+                followUps.postpone(item, until: now.addingTimeInterval(5 * 60), reason: "Waiting for \(waiting.step.displayName) first.")
+                return
+            }
+            if let register = register(for: item), attendanceBeingMatched(register.id) {
+                // The automatic AI pass at finalize is still settling names; send what it decides.
+                followUps.postpone(item, until: now.addingTimeInterval(60), reason: "Waiting for AI matching to finish.")
+                log("[LMS] \(item.describe) waits for AI matching to finish.")
+                return
+            }
             guard let session = register(for: item) else {
                 followUps.fail(item, reason: "No attendance register was found for this class.", at: now)
                 log("[LMS] ✗ \(item.describe): no attendance register was found.")
@@ -353,7 +368,7 @@ final class AutomationCoordinator {
 
         case .endSession:
             // The final attendance goes first: a session is never ended with a correction still owed.
-            if let waiting = pendingBefore(item, steps: [.takeAttendance, .correctAttendance]) {
+            if let waiting = pendingBefore(item, steps: [.runSession, .takeAttendance, .correctAttendance]) {
                 followUps.postpone(item, until: now.addingTimeInterval(5 * 60), reason: "Waiting for \(waiting.step.displayName) first.")
                 log("[LMS] \(item.describe) waits for \(waiting.step.displayName).")
                 return
@@ -397,10 +412,18 @@ final class AutomationCoordinator {
                              title: outcome == "keptExisting" ? "Record link already set" : "Zoom recording attached ✅\(settings.dryRun ? " (rehearse)" : "")",
                              message: result.message), notify: false)
             } else if issue == "recordingNotFound" || issue == "busy" || issue == "sessionNotEnded" {
-                // Zoom lists a recording only once the meeting has ended and it is processing: try again soon.
-                followUps.fail(item, reason: result.message, at: now, retryAfter: 15 * 60)
-                log("[RECORDINGS] … \(result.message) Trying again in 15 minutes.")
-                if item.attempts + 1 >= LmsFollowUpQueue.maximumAttempts { reportFailure(item, reason: result.message) }
+                // Not ready yet: retried every 30 minutes until 08:00 the next morning, when the
+                // Drive sync takes over. Waiting is not a failure, so no attempt is counted.
+                let handOver = Self.recordingHandOver(sessionDate: item.sessionDate)
+                if now < handOver {
+                    followUps.postpone(item, until: min(now.addingTimeInterval(30 * 60), handOver), reason: result.message)
+                    log("[RECORDINGS] … \(result.message) Trying again in 30 minutes (until 08:00).")
+                } else {
+                    followUps.complete(item)
+                    log("[RECORDINGS] ✗ \(item.describe): still no Zoom recording at 08:00; the Drive sync takes over.")
+                    report(event(for: item, kind: .recordingFailed, severity: .warning, title: "Zoom recording still unavailable ⚠️",
+                                 message: "\(result.message)\n\nThe 08:00 Google Sheet sync attaches the Drive link instead."), notify: true)
+                }
             } else {
                 followUps.fail(item, reason: result.message, at: now)
                 log("[RECORDINGS] ✗ \(result.message)")
@@ -413,6 +436,18 @@ final class AutomationCoordinator {
                 }
             }
         }
+    }
+
+    /// 08:00 Cairo the morning after the class: the Zoom recording step hands over to the Drive sync.
+    static func recordingHandOver(sessionDate: String, schedule: DailyJobSchedule = DailyJobSchedule()) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = schedule.timeZone
+        let parts = sessionDate.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3, let day = calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2], hour: 12)),
+              let next = calendar.date(byAdding: .day, value: 1, to: day) else {
+            return Date().addingTimeInterval(12 * 60 * 60)
+        }
+        return schedule.runTime(onDayOf: next)
     }
 
     /// An earlier step of the same class that is still owed (and not given up on).

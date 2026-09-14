@@ -81,6 +81,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         automationCoordinator.liveAttendanceSession = { [weak self] in
             self?.attendanceCoordinator.currentSession
         }
+        attendanceCoordinator.onParticipantsUnreadable = { [weak self] session in
+            let date = LmsFollowUpQueue.dashboardDateAndTime(session.startedAt).0
+            let code = self?.schedulerCoordinator?.currentConfiguration.studentGroups.first { $0.id == session.groupID }?.dashboardGroupName ?? session.groupName
+            self?.operationsCenter.record(
+                OperationsEvent(kind: .general, severity: .warning, groupCode: code, sessionDate: date, scheduleID: session.scheduleID,
+                                title: "Attendance can't read Participants ⚠️",
+                                message: "Zoom's Participants list is not readable, so attendance snapshots are missing.\n\nFix: open Participants in the Zoom meeting window and keep it open."),
+                notify: true, key: "panel|\(session.id.uuidString)"
+            )
+        }
+        automationCoordinator.attendanceBeingMatched = { [weak self] id in
+            self?.attendanceCoordinator.isAIMatching(sessionID: id) ?? false
+        }
         automationCoordinator.onWebAdmitted = { [weak self] in
             // A Web meeting's admission counts like a desktop one, and is worth a snapshot too.
             self?.state.apply(.admitted(participantName: nil, admitAll: false, at: Date()))
