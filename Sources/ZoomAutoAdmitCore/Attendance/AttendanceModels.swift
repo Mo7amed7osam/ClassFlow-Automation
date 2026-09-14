@@ -56,19 +56,28 @@ public struct StudentGroup: Codable, Equatable, Identifiable, Hashable {
     public var ignoredParticipantNames: [String]
     /// Confidence at or above which an AI match is accepted without review.
     public var autoAcceptConfidence: Double
+    /// The group exactly as the DEPI dashboard lists it (e.g. CAI5_AIS4_S7), when the group's
+    /// name here is different. Empty means the name is used.
+    public var lmsGroupCode: String?
+    /// Who may be made co-host in this group's meetings, by the names Zoom shows for them.
+    public var coHostCandidates: [CoHostCandidate]
 
     public init(
         id: UUID = UUID(),
         name: String,
         students: [Student] = [],
         ignoredParticipantNames: [String] = [],
-        autoAcceptConfidence: Double = 0.90
+        autoAcceptConfidence: Double = 0.90,
+        lmsGroupCode: String? = nil,
+        coHostCandidates: [CoHostCandidate] = []
     ) {
         self.id = id
         self.name = name
         self.students = students
         self.ignoredParticipantNames = ignoredParticipantNames
         self.autoAcceptConfidence = autoAcceptConfidence
+        self.lmsGroupCode = lmsGroupCode
+        self.coHostCandidates = coHostCandidates
     }
 
     public func isIgnored(_ displayName: String) -> Bool {
@@ -77,7 +86,7 @@ public struct StudentGroup: Codable, Equatable, Identifiable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, students, ignoredParticipantNames, autoAcceptConfidence
+        case id, name, students, ignoredParticipantNames, autoAcceptConfidence, lmsGroupCode, coHostCandidates
     }
 
     public init(from decoder: Decoder) throws {
@@ -89,6 +98,8 @@ public struct StudentGroup: Codable, Equatable, Identifiable, Hashable {
             try container.decodeIfPresent([String].self, forKey: .ignoredParticipantNames) ?? []
         autoAcceptConfidence =
             try container.decodeIfPresent(Double.self, forKey: .autoAcceptConfidence) ?? 0.90
+        lmsGroupCode = try container.decodeIfPresent(String.self, forKey: .lmsGroupCode)
+        coHostCandidates = try container.decodeIfPresent([CoHostCandidate].self, forKey: .coHostCandidates) ?? []
     }
 }
 

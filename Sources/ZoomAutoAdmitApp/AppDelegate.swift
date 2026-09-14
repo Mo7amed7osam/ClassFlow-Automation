@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var schedulerWindowController: SchedulerWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var attendanceWindowController: AttendanceWindowController?
+    private var automationWindowController: AutomationWindowController?
+    private let automationCoordinator = AutomationCoordinator()
+    private var automationRefreshPending = false
     private lazy var attendanceCoordinator = AttendanceCoordinator(
         configurationProvider: { [weak self] in
             self?.schedulerCoordinator.currentConfiguration ?? SchedulerConfiguration()
@@ -57,6 +60,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The scheduler drives the same monitor the menu commands drive, so a
         // scheduled start can never create a second Waiting Room loop.
         attendanceCoordinator.onChange = { [weak self] in self?.menuBarController.refresh() }
+        automationCoordinator.configurationProvider = { [weak self] in
+            self?.schedulerCoordinator?.currentConfiguration ?? SchedulerConfiguration()
+        }
+        automationCoordinator.liveAttendanceSession = { [weak self] in
+            self?.attendanceCoordinator.currentSession
+        }
+        automationCoordinator.onWebAdmitted = { [weak self] in
+            // A Web meeting's admission counts like a desktop one, and is worth a snapshot too.
+            self?.state.apply(.admitted(participantName: nil, admitAll: false, at: Date()))
+        }
+        automationCoordinator.onChange = { [weak self] in self?.scheduleAutomationWindowRefresh() }
         schedulerCoordinator = SchedulerCoordinator(
             state: state,
             startAutoAdmit: { [weak self] in self?.setMonitoring(true) },
@@ -71,7 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     self.attendanceCoordinator.stop()
                 }
-            }
+            },
+            automationCoordinator: automationCoordinator
         )
         SchedulerLog.shared.write("[attendance] lifecycle-wired=true")
         // A relaunch mid-class must not abandon the register: the session
@@ -84,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         configureMenuActions()
         schedulerCoordinator.start()
+        automationCoordinator.start()
 
         if enabled {
             checkAccessibilityFromScratch(source: "launch")
@@ -127,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        automationCoordinator.stop()
         schedulerCoordinator?.stop()
         monitor?.stop()
         logger.info("Application terminating; monitor stopped")
@@ -150,6 +167,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menuBarController.onOpenAttendance = { [weak self] in
             self?.openAttendanceWindow()
+        }
+        menuBarController.onOpenAutomation = { [weak self] in
+            self?.openAutomationWindow()
         }
         menuBarController.onFinalizeAttendance = { [weak self] in
             _ = self?.attendanceCoordinator.finalize()
@@ -177,9 +197,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.schedulerCoordinator.isWorkflowActive ?? false
         }
         menuBarController.onQuit = { [weak self] in
+            self?.automationCoordinator.stop()
             self?.schedulerCoordinator.stop()
             self?.monitor.stop()
             NSApp.terminate(nil)
+        }
+    }
+
+    private func openAutomationWindow() {
+        if automationWindowController == nil {
+            automationWindowController = AutomationWindowController(
+                coordinator: automationCoordinator,
+                configurationProvider: { [weak self] in
+                    self?.schedulerCoordinator.currentConfiguration ?? SchedulerConfiguration()
+                }
+            )
+        }
+        automationWindowController?.present()
+    }
+
+    /// Log lines arrive in bursts; the window redraws at most twice a second.
+    private func scheduleAutomationWindowRefresh() {
+        guard automationWindowController?.isVisible == true, !automationRefreshPending else { return }
+        automationRefreshPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.automationRefreshPending = false
+            self?.automationWindowController?.refresh()
         }
     }
 
@@ -302,6 +345,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 coordinator: schedulerCoordinator,
                 state: state
             )
+            schedulerWindowController?.automation = automationCoordinator
         }
         schedulerWindowController?.present()
     }

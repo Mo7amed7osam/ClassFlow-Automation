@@ -1,0 +1,21 @@
+{
+  "name": "zoom-auto-admit-automation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser automation helper for the macOS app: DEPI LMS dashboard, Zoom recordings, the n8n recording API, Excel imports and Zoom Web meetings.",
+  "type": "module",
+  "bin": {
+    "zaa-automation": "bin/zaa-automation.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "install-browser": "playwright install chromium"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "playwright": "^1.55.0"
+  }
+}

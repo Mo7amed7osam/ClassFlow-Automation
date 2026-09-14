@@ -13,6 +13,8 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
     private let coordinator: SchedulerCoordinator
     private let state: AppState
     private var configuration: SchedulerConfiguration
+    /// Runs the Excel imports and opens browser profiles. Set by the app delegate.
+    var automation: AutomationCoordinator?
     private var isDirty = false
     private var savedFeedbackWorkItem: DispatchWorkItem?
 
@@ -65,6 +67,8 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
     private let groupIgnoredField = NSTextField()
     private let groupThresholdField = NSTextField()
     private let groupRosterLabel = NSTextField(labelWithString: "")
+    private let groupLmsCodeField = NSTextField()
+    private let groupCoHostField = NSTextField()
     private let groupRosterList = NSTextView()
     private let groupNameError = SchedulerWindowController.errorLabel()
     private let groupEmptyState = NSStackView()
@@ -77,6 +81,8 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
     private let profileNameError = SchedulerWindowController.errorLabel()
     private let profileAccountError = SchedulerWindowController.errorLabel()
     private let profileHintLabel = NSTextField(labelWithString: "")
+    private let profileEnginePopUp = NSPopUpButton()
+    private let profileWebProfileField = NSTextField()
     /// Emails read from Zoom's Switch account menu.
     private var detectedAccounts: [String] = []
     private static let manualEntryTitle = "Enter manually…"
@@ -200,7 +206,10 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
 
         let addButton = iconButton("plus", action: #selector(addSchedule), tooltip: "Add a schedule")
         let removeButton = iconButton("minus", action: #selector(removeSchedule), tooltip: "Delete the selected schedule")
-        let listButtons = NSStackView(views: [addButton, removeButton])
+        let importButton = NSButton(title: "Import Excel…", target: self, action: #selector(importTimetable))
+        importButton.toolTip = "Add the online sessions of a DEPI timetable (.xlsx) as one-time schedules"
+        importButton.controlSize = .small
+        let listButtons = NSStackView(views: [addButton, removeButton, importButton])
         listButtons.orientation = .horizontal
         listButtons.spacing = 6
 
@@ -401,6 +410,13 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
         profileHintLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         profileHintLabel.textColor = .secondaryLabelColor
 
+        profileEnginePopUp.addItems(withTitles: ZoomEnginePreference.allCases.map(\.displayName))
+        profileEnginePopUp.target = self
+        profileEnginePopUp.action = #selector(fieldChanged)
+        profileWebProfileField.delegate = self
+        profileWebProfileField.placeholderString = "named after the profile"
+        let webSignInButton = NSButton(title: "Sign in to Zoom Web…", target: self, action: #selector(openWebProfile))
+
         let form = NSStackView(views: [
             section("Account profile", rows: [
                 labelled("Profile name", profileNameField, error: profileNameError),
@@ -408,6 +424,15 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
                 labelled("", profileManualField),
                 labelled("", refreshButton),
                 labelled("", profileHintLabel)
+            ]),
+            section("Runs meetings in", rows: [
+                labelled("Engine", profileEnginePopUp),
+                labelled("Browser profile", profileWebProfileField),
+                labelled("", webSignInButton),
+                labelled("", caption("""
+                Auto uses the desktop app while it is free and the Zoom Web Client when it already holds a meeting. \
+                Sign in to Zoom once in this account's browser profile; the Web Client reuses that sign-in.
+                """))
             ]),
             caption("""
             A profile only points at an account that is already signed in to Zoom. \
@@ -463,7 +488,9 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
 
             profileNameField.widthAnchor.constraint(equalToConstant: 300),
             profileManualField.widthAnchor.constraint(equalToConstant: 300),
-            profileAccountPopUp.widthAnchor.constraint(equalToConstant: 300)
+            profileAccountPopUp.widthAnchor.constraint(equalToConstant: 300),
+            profileEnginePopUp.widthAnchor.constraint(equalToConstant: 300),
+            profileWebProfileField.widthAnchor.constraint(equalToConstant: 300)
         ])
         return view
     }
@@ -509,6 +536,11 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
         rosterScroll.widthAnchor.constraint(equalToConstant: 380).isActive = true
 
         let importButton = NSButton(title: "Import CSV…", target: self, action: #selector(importRoster))
+        let importExcelButton = NSButton(title: "Import Excel…", target: self, action: #selector(importRosterWorkbook))
+        groupLmsCodeField.delegate = self
+        groupLmsCodeField.placeholderString = "e.g. CAI5_AIS4_S7 (empty: the group name)"
+        groupCoHostField.delegate = self
+        groupCoHostField.placeholderString = "Mohab Mohamed, Sara Ali | Sara A."
         let pasteButton = NSButton(title: "Paste Names…", target: self, action: #selector(pasteRoster))
         let clearRosterButton = NSButton(title: "Clear Roster", target: self, action: #selector(clearRoster))
 
@@ -519,11 +551,16 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
                 labelled("", caption("Comma-separated. The host account is already excluded automatically.")),
                 labelled("Auto-accept above", groupThresholdField, suffix: "%")
             ]),
+            section("DEPI dashboard & co-host", rows: [
+                labelled("LMS group code", groupLmsCodeField),
+                labelled("Co-host candidates", groupCoHostField),
+                labelled("", caption("Comma-separated people. Add Zoom display names a person uses after '|'. Only these people are ever made co-host."))
+            ]),
             section("Official student list", rows: [
                 // The import controls sit directly under the heading. Putting
                 // them below a 180pt list pushed them to the bottom of the
                 // window, where they were easy to miss entirely.
-                labelled("", horizontal([importButton, pasteButton, clearRosterButton])),
+                labelled("", horizontal([importButton, importExcelButton, pasteButton, clearRosterButton])),
                 labelled("", groupRosterLabel),
                 labelled("", rosterScroll)
             ])
@@ -580,7 +617,9 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
 
             groupNameField.widthAnchor.constraint(equalToConstant: 300),
             groupIgnoredField.widthAnchor.constraint(equalToConstant: 300),
-            groupThresholdField.widthAnchor.constraint(equalToConstant: 70)
+            groupThresholdField.widthAnchor.constraint(equalToConstant: 70),
+            groupLmsCodeField.widthAnchor.constraint(equalToConstant: 300),
+            groupCoHostField.widthAnchor.constraint(equalToConstant: 380)
         ])
         return view
     }
@@ -597,6 +636,8 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
         groupNameField.stringValue = group.name
         groupIgnoredField.stringValue = group.ignoredParticipantNames.joined(separator: ", ")
         groupThresholdField.stringValue = String(Int(group.autoAcceptConfidence * 100))
+        groupLmsCodeField.stringValue = group.lmsGroupCode ?? ""
+        groupCoHostField.stringValue = Self.coHostText(group.coHostCandidates)
         groupRosterLabel.stringValue = "\(group.students.count) student(s)"
         groupRosterList.string = group.students
             .map { student in
@@ -616,6 +657,29 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
             .filter { !$0.isEmpty }
         let percent = Double(groupThresholdField.stringValue) ?? 90
         configuration.studentGroups[index].autoAcceptConfidence = min(max(percent / 100, 0.5), 1.0)
+        let code = groupLmsCodeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        configuration.studentGroups[index].lmsGroupCode = code.isEmpty ? nil : code
+        configuration.studentGroups[index].coHostCandidates = Self.coHostCandidates(
+            from: groupCoHostField.stringValue,
+            keeping: configuration.studentGroups[index].coHostCandidates
+        )
+    }
+
+    /// "Mohab Mohamed, Sara Ali | Sara A." — people separated by commas, a person's Zoom names after "|".
+    static func coHostText(_ candidates: [CoHostCandidate]) -> String {
+        candidates
+            .map { ([$0.name] + $0.aliases).joined(separator: " | ") }
+            .joined(separator: ", ")
+    }
+
+    static func coHostCandidates(from text: String, keeping existing: [CoHostCandidate]) -> [CoHostCandidate] {
+        text.split(separator: ",").compactMap { entry in
+            let parts = entry.split(separator: "|").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            guard let name = parts.first else { return nil }
+            // Keep a person's identity across edits so remembered assignments still apply.
+            let id = existing.first { NameNormalizer.normalize($0.name) == NameNormalizer.normalize(name) }?.id ?? UUID()
+            return CoHostCandidate(id: id, name: name, aliases: Array(parts.dropFirst()))
+        }
     }
 
     @objc private func addGroup() {
@@ -875,6 +939,8 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
         let profile = configuration.accountProfiles[index]
         profileNameField.stringValue = profile.name
         selectAccount(profile.accountIdentifier)
+        profileEnginePopUp.selectItem(at: ZoomEnginePreference.allCases.firstIndex(of: profile.preferredEngine) ?? 0)
+        profileWebProfileField.stringValue = profile.webProfileName ?? ""
         updateChrome()
     }
 
@@ -882,6 +948,12 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
         guard let index = selectedProfileIndex else { return }
         configuration.accountProfiles[index].name = profileNameField.stringValue
         configuration.accountProfiles[index].accountIdentifier = currentProfileAccountIdentifier()
+        let engines = ZoomEnginePreference.allCases
+        if engines.indices.contains(profileEnginePopUp.indexOfSelectedItem) {
+            configuration.accountProfiles[index].preferredEngine = engines[profileEnginePopUp.indexOfSelectedItem]
+        }
+        let webProfile = profileWebProfileField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        configuration.accountProfiles[index].webProfileName = webProfile.isEmpty ? nil : webProfile
     }
 
     /// The single source of truth for the stored email, whether it came from the
@@ -1212,6 +1284,168 @@ final class SchedulerWindowController: NSWindowController, NSWindowDelegate {
         profileManualField.isHidden = !isManual
         if isManual { window?.makeFirstResponder(profileManualField) }
         markDirty()
+    }
+
+    // MARK: Excel imports and Zoom Web
+
+    @objc private func openWebProfile() {
+        guard let index = selectedProfileIndex, let automation else { return }
+        storeSelectedProfile()
+        let profile = configuration.accountProfiles[index]
+        automation.openBrowserProfile(profile.resolvedWebProfileName, url: "https://zoom.us/signin")
+    }
+
+    /// Reads an .xlsx through the helper off the main thread, then hands the result back here.
+    private func readWorkbook(command: String, completion: @escaping (AutomationResult) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "xlsx")].compactMap { $0 }
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let automation else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = automation.readWorkbook(command: command, path: url.path)
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    @objc private func importRosterWorkbook() {
+        guard let index = selectedGroupIndex else { return }
+        let groupID = configuration.studentGroups[index].id
+        readWorkbook(command: "read-roster") { [weak self] result in
+            guard let self, let index = self.configuration.studentGroups.firstIndex(where: { $0.id == groupID }) else { return }
+            guard result.success else {
+                self.showAlert("The roster could not be read", result.message)
+                return
+            }
+            let rows = WorkbookRosterRow.rows(from: result)
+            let merged = WorkbookRosterRow.merge(rows, into: self.configuration.studentGroups[index].students)
+            self.configuration.studentGroups[index].students = merged.students
+            self.loadSelectedGroup()
+            self.markDirty()
+            var detail = "\(merged.added) added in the sheet's order."
+            if !merged.skipped.isEmpty { detail += "\n\(merged.skipped.count) already on the roster were skipped." }
+            let problems = result.body["problems"]?.array?.compactMap(\.string) ?? []
+            if !problems.isEmpty { detail += "\n" + problems.prefix(5).joined(separator: "\n") }
+            self.showAlert("Roster imported", detail)
+        }
+    }
+
+    @objc private func importTimetable() {
+        guard !configuration.accountProfiles.isEmpty else {
+            showAlert("Add a Zoom account first", "Imported sessions need an account and a meeting link.")
+            return
+        }
+        readWorkbook(command: "read-timetable") { [weak self] result in
+            guard let self else { return }
+            guard let timetable = Timetable(result: result) else {
+                self.showAlert("The timetable could not be read", result.message)
+                return
+            }
+            self.presentTimetableImport(timetable)
+        }
+    }
+
+    private func presentTimetableImport(_ timetable: Timetable) {
+        let accountPopUp = NSPopUpButton()
+        accountPopUp.addItems(withTitles: configuration.accountProfiles.map { "\($0.name) — \($0.accountIdentifier)" })
+        let groupPopUp = NSPopUpButton()
+        groupPopUp.addItem(withTitle: "None — don't record attendance")
+        groupPopUp.addItems(withTitles: configuration.studentGroups.map(\.name))
+        // The Round Code names the group; preselect a group whose code or name is exactly that.
+        if let match = configuration.studentGroups.firstIndex(where: {
+            $0.dashboardGroupName.caseInsensitiveCompare(timetable.groupCode) == .orderedSame
+        }) {
+            groupPopUp.selectItem(at: match + 1)
+        }
+        let linkField = NSTextField()
+        linkField.placeholderString = "Meeting link or ID for these sessions"
+        if let existing = configuration.schedules.first(where: { schedule in
+            configuration.group(for: schedule)?.dashboardGroupName.caseInsensitiveCompare(timetable.groupCode) == .orderedSame
+        }), case .meetingID(let raw) = existing.meeting.kind {
+            linkField.stringValue = raw
+            if let profileIndex = configuration.accountProfiles.firstIndex(where: { $0.id == existing.accountProfileID }) {
+                accountPopUp.selectItem(at: profileIndex)
+            }
+        }
+        let enableButton = NSButton(checkboxWithTitle: "Enable imported meetings (they start real meetings)", target: nil, action: nil)
+
+        let online = timetable.rows.filter { $0.issue.isEmpty }.count
+        let preview = NSTextView(frame: NSRect(x: 0, y: 0, width: 520, height: 180))
+        preview.isEditable = false
+        preview.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        preview.string = timetable.rows.map { row in
+            let when = "\(row.date ?? "????-??-??") \(row.startTime ?? "--:--")"
+            return "\(row.issue.isEmpty ? "✓" : "–") \(when)  #\(row.sessionNumber)  \(row.topic)\(row.issue.isEmpty ? "" : "   [\(row.issue)]")"
+        }.joined(separator: "\n")
+        let previewScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 520, height: 180))
+        previewScroll.documentView = preview
+        previewScroll.hasVerticalScroller = true
+        previewScroll.borderType = .bezelBorder
+
+        let form = NSStackView(views: [
+            DesignKit.row("Account", accountPopUp),
+            DesignKit.row("Meeting link", linkField),
+            DesignKit.row("Attendance group", groupPopUp),
+            DesignKit.fullWidthRow(enableButton),
+            previewScroll
+        ])
+        form.orientation = .vertical
+        form.alignment = .leading
+        form.spacing = 8
+        form.frame = NSRect(x: 0, y: 0, width: 540, height: 330)
+        linkField.widthAnchor.constraint(equalToConstant: 320).isActive = true
+        previewScroll.widthAnchor.constraint(equalToConstant: 520).isActive = true
+        previewScroll.heightAnchor.constraint(equalToConstant: 180).isActive = true
+
+        let alert = NSAlert()
+        alert.messageText = "Import \(timetable.groupCode.isEmpty ? "timetable" : timetable.groupCode)"
+        alert.informativeText = "\(timetable.rows.count) rows, \(online) online. Physical sessions, No Session rows, past dates and existing meetings at the same time are skipped. Existing schedules are not changed."
+        alert.accessoryView = form
+        alert.addButton(withTitle: "Import")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let raw = linkField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !MeetingReference.normalizedMeetingID(raw).isEmpty else {
+            showAlert("No meeting link", "Enter the meeting link or ID the imported sessions should open.")
+            return
+        }
+        let account = configuration.accountProfiles[max(accountPopUp.indexOfSelectedItem, 0)]
+        let groupIndex = groupPopUp.indexOfSelectedItem - 1
+        let group = configuration.studentGroups.indices.contains(groupIndex) ? configuration.studentGroups[groupIndex] : nil
+        let meeting = MeetingReference(
+            name: timetable.groupCode.isEmpty ? (group?.name ?? "Class") : timetable.groupCode,
+            kind: .meetingID(raw),
+            passcode: MeetingReference.passcode(from: raw)
+        )
+        let plan = TimetableImporter.plan(
+            timetable: timetable,
+            account: account,
+            meeting: meeting,
+            attendanceGroupID: group?.id,
+            existing: configuration.schedules,
+            enable: enableButton.state == .on,
+            template: selectedScheduleIndex.map { configuration.schedules[$0] }
+        )
+        storeSelectedSchedule()
+        configuration.schedules.append(contentsOf: plan.schedules)
+        scheduleTable.reloadData()
+        markDirty()
+
+        var reasons: [String: Int] = [:]
+        for decision in plan.skipped { reasons[decision.skipReason ?? "", default: 0] += 1 }
+        let skippedText = reasons.sorted { $0.key < $1.key }.map { "\($0.value) × \($0.key)" }.joined(separator: "\n")
+        showAlert(
+            "\(plan.schedules.count) session(s) added",
+            (plan.schedules.isEmpty ? "" : "Press Save to keep them\(enableButton.state == .on ? "" : " (they are disabled until you enable them)").\n") + skippedText
+        )
+    }
+
+    private func showAlert(_ title: String, _ detail: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = detail
+        alert.runModal()
     }
 
     @objc private func recurrenceChanged() { markDirty() }

@@ -16,6 +16,7 @@ Zoom Auto Admit watches Zoom's Accessibility hierarchy and presses `Admit All` w
 - Includes a diagnostic inspector for reviewing Zoom's live Accessibility tree.
 - Supports scheduled meeting startup, account selection, and launch at login.
 - Has a reusable monitor and workflow core with unit tests and no third-party dependencies.
+- Optional **Automation** (menu → Automation…): DEPI dashboard Run Session, attendance upload and late-joiner correction, recording links, an n8n recording API, Excel timetable and roster import, Zoom Web meetings for overlapping classes, and automatic co-host. Uses a bundled Node.js + Playwright helper; the core app still runs without it.
 
 ## Requirements
 
@@ -256,6 +257,30 @@ latency, never correctness.
 synthetic event code at all, and `Scripts/build-app.sh` fails the build if any is
 introduced. The only activation code in the repository lives in the `auto-admit`
 CLI behind the opt-in `--cross-space` flag.
+
+## Automation (DEPI dashboard, recordings, Zoom Web, co-host)
+
+These features were first built for the Windows app (branch `Windows_and_web`) and work the same way here. They are off until turned on in **Automation…** from the menu bar. Browser work is done by `automation/`, a small Node.js + Playwright helper the app runs as a child process; requests go over stdin, so passwords never appear in the process list.
+
+**Requirements:** Node.js 20+ (`brew install node`) and Google Chrome (or run `npm run install-browser` in `automation/` once for Playwright's Chromium). `Scripts/build-app.sh` installs the helper's packages and bundles it into the app.
+
+| Feature | Where | What it does |
+| --- | --- | --- |
+| Run Session | Automation → LMS | When a scheduled meeting linked to a group goes live, signs in to the DEPI dashboard and presses **Run Session** on that group's session, picked by the scheduled time. |
+| Attendance upload | Automation → LMS | 90 minutes in, ticks Joined for every student the register marks **Present** and Not-joined for everyone else the dashboard lists. Every row is decided first; if one row cannot be ticked, nothing is submitted. |
+| Late-joiner correction | Automation → LMS | 3 hours in, opens View details and flips only the rows that disagree, then reloads and confirms. |
+| Recording link | Automation → LMS / Follow-ups | Finds the group's cloud recording in My Recordings (longest one inside the session's hours, checked against the link's own start time) and puts its share link on the session. A link already there is left alone. |
+| Follow-up queue | Automation → Follow-ups | The steps above are written to `~/Library/Application Support/Zoom Auto Admit/LMS/follow-up.json`, retried every 15 minutes up to 8 times, and still run after a restart. |
+| Recording API | Automation → Recording API | `POST /api/recordings/process` with `X-API-Key` attaches a Google Drive link n8n sends. Loopback only by default; use a tunnel to reach it. Same contract and status codes as `Windows/RECORDING-API.md`. |
+| Excel timetable | Schedules → Import Excel… | Reads the DEPI `.xlsx` timetable and adds online sessions as one-time schedules; skips Physical, No Session, past dates and times already taken. Imported schedules stay disabled until enabled. |
+| Excel roster | Schedules → Groups → Import Excel… | `Order` + `Name` (or `FullName`) headers, optional `StudentId`, `Aliases` (`|`-separated), `Email`. Formulas are refused. |
+| Zoom Web meetings | Schedules → Zoom Accounts → Engine | **Web** always uses the browser, **Auto** uses the desktop app while it is free and the Zoom Web Client when it already holds a meeting, so classes can overlap. The web extension's own admit and attendance script runs inside the page; its attendance feeds the normal register. Sign in once per account with **Sign in to Zoom Web…**. |
+| Co-host | Schedules → Groups → Co-host candidates | Every 20 seconds during a register, a listed person who has joined is made co-host through the row's *More options → Make co-host*, confirmed from Zoom's list. Nobody who is not listed is ever made co-host. |
+| Open before meetings | Automation → Web & Co-host | A LaunchAgent opens the app (by bundle id) a few minutes before each meeting in the next two weeks, so a class starts even after the app was quit. |
+
+The dashboard group is the group's **LMS group code**, or its name when that is empty. The dashboard sign-in and the API key are stored in the Keychain. **Rehearse only** opens everything and logs the decision without pressing anything that writes.
+
+Run the helper's tests with `cd automation && npm test`.
 
 ## Scheduled meetings
 

@@ -26,6 +26,8 @@ final class SchedulerCoordinator {
     /// silently doing nothing because AppDelegate forgot to connect it.
     private let startAttendance: (StudentGroup, ZoomSchedule) -> Void
     private let stopAttendance: (_ finalize: Bool) -> Void
+    /// Dashboard steps, Web meetings and the launch agent. Optional so tests can leave it out.
+    private let automationCoordinator: AutomationCoordinator?
 
     private var scheduler: SchedulerService!
     private var configuration: SchedulerConfiguration
@@ -43,8 +45,10 @@ final class SchedulerCoordinator {
         startAutoAdmit: @escaping () -> Void,
         stopAutoAdmit: @escaping () -> Void,
         startAttendance: @escaping (StudentGroup, ZoomSchedule) -> Void,
-        stopAttendance: @escaping (_ finalize: Bool) -> Void
+        stopAttendance: @escaping (_ finalize: Bool) -> Void,
+        automationCoordinator: AutomationCoordinator? = nil
     ) {
+        self.automationCoordinator = automationCoordinator
         self.state = state
         self.store = store
         self.schedulerLog = schedulerLog
@@ -99,6 +103,7 @@ final class SchedulerCoordinator {
         store.save(newConfiguration)
         scheduler.update(configuration: newConfiguration)
         refreshNextScheduleSummary()
+        automationCoordinator?.syncLaunchAgent()
         schedulerLog.write("Schedules saved (\(newConfiguration.schedules.count) schedule(s))")
     }
 
@@ -201,6 +206,25 @@ final class SchedulerCoordinator {
     // MARK: Workflow
 
     private func handleFire(schedule: ZoomSchedule, profile: ZoomAccountProfile, occurrence: Date) {
+        // The desktop app holds one meeting. An account set to Web, or Auto while the desktop
+        // app is busy, goes to the Zoom Web Client instead - which needs no workflow lock, so two
+        // classes can overlap.
+        if let automationCoordinator, let link = ZoomEngineAllocator.webLink(for: schedule.meeting), profile.preferredEngine != .desktop {
+            let desktopBusy = isWorkflowActive || automationCoordinator.allocator.isDesktopReserved || desktopHasActiveMeeting()
+            let engine = automationCoordinator.allocator.allocate(
+                scheduleID: schedule.id,
+                preference: profile.preferredEngine,
+                hasWebLink: true,
+                desktopHasActiveMeeting: desktopBusy
+            )
+            schedulerLog.write("[ALLOCATOR] \(schedule.name): \(profile.preferredEngine.rawValue) preference, desktop busy=\(desktopBusy) → \(engine.rawValue)")
+            if engine == .web {
+                runWebMeeting(schedule: schedule, profile: profile, link: link, occurrence: occurrence, automation: automationCoordinator)
+                return
+            }
+            automationCoordinator.allocator.release(scheduleID: schedule.id)
+        }
+
         workflowLock.lock()
         guard !isWorkflowRunning else {
             workflowLock.unlock()
@@ -276,6 +300,13 @@ final class SchedulerCoordinator {
             schedulerLog.write("Workflow completed for \(schedule.name); autoAdmit=\(autoAdmitStarted)")
             // Attendance recording begins only once the meeting is verified.
             dispatchAttendanceStart(for: schedule)
+            automationCoordinator?.meetingWentLive(
+                schedule: schedule,
+                profile: configuration.profile(for: schedule),
+                group: configuration.group(for: schedule),
+                startedAt: Date(),
+                engine: .desktop
+            )
 
             if autoAdmitStarted {
                 schedulerStartedMonitoring.insert(schedule.id)
@@ -336,6 +367,12 @@ final class SchedulerCoordinator {
     }
 
     private func handleMonitoringEnd(schedule: ZoomSchedule) {
+        if let automationCoordinator, automationCoordinator.isWebMeetingRunning(for: schedule.id) {
+            schedulerLog.write("End time reached for \(schedule.name); closing its Web meeting")
+            automationCoordinator.stopWebMeeting(scheduleID: schedule.id)
+            notify(title: "Web meeting closed", body: "End time reached for \(schedule.name)")
+            return
+        }
         guard schedulerStartedMonitoring.remove(schedule.id) != nil else {
             schedulerLog.write("End time for \(schedule.name) ignored: monitoring was not started by the scheduler")
             return
@@ -349,6 +386,37 @@ final class SchedulerCoordinator {
             stopAttendance(true)
         }
         notify(title: "Auto Admit stopped", body: "End time reached for \(schedule.name)")
+    }
+
+    // MARK: Web Client meetings
+
+    private func runWebMeeting(schedule: ZoomSchedule, profile: ZoomAccountProfile, link: URL, occurrence: Date, automation: AutomationCoordinator) {
+        schedulerLog.write("──────── Schedule triggered (Web): \(schedule.name) ────────")
+        let group = configuration.group(for: schedule)
+        switch automation.startWebMeeting(schedule: schedule, profile: profile, group: group, link: link) {
+        case .success(let detail):
+            schedulerLog.write("[WEB] \(schedule.name): \(detail)")
+            if schedule.endTime != nil {
+                scheduler.registerMonitoring(for: schedule, startedAt: Date())
+            }
+            automation.meetingWentLive(schedule: schedule, profile: profile, group: group, startedAt: Date(), engine: .web)
+            DispatchQueue.main.async { [state] in
+                state.setRunOutcome(.succeeded(meetingName: schedule.meeting.name, autoAdmitActive: schedule.enablesAutoAdmit))
+            }
+            notify(title: "\(schedule.meeting.name) started in Zoom Web", body: detail)
+        case .failure(let error):
+            schedulerLog.write("[WEB] FAILED for \(schedule.name): \(error.localizedDescription)")
+            DispatchQueue.main.async { [state] in
+                state.setRunOutcome(.failed(title: "Web meeting not started", detail: error.localizedDescription))
+            }
+            notify(title: "Web meeting not started", body: error.localizedDescription)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [state] in state.clearTransientRunState() }
+    }
+
+    private func desktopHasActiveMeeting() -> Bool {
+        guard let process = automation.zoomProcess() else { return false }
+        return automation.meetingPresence(for: process).state == .active
     }
 
     // MARK: Notifications

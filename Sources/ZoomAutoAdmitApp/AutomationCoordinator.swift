@@ -1,0 +1,615 @@
+import AppKit
+import Foundation
+import OSLog
+import UserNotifications
+import ZoomAXSupport
+import ZoomAutoAdmitCore
+
+/// Everything the app does around a class beyond Zoom itself, ported from the Windows build:
+///
+/// - the DEPI dashboard: Run Session when a meeting goes live, the attendance upload and the
+///   late-joiner correction later, the recording link at the end;
+/// - the recording API n8n calls;
+/// - meetings held in the Zoom Web Client when an account prefers it or the desktop app is busy;
+/// - co-host for a group's instructors once they join.
+///
+/// The browser work is done by the Node helper. Every call here runs off the main thread, and a
+/// failure in any of it never touches Auto Admit or the attendance register.
+final class AutomationCoordinator {
+    private let logger = Logger(subsystem: "com.mohamedhosam.ZoomAutoAdmit", category: "automation")
+    private let schedulerLog: SchedulerLog
+    private let helper: AutomationHelper
+    private let lms: LmsClient
+    private let credentials: LmsCredentialStoring
+    let followUps: LmsFollowUpQueue
+    private let attendanceStore: AttendanceStore
+    private let coHostHistory = CoHostHistoryStore()
+    let allocator = ZoomEngineAllocator()
+
+    private let dashboardQueue = DispatchQueue(label: "com.mohamedhosam.ZoomAutoAdmit.lms", qos: .utility)
+    private let rolesQueue = DispatchQueue(label: "com.mohamedhosam.ZoomAutoAdmit.roles", qos: .utility)
+    private var followUpTimer: DispatchSourceTimer?
+    private var coHostTimer: DispatchSourceTimer?
+    private var processingFollowUps = false
+
+    /// The live desktop register, so a follow-up during class reads what is known right now.
+    var liveAttendanceSession: () -> AttendanceSession? = { nil }
+    var configurationProvider: () -> SchedulerConfiguration = { SchedulerConfiguration() }
+    /// Web meetings report admissions and attendance through these.
+    var onWebAdmitted: (() -> Void)?
+    var onChange: (() -> Void)?
+
+    private(set) var recentLog: [String] = []
+    private let logLock = NSLock()
+
+    // Recording API
+    private var apiProcess: RunningAutomation?
+    private(set) var apiStatus = "Stopped"
+
+    // Web meetings, by schedule
+    private struct WebMeeting {
+        let process: RunningAutomation
+        let schedule: ZoomSchedule
+        let recorder: WebAttendanceRecorder?
+        let startedAt: Date
+    }
+    private var webMeetings: [UUID: WebMeeting] = [:]
+    private let webLock = NSLock()
+
+    // Co-host: who was already granted in this meeting, so each person is handled once.
+    private var coHostGranted: Set<String> = []
+    private var coHostSessionKey: UUID?
+
+    init(
+        schedulerLog: SchedulerLog = .shared,
+        helper: AutomationHelper = AutomationHelper(),
+        credentials: LmsCredentialStoring = LmsCredentialStore(),
+        followUps: LmsFollowUpQueue = LmsFollowUpQueue(),
+        attendanceStore: AttendanceStore = AttendanceStore()
+    ) {
+        self.schedulerLog = schedulerLog
+        self.helper = helper
+        self.credentials = credentials
+        self.lms = LmsClient(helper: helper, credentials: credentials)
+        self.followUps = followUps
+        self.attendanceStore = attendanceStore
+    }
+
+    var settings: LmsSettings { LmsSettings.load() }
+    var hasLmsSignIn: Bool { credentials.read() != nil }
+    var savedLmsEmail: String? { credentials.read()?.email }
+
+    func start() {
+        let timer = DispatchSource.makeTimerSource(queue: dashboardQueue)
+        timer.schedule(deadline: .now() + 20, repeating: 60, leeway: .seconds(5))
+        timer.setEventHandler { [weak self] in self?.processDueFollowUps() }
+        followUpTimer = timer
+        timer.resume()
+
+        let roles = DispatchSource.makeTimerSource(queue: rolesQueue)
+        roles.schedule(deadline: .now() + 30, repeating: 20, leeway: .seconds(3))
+        roles.setEventHandler { [weak self] in self?.coHostPass() }
+        coHostTimer = roles
+        roles.resume()
+
+        if UserDefaults.standard.bool(forKey: RecordingAPISettings.enabledKey) {
+            startRecordingAPI()
+        }
+        syncLaunchAgent()
+    }
+
+    func stop() {
+        followUpTimer?.cancel()
+        coHostTimer?.cancel()
+        stopRecordingAPI()
+        webLock.lock()
+        let meetings = webMeetings.values
+        webLock.unlock()
+        meetings.forEach { $0.process.stop(grace: 5) }
+    }
+
+    // MARK: - Logging
+
+    func log(_ message: String) {
+        schedulerLog.write(message)
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        logLock.lock()
+        recentLog.append("\(stamp)  \(message)")
+        if recentLog.count > 400 { recentLog.removeFirst(recentLog.count - 400) }
+        logLock.unlock()
+        DispatchQueue.main.async { [weak self] in self?.onChange?() }
+    }
+
+    var logSnapshot: [String] {
+        logLock.lock()
+        defer { logLock.unlock() }
+        return recentLog
+    }
+
+    private func helperLine(_ message: AutomationMessage) {
+        switch message {
+        case .log(let level, let text):
+            log(level == "info" ? text : "[\(level)] \(text)")
+        case .event, .result:
+            break
+        }
+    }
+
+    // MARK: - Dashboard: when a meeting goes live
+
+    /// Called once a scheduled meeting is verified live, on either engine.
+    func meetingWentLive(schedule: ZoomSchedule, profile: ZoomAccountProfile?, group: StudentGroup?, startedAt: Date, engine: ZoomEngine) {
+        let settings = self.settings
+        guard settings.isAnythingEnabled else { return }
+        guard let group else {
+            log("[LMS] \(schedule.name) has no attendance group, so the dashboard steps were skipped.")
+            return
+        }
+        guard hasLmsSignIn else {
+            log("[LMS] No dashboard sign-in is saved; the dashboard steps for \(group.dashboardGroupName) were skipped.")
+            notify(title: "LMS sign-in missing", body: "Add it in Automation → LMS to start sessions on the dashboard.")
+            return
+        }
+
+        let dashboardGroup = group.dashboardGroupName
+        let sessionStart = Self.scheduledStart(of: schedule, around: startedAt)
+        let (date, time) = LmsFollowUpQueue.dashboardDateAndTime(sessionStart)
+
+        let steps = settings.followUpSteps
+        if !steps.isEmpty {
+            let written = followUps.schedule(
+                group: dashboardGroup,
+                sessionStartedAt: sessionStart,
+                steps: steps,
+                attendanceGroupID: group.id,
+                scheduleID: schedule.id,
+                recordingProfile: profile?.resolvedWebProfileName
+            )
+            for item in written {
+                log("[LMS] Due \(DateFormatter.localizedString(from: item.dueAt, dateStyle: .short, timeStyle: .short)): \(item.describe)")
+            }
+        }
+
+        guard settings.runSessionOnMeetingStart else { return }
+        dashboardQueue.async { [weak self] in
+            guard let self else { return }
+            self.log("[LMS] Meeting live for \(dashboardGroup) (\(engine.rawValue)); starting its dashboard session.")
+            let result = self.lms.runSession(group: dashboardGroup, date: date, startTime: time, settings: settings, onMessage: self.helperLine)
+            self.log("[LMS] \(result.success ? "✓" : "✗") \(result.message)")
+            if !result.success {
+                self.notify(title: "Run Session did not complete", body: result.message)
+            }
+        }
+    }
+
+    /// The occurrence's own start time, not the moment the workflow finished; the dashboard
+    /// lists sessions by the scheduled time.
+    static func scheduledStart(of schedule: ZoomSchedule, around moment: Date, calendar: Calendar = .current) -> Date {
+        var parts = calendar.dateComponents([.year, .month, .day], from: moment)
+        parts.hour = schedule.startTime.hour
+        parts.minute = schedule.startTime.minute
+        guard let candidate = calendar.date(from: parts) else { return moment }
+        // A meeting started a little after midnight for a late class belongs to the previous day.
+        if candidate.timeIntervalSince(moment) > 6 * 60 * 60 {
+            return calendar.date(byAdding: .day, value: -1, to: candidate) ?? candidate
+        }
+        return candidate
+    }
+
+    // MARK: - Dashboard: follow-ups
+
+    func processDueFollowUps(force: Bool = false) {
+        dashboardQueue.async { [weak self] in
+            guard let self, !self.processingFollowUps else { return }
+            self.processingFollowUps = true
+            defer { self.processingFollowUps = false }
+            let now = Date()
+            self.followUps.prune(at: now)
+            let due = force ? self.followUps.read().filter { $0.attempts < LmsFollowUpQueue.maximumAttempts } : self.followUps.due(at: now)
+            for item in due { self.perform(item, now: now) }
+            DispatchQueue.main.async { self.onChange?() }
+        }
+    }
+
+    /// Runs one outstanding step now, whatever its due time.
+    func runFollowUpNow(id: String) {
+        dashboardQueue.async { [weak self] in
+            guard let self, let item = self.followUps.read().first(where: { $0.id == id }) else { return }
+            self.perform(item, now: Date())
+            DispatchQueue.main.async { self.onChange?() }
+        }
+    }
+
+    private func perform(_ item: LmsFollowUp, now: Date) {
+        let settings = self.settings
+        guard hasLmsSignIn else {
+            followUps.fail(item, reason: "No LMS sign-in is saved.", at: now)
+            return
+        }
+        log("[LMS] Running \(item.describe)")
+
+        switch item.step {
+        case .takeAttendance, .correctAttendance:
+            guard let session = register(for: item) else {
+                followUps.fail(item, reason: "No attendance register was found for this class.", at: now)
+                log("[LMS] ✗ \(item.describe): no attendance register was found.")
+                return
+            }
+            let present = LmsPresentNames.present(in: session)
+            let review = LmsPresentNames.needsReview(in: session)
+            if !review.isEmpty {
+                log("[LMS] \(review.count) student(s) still need review and are sent as Not-joined: \(review.prefix(5).joined(separator: ", "))")
+            }
+            let result = item.step == .takeAttendance
+                ? lms.takeAttendance(group: item.group, date: item.sessionDate, startTime: item.sessionStart, present: present, settings: settings, onMessage: helperLine)
+                : lms.correctAttendance(group: item.group, date: item.sessionDate, startTime: item.sessionStart, present: present, settings: settings, onMessage: helperLine)
+            logPlan(result)
+
+            if result.success {
+                followUps.complete(item)
+                log("[LMS] ✓ \(result.message)")
+                if item.step == .takeAttendance && !settings.dryRun {
+                    notify(title: "Attendance uploaded", body: result.message)
+                }
+            } else if item.step == .takeAttendance, result.body["alreadyTaken"]?.bool == true {
+                // Taken by hand already: the late-joiner pass will reconcile it.
+                followUps.complete(item)
+                log("[LMS] Attendance for \(item.group) was already taken on the dashboard; leaving it to the correction pass.")
+            } else if item.step == .correctAttendance, result.body["notTakenYet"]?.bool == true,
+                      followUps.read().contains(where: { $0.step == .takeAttendance && $0.group == item.group && $0.sessionDate == item.sessionDate }) {
+                followUps.postpone(item, until: now.addingTimeInterval(LmsFollowUpQueue.retryAfter), reason: "Waiting for the attendance upload first.")
+            } else {
+                followUps.fail(item, reason: result.message, at: now)
+                log("[LMS] ✗ \(result.message)")
+                if item.attempts + 1 >= LmsFollowUpQueue.maximumAttempts {
+                    notify(title: "\(item.step.displayName) gave up", body: "\(item.describe): \(result.message)")
+                }
+            }
+
+        case .attachRecording:
+            guard let profile = item.recordingProfile else {
+                followUps.fail(item, reason: "No Zoom Web profile is set for this account.", at: now)
+                return
+            }
+            let result = lms.attachRecordingFromZoom(group: item.group, date: item.sessionDate, startTime: item.sessionStart, profile: profile, settings: settings, onMessage: helperLine)
+            if result.success {
+                followUps.complete(item)
+                log("[RECORDINGS] ✓ \(result.message)")
+            } else {
+                // A recording is processed by Zoom for a while after class; not found yet is normal.
+                followUps.fail(item, reason: result.message, at: now, retryAfter: 30 * 60)
+                log("[RECORDINGS] ✗ \(result.message)")
+            }
+        }
+    }
+
+    private func logPlan(_ result: AutomationResult) {
+        guard let marks = result.body["plan"]?["marks"]?.array else { return }
+        for mark in marks {
+            guard let name = mark["studentName"]?.string else { continue }
+            log("   \(mark["joined"]?.bool == true ? "JOINED    " : "NOT-JOINED")  \(name)")
+        }
+        for missing in result.body["plan"]?["notOnTheDashboard"]?.array?.compactMap(\.string) ?? [] {
+            log("   Seen in the meeting but not listed by the dashboard: \(missing)")
+        }
+    }
+
+    private func register(for item: LmsFollowUp) -> AttendanceSession? {
+        var sessions = attendanceStore.loadAll()
+        if let live = liveAttendanceSession() {
+            sessions.removeAll { $0.id == live.id }
+            sessions.append(live)
+        }
+        webLock.lock()
+        for meeting in webMeetings.values {
+            if let current = meeting.recorder?.current {
+                sessions.removeAll { $0.id == current.id }
+                sessions.append(current)
+            }
+        }
+        webLock.unlock()
+        return LmsPresentNames.session(for: item, in: sessions)
+    }
+
+    // MARK: - Dashboard: manual actions from the Automation window
+
+    enum ManualAction {
+        case runSession
+        case takeAttendance(present: [String])
+        case correctAttendance(present: [String])
+        case attachLink(String, replaceExisting: Bool)
+        case recordingFromZoom(profile: String)
+    }
+
+    func perform(_ action: ManualAction, group: String, date: String, time: String?, completion: @escaping (AutomationResult) -> Void) {
+        let settings = self.settings
+        dashboardQueue.async { [weak self] in
+            guard let self else { return }
+            let result: AutomationResult
+            switch action {
+            case .runSession:
+                result = self.lms.runSession(group: group, date: date, startTime: time, settings: settings, onMessage: self.helperLine)
+            case .takeAttendance(let present):
+                result = self.lms.takeAttendance(group: group, date: date, startTime: time, present: present, settings: settings, onMessage: self.helperLine)
+                self.logPlan(result)
+            case .correctAttendance(let present):
+                result = self.lms.correctAttendance(group: group, date: date, startTime: time, present: present, settings: settings, onMessage: self.helperLine)
+                self.logPlan(result)
+            case .attachLink(let link, let replace):
+                result = self.lms.attachRecordLink(group: group, date: date, startTime: time, link: link, replaceExisting: replace, settings: settings, onMessage: self.helperLine)
+            case .recordingFromZoom(let profile):
+                result = self.lms.attachRecordingFromZoom(group: group, date: date, startTime: time, profile: profile, settings: settings, onMessage: self.helperLine)
+            }
+            self.log("[LMS] \(result.success ? "✓" : "✗") \(result.message)")
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    func saveSignIn(_ account: LmsAccount, verify: Bool, completion: @escaping (AutomationResult) -> Void) {
+        dashboardQueue.async { [weak self] in
+            guard let self else { return }
+            if verify {
+                let result = self.lms.verifySignIn(account, showBrowser: self.settings.showBrowser, onMessage: self.helperLine)
+                guard result.success else {
+                    DispatchQueue.main.async { completion(result) }
+                    return
+                }
+            }
+            let saved = self.credentials.save(account)
+            let result = AutomationResult(success: saved, message: saved ? "Saved. \(account.email) will be used on the dashboard." : "The Keychain did not accept the sign-in.")
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    func forgetSignIn() {
+        credentials.delete()
+    }
+
+    func checkHelper() -> String {
+        switch AutomationEnvironment.locate() {
+        case .failure(let error): return "✗ \(error.localizedDescription)"
+        case .success(let environment):
+            let result = helper.run("version", request: [:], timeout: 20)
+            return result.success
+                ? "✓ Node \(result.body["node"]?.string ?? "?") · helper at \(environment.helperDirectory.path)"
+                : "✗ \(result.message)"
+        }
+    }
+
+    /// Reads an Excel file through the helper. Synchronous; call it off the main thread.
+    func readWorkbook(command: String, path: String) -> AutomationResult {
+        helper.run(command, request: ["path": path], timeout: 60)
+    }
+
+    /// A visible browser on one of the app's profiles, to sign in to Zoom (or the dashboard) once.
+    func openBrowserProfile(_ profile: String, url: String) {
+        let result = helper.start("open-profile", request: ["profile": profile, "url": url], onMessage: { [weak self] in self?.helperLine($0) }, onExit: { _ in })
+        if case .failure(let error) = result {
+            log("[PROFILE] ✗ \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Recording API
+
+    func startRecordingAPI() {
+        stopRecordingAPI()
+        guard let account = credentials.read() else {
+            apiStatus = "Not started: save the LMS sign-in first."
+            log("[API] \(apiStatus)")
+            return
+        }
+        let settings = RecordingAPISettings.load()
+        guard let key = RecordingAPIKeyStore.load() else {
+            apiStatus = "Not started: generate an API key first."
+            log("[API] \(apiStatus)")
+            return
+        }
+        var request: [String: Any] = [
+            "credentials": ["email": account.email, "password": account.password],
+            "apiKey": key,
+            "port": settings.port,
+            "lockWaitSeconds": settings.lockWaitSeconds
+        ]
+        if !settings.host.isEmpty { request["host"] = settings.host }
+        if !settings.allowedClients.isEmpty { request["allowedClients"] = settings.allowedClients }
+
+        let started = helper.start("serve-api", request: request, onMessage: { [weak self] message in
+            guard let self else { return }
+            if case .log(_, let text) = message, text.contains("Recording API started") {
+                self.apiStatus = "Running on port \(settings.port)"
+            }
+            self.helperLine(message)
+        }, onExit: { [weak self] result in
+            guard let self else { return }
+            self.apiProcess = nil
+            self.apiStatus = result.map { $0.success ? "Stopped" : "Stopped: \($0.message)" } ?? "Stopped"
+            self.log("[API] \(self.apiStatus)")
+        })
+        switch started {
+        case .success(let process):
+            apiProcess = process
+            apiStatus = "Starting…"
+        case .failure(let error):
+            apiStatus = "Not started: \(error.localizedDescription)"
+            log("[API] \(apiStatus)")
+        }
+    }
+
+    func stopRecordingAPI() {
+        apiProcess?.stop(grace: 95)
+        apiProcess = nil
+    }
+
+    var isRecordingAPIRunning: Bool { apiProcess?.isRunning ?? false }
+
+    // MARK: - Web meetings
+
+    var activeWebMeetingCount: Int {
+        webLock.lock()
+        defer { webLock.unlock() }
+        return webMeetings.count
+    }
+
+    func isWebMeetingRunning(for scheduleID: UUID) -> Bool {
+        webLock.lock()
+        defer { webLock.unlock() }
+        return webMeetings[scheduleID] != nil
+    }
+
+    /// Opens a scheduled meeting in the Zoom Web Client with its account's browser profile.
+    /// Returns a sentence for the log and the menu.
+    func startWebMeeting(schedule: ZoomSchedule, profile: ZoomAccountProfile, group: StudentGroup?, link: URL) -> Result<String, AutomationSetupError> {
+        if isWebMeetingRunning(for: schedule.id) { return .success("already running in the Web Client") }
+        let recorder = group.map { WebAttendanceRecorder(group: $0, schedule: schedule, store: attendanceStore) }
+        let webProfile = profile.resolvedWebProfileName
+        let request: [String: Any] = [
+            "meetingUrl": link.absoluteString,
+            "profile": webProfile,
+            "headless": UserDefaults.standard.bool(forKey: "web.headless"),
+            "sessionId": schedule.id.uuidString,
+            "captureAttendance": recorder != nil,
+            "autoAdmit": schedule.enablesAutoAdmit,
+            "startAsHost": true
+        ]
+        let started = helper.start("web-meeting", request: request, onMessage: { [weak self] message in
+            guard let self else { return }
+            switch message {
+            case .event(let name, let data):
+                switch name {
+                case "admitted":
+                    DispatchQueue.main.async { self.onWebAdmitted?() }
+                case "attendanceSnapshot":
+                    let names = data["names"]?.array?.compactMap(\.string) ?? []
+                    if let session = recorder?.record(names: names) {
+                        self.log("[WEB] \(schedule.name): \(names.count) in the meeting, \(session.presentCount) matched.")
+                    }
+                case "signInRequired":
+                    self.notify(title: "Zoom Web needs a sign-in", body: "Sign in to Zoom in the browser window for \(profile.name).")
+                default:
+                    break
+                }
+            default:
+                self.helperLine(message)
+            }
+        }, onExit: { [weak self] result in
+            guard let self else { return }
+            self.webLock.lock()
+            let meeting = self.webMeetings.removeValue(forKey: schedule.id)
+            self.webLock.unlock()
+            if let finalized = meeting?.recorder?.finalize() {
+                self.log("[WEB] Attendance closed for \(finalized.groupName): present=\(finalized.presentCount) absent=\(finalized.absentCount) review=\(finalized.needsReviewCount)")
+            }
+            self.log("[WEB] \(schedule.name): \(result?.message ?? "the browser closed").")
+            DispatchQueue.main.async { self.onChange?() }
+        })
+        switch started {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let process):
+            webLock.lock()
+            webMeetings[schedule.id] = WebMeeting(process: process, schedule: schedule, recorder: recorder, startedAt: Date())
+            webLock.unlock()
+            DispatchQueue.main.async { [weak self] in self?.onChange?() }
+            return .success("opened in the Zoom Web Client with profile '\(webProfile)'")
+        }
+    }
+
+    /// Stops admitting in a Web meeting at its end time. The browser closes; Zoom keeps the
+    /// meeting itself running for everyone else only if another host is present, exactly as when
+    /// a host closes their tab.
+    func stopWebMeeting(scheduleID: UUID) {
+        webLock.lock()
+        let meeting = webMeetings[scheduleID]
+        webLock.unlock()
+        meeting?.process.stop(grace: 10)
+    }
+
+    // MARK: - Co-host
+
+    /// Every 20 seconds while a desktop register is live: make the group's configured people
+    /// co-host once they are in the meeting. Each person is handled once per meeting.
+    private func coHostPass() {
+        guard UserDefaults.standard.object(forKey: "roles.enabled") == nil || UserDefaults.standard.bool(forKey: "roles.enabled") else { return }
+        guard let session = liveAttendanceSession(), session.endedAt == nil else { return }
+        let configuration = configurationProvider()
+        guard let group = configuration.studentGroups.first(where: { $0.id == session.groupID }),
+              !group.coHostCandidates.isEmpty,
+              let zoom = ZoomAXSupport.zoomApplication() else { return }
+
+        if coHostSessionKey != session.id {
+            coHostSessionKey = session.id
+            coHostGranted = []
+        }
+        let readout = ZoomAXSupport.participantsReadout(pid: zoom.pid)
+        guard readout.listAvailable else { return }
+        let history = coHostHistory.load()
+
+        for row in readout.admitted where !row.roles.contains(.me) {
+            guard let match = CoHostMatcher.match(observedName: row.displayName, candidates: group.coHostCandidates, history: history, groupID: group.id) else { continue }
+            let key = NameNormalizer.normalize(row.displayName)
+            guard !coHostGranted.contains(key) else { continue }
+            if row.roles.contains(.coHost) || row.roles.contains(.host) {
+                coHostGranted.insert(key)
+                continue
+            }
+            log("[COHOST] \(row.displayName) matched \(match.candidate.name) (\(match.source.rawValue), \(match.confidence)); assigning.")
+            let outcome = ZoomAXSupport.makeCoHost(displayName: row.displayName, pid: zoom.pid)
+            if outcome.isSuccess {
+                coHostGranted.insert(key)
+                coHostHistory.remember(CoHostAssignmentRecord(groupID: group.id, candidateName: match.candidate.name, observedName: row.displayName, assignedAt: Date()))
+                log("[COHOST] ✓ \(row.displayName): \(outcome.message).")
+                if outcome == .assigned {
+                    notify(title: "Co-host assigned", body: "\(row.displayName) (\(match.candidate.name))")
+                }
+            } else {
+                log("[COHOST] ✗ \(row.displayName): \(outcome.message). Trying again next pass.")
+            }
+        }
+    }
+
+    // MARK: - Launch agent
+
+    func syncLaunchAgent() {
+        let enabled = UserDefaults.standard.bool(forKey: "scheduler.openAppForMeetings")
+        let configuration = configurationProvider()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let message = LaunchAgentScheduler.install(configuration: configuration, enabled: enabled)
+            if enabled { self?.log("[SCHEDULER] \(message)") }
+        }
+    }
+
+    // MARK: - Notifications
+
+    func notify(title: String, body: String) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+}
+
+/// Where the recording API listens. The key lives in the Keychain, not here.
+struct RecordingAPISettings: Equatable {
+    static let enabledKey = "api.enabled"
+    var port: Int
+    var host: String
+    var allowedClients: String
+    var lockWaitSeconds: Int
+
+    static func load(from defaults: UserDefaults = .standard) -> RecordingAPISettings {
+        RecordingAPISettings(
+            port: defaults.object(forKey: "api.port") as? Int ?? 47821,
+            host: defaults.string(forKey: "api.host") ?? "",
+            allowedClients: defaults.string(forKey: "api.allowedClients") ?? "",
+            lockWaitSeconds: defaults.object(forKey: "api.lockWaitSeconds") as? Int ?? 120
+        )
+    }
+
+    func save(to defaults: UserDefaults = .standard) {
+        defaults.set(port, forKey: "api.port")
+        defaults.set(host, forKey: "api.host")
+        defaults.set(allowedClients, forKey: "api.allowedClients")
+        defaults.set(lockWaitSeconds, forKey: "api.lockWaitSeconds")
+    }
+}

@@ -277,11 +277,63 @@ public struct ZoomAccountProfile: Codable, Equatable, Identifiable, Hashable {
     /// Matched against Zoom's saved accounts. An email is strongly preferred:
     /// several saved accounts can share a display name.
     public var accountIdentifier: String
+    /// Which Zoom runs this account's meetings. Auto uses the desktop app while it is free and
+    /// the Web Client when it is already in a meeting.
+    public var preferredEngine: ZoomEnginePreference
+    /// The app-owned browser profile the Web Client signs in with. Empty means one is named
+    /// after the account.
+    public var webProfileName: String?
 
-    public init(id: UUID = UUID(), name: String, accountIdentifier: String) {
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        accountIdentifier: String,
+        preferredEngine: ZoomEnginePreference = .desktop,
+        webProfileName: String? = nil
+    ) {
         self.id = id
         self.name = name
         self.accountIdentifier = accountIdentifier
+        self.preferredEngine = preferredEngine
+        self.webProfileName = webProfileName
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, accountIdentifier, preferredEngine, webProfileName
+    }
+
+    // Profiles saved before engines existed keep running on the desktop app, as they did.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        accountIdentifier = try container.decode(String.self, forKey: .accountIdentifier)
+        preferredEngine = try container.decodeIfPresent(ZoomEnginePreference.self, forKey: .preferredEngine) ?? .desktop
+        webProfileName = try container.decodeIfPresent(String.self, forKey: .webProfileName)
+    }
+
+    /// A browser profile folder name: letters, digits, '.', '_' and '-' only.
+    public var resolvedWebProfileName: String {
+        let source = (webProfileName?.isEmpty == false ? webProfileName! : name)
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        var cleaned = String(source.unicodeScalars.map { allowed.contains($0) && $0.isASCII ? Character($0) : "-" })
+        while cleaned.first.map({ !$0.isLetter && !$0.isNumber }) == true { cleaned.removeFirst() }
+        cleaned = String(cleaned.prefix(64))
+        return cleaned.isEmpty ? "zoom-\(id.uuidString.prefix(8).lowercased())" : cleaned
+    }
+}
+
+public enum ZoomEnginePreference: String, Codable, CaseIterable, Equatable, Hashable {
+    case desktop
+    case web
+    case auto
+
+    public var displayName: String {
+        switch self {
+        case .desktop: return "Zoom desktop app"
+        case .web: return "Zoom Web (browser)"
+        case .auto: return "Auto (desktop, Web when busy)"
+        }
     }
 }
 

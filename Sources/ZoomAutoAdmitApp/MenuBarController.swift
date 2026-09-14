@@ -12,6 +12,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     var onOpenSchedules: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenAttendance: (() -> Void)?
+    var onOpenAutomation: (() -> Void)?
     var onFinalizeAttendance: (() -> Void)?
     var onSnapshotNow: (() -> Void)?
     /// Snapshot evidence lines while a class is running. Deliberately not a
@@ -174,6 +175,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         attendance.submenu = attendanceMenu
         menu.addItem(attendance)
 
+        let automation = NSMenuItem(title: "Automation…", action: #selector(openAutomation), keyEquivalent: "")
+        automation.target = self
+        automation.toolTip = "DEPI dashboard, recording API, Zoom Web meetings and co-host"
+        menu.addItem(automation)
+
         let schedules = NSMenuItem(title: "Schedules", action: nil, keyEquivalent: "")
         schedules.submenu = schedulesSubmenu()
         menu.addItem(schedules)
@@ -317,6 +323,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func openSchedules() { onOpenSchedules?() }
     @objc private func openSettings() { onOpenSettings?() }
     @objc private func openAttendance() { onOpenAttendance?() }
+    @objc private func openAutomation() { onOpenAutomation?() }
     @objc private func finalizeAttendance() { onFinalizeAttendance?() }
     @objc private func snapshotNow() { onSnapshotNow?() }
     @objc private func showRunDetails() { onShowRunDetails?() }
