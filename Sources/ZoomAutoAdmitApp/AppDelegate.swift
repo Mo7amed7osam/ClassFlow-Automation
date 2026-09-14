@@ -1,9 +1,10 @@
 import AppKit
 import OSLog
 import ServiceManagement
+import UserNotifications
 import ZoomAutoAdmitCore
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let logger = Logger(subsystem: "com.mohamedhosam.ZoomAutoAdmit", category: "app")
     private let defaults = UserDefaults.standard
     private var state: AppState!
@@ -15,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var attendanceWindowController: AttendanceWindowController?
     private var automationWindowController: AutomationWindowController?
     private let automationCoordinator = AutomationCoordinator()
+    private let operationsCenter = OperationsCenter()
+    private var dashboardWindowController: DashboardWindowController?
+    private var dashboardRefreshPending = false
     private let ignoreStore = AttendanceIgnoreStore()
     private var unknownParticipantsWindows: [UUID: UnknownParticipantsWindowController] = [:]
     private var automationRefreshPending = false
@@ -100,6 +104,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             automationCoordinator: automationCoordinator
         )
         SchedulerLog.shared.write("[attendance] lifecycle-wired=true")
+        operationsCenter.configurationProvider = { [weak self] in
+            self?.schedulerCoordinator?.currentConfiguration ?? SchedulerConfiguration()
+        }
+        operationsCenter.liveAttendanceSession = { [weak self] in self?.attendanceCoordinator.currentSession }
+        operationsCenter.workflowScheduleID = { [weak self] in self?.schedulerCoordinator?.activeWorkflowScheduleID }
+        operationsCenter.automation = automationCoordinator
+        operationsCenter.onChange = { [weak self] in self?.scheduleDashboardRefresh() }
+        automationCoordinator.operations = operationsCenter
+        schedulerCoordinator.operations = operationsCenter
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().delegate = self
+        }
         // A relaunch mid-class must not abandon the register: the session
         // is on disk, only the timer needs restarting.
         attendanceCoordinator.resumeOpenSession(
@@ -114,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureMenuActions()
         schedulerCoordinator.start()
         automationCoordinator.start()
+        operationsCenter.start()
 
         if enabled {
             checkAccessibilityFromScratch(source: "launch")
@@ -142,6 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 PreJoinCapture.run(openPreview: opensPreview)
             }
         }
+        if CommandLine.arguments.contains("--open-dashboard") {
+            DispatchQueue.main.async { [weak self] in self?.openDashboard(focus: nil) }
+        }
         if CommandLine.arguments.contains("--open-schedules") {
             // Convenience for opening the editor without going through the menu.
             DispatchQueue.main.async { [weak self] in self?.openSchedulerWindow() }
@@ -157,6 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        operationsCenter.stop()
         automationCoordinator.stop()
         schedulerCoordinator?.stop()
         monitor?.stop()
@@ -181,6 +202,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menuBarController.onOpenAttendance = { [weak self] in
             self?.openAttendanceWindow()
+        }
+        menuBarController.onOpenDashboard = { [weak self] in
+            self?.openDashboard(focus: nil)
         }
         menuBarController.onOpenAutomation = { [weak self] in
             self?.openAutomationWindow()
@@ -245,8 +269,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         automationWindowController?.present()
     }
 
+    private func openDashboard(focus sessionKey: String?) {
+        if dashboardWindowController == nil {
+            let controller = DashboardWindowController(
+                center: operationsCenter,
+                configurationProvider: { [weak self] in
+                    self?.schedulerCoordinator.currentConfiguration ?? SchedulerConfiguration()
+                }
+            )
+            controller.onOpenAutomation = { [weak self] in self?.openAutomationWindow() }
+            controller.onOpenAttendance = { [weak self] in self?.openAttendanceWindow() }
+            controller.onRunFollowUp = { [weak self] id in self?.automationCoordinator.runFollowUpNow(id: id) }
+            dashboardWindowController = controller
+        }
+        dashboardWindowController?.present(focus: sessionKey)
+    }
+
+    /// Events arrive in bursts; the dashboard redraws at most once every two seconds.
+    private func scheduleDashboardRefresh() {
+        guard dashboardWindowController?.isVisible == true, !dashboardRefreshPending else { return }
+        dashboardRefreshPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.dashboardRefreshPending = false
+            self?.dashboardWindowController?.refresh()
+        }
+    }
+
+    // MARK: Notifications
+
+    /// Shown even while the app is frontmost: the operator may be looking at the dashboard.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
+    }
+
+    /// Clicking a notification opens its class on the dashboard.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let sessionKey = response.notification.request.content.userInfo["sessionKey"] as? String
+        DispatchQueue.main.async { [weak self] in self?.openDashboard(focus: sessionKey) }
+        completionHandler()
+    }
+
     /// Log lines arrive in bursts; the window redraws at most twice a second.
     private func scheduleAutomationWindowRefresh() {
+        scheduleDashboardRefresh()
         guard automationWindowController?.isVisible == true, !automationRefreshPending else { return }
         automationRefreshPending = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in

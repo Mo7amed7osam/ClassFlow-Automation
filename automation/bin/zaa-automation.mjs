@@ -6,6 +6,7 @@
 //   lms-run-session           { credentials, group, day?, startTime?, headed?, dryRun? }
 //   lms-take-attendance       { credentials, group, present[], everyone?, day?, startTime?, dryRun? }
 //   lms-correct-attendance    { credentials, group, present[], everyone?, day?, startTime?, dryRun? }
+//   lms-check-session         { credentials, group, day }   (health check: sign in and count listed sessions, read-only)
 //   lms-sync-record-link      { credentials, group, day, driveUrl, dryRun? }   (Google Sheet → LMS)
 //   web-meeting               { meetingUrl, profile, headless?, sessionId?, captureAttendance? }        (runs until stdin closes)
 //   read-timetable            { path }
@@ -17,7 +18,7 @@ import process from "node:process";
 import { withDashboardLock } from "../src/lock.mjs";
 import { firstLine } from "../src/browser.mjs";
 import { log, readFirstLine, readRequest, result } from "../src/io.mjs";
-import { correctAttendance, runSession, syncRecordLink, takeAttendance, verifySignIn } from "../src/lms.mjs";
+import { checkSession, correctAttendance, runSession, syncRecordLink, takeAttendance, verifySignIn } from "../src/lms.mjs";
 import { parseRoster, parseTimetable, readFirstSheet } from "../src/workbooks.mjs";
 
 const command = process.argv[2];
@@ -30,6 +31,7 @@ const oneShot = {
   "lms-run-session": (request) => withDashboardLock(lockWait(request), () => runSession(request)),
   "lms-take-attendance": (request) => withDashboardLock(lockWait(request), () => takeAttendance(request)),
   "lms-correct-attendance": (request) => withDashboardLock(lockWait(request), () => correctAttendance(request)),
+  "lms-check-session": (request) => withDashboardLock(lockWait(request), () => checkSession(request)),
   "lms-sync-record-link": (request) => withDashboardLock(lockWait(request), () => syncRecordLink(request)),
   "read-timetable": async (request) => ({ success: true, ...parseTimetable(await readFirstSheet(request.path)) }),
   "read-roster": async (request) => ({ success: true, ...parseRoster(await readFirstSheet(request.path)) }),

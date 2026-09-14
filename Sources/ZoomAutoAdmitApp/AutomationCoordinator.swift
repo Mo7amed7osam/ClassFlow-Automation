@@ -40,6 +40,10 @@ final class AutomationCoordinator {
     /// Web meetings report admissions and attendance through these.
     var onWebAdmitted: (() -> Void)?
     var onChange: (() -> Void)?
+    /// The event log and notifications. Nil in tests, where notifications go out directly.
+    weak var operations: OperationsCenter? {
+        didSet { recordingSync.operations = operations }
+    }
 
     private(set) var recentLog: [String] = []
     private let logLock = NSLock()
@@ -152,13 +156,15 @@ final class AutomationCoordinator {
         }
         guard hasLmsSignIn else {
             log("[LMS] No dashboard sign-in is saved; the dashboard steps for \(group.dashboardGroupName) were skipped.")
-            notify(title: "LMS sign-in missing", body: "Add it in Automation → LMS to start sessions on the dashboard.")
+            report(OperationsEvent(kind: .lmsSessionFailed, severity: .failure, groupCode: group.dashboardGroupName, sessionDate: LmsFollowUpQueue.dashboardDateAndTime(startedAt).0, scheduleID: schedule.id,
+                                   title: "LMS sign-in missing ❌", message: "No dashboard steps will run for this class.\n\nFix: add the sign-in in Automation → LMS."), notify: true)
             return
         }
 
         if let problem = LmsGroupMapping.problem(for: group, in: configurationProvider()) {
             log("[LMS] ✗ Dashboard steps for \(schedule.name) refused: \(problem.message)")
-            notify(title: "Dashboard steps refused", body: problem.message)
+            report(OperationsEvent(kind: .lmsSessionFailed, severity: .failure, groupCode: group.dashboardGroupName, sessionDate: LmsFollowUpQueue.dashboardDateAndTime(startedAt).0, scheduleID: schedule.id,
+                                   title: "Dashboard steps refused ❌", message: problem.message), notify: true)
             return
         }
 
@@ -187,8 +193,12 @@ final class AutomationCoordinator {
             self.log("[LMS] Meeting live for \(dashboardGroup) (\(engine.rawValue)); starting its dashboard session.")
             let result = self.lms.runSession(group: dashboardGroup, date: date, startTime: time, settings: settings, onMessage: self.helperLine)
             self.log("[LMS] \(result.success ? "✓" : "✗") \(result.message)")
-            if !result.success {
-                self.notify(title: "Run Session did not complete", body: result.message)
+            if result.success {
+                self.report(OperationsEvent(kind: .lmsSessionStarted, severity: .success, groupCode: dashboardGroup, sessionDate: date, scheduleID: schedule.id,
+                                            title: "LMS session started\(settings.dryRun ? " (rehearse)" : "")", message: result.message), notify: false)
+            } else {
+                self.report(OperationsEvent(kind: .lmsSessionFailed, severity: .failure, groupCode: dashboardGroup, sessionDate: date, scheduleID: schedule.id,
+                                            title: "Run Session did not complete ❌", message: "Reason:\n\(result.message)"), notify: true)
             }
         }
     }
@@ -241,6 +251,8 @@ final class AutomationCoordinator {
             // Not an attempt: nothing was sent, and retrying cannot fix a mapping.
             followUps.postpone(item, until: now.addingTimeInterval(LmsFollowUpQueue.retryAfter), reason: problem.message)
             log("[LMS] ✗ \(item.describe) refused: \(problem.message)")
+            report(event(for: item, kind: .lmsStepFailed, severity: .failure, title: "\(item.step.displayName) refused ❌",
+                         message: "Reason:\n\(problem.message)\n\nRetry scheduled in 15 minutes"), notify: true)
             return
         }
         log("[LMS] Running \(item.describe)")
@@ -250,6 +262,7 @@ final class AutomationCoordinator {
             guard let session = register(for: item) else {
                 followUps.fail(item, reason: "No attendance register was found for this class.", at: now)
                 log("[LMS] ✗ \(item.describe): no attendance register was found.")
+                reportFailure(item, reason: "No attendance register was found for this class.")
                 return
             }
             let present = LmsPresentNames.present(in: session)
@@ -265,28 +278,63 @@ final class AutomationCoordinator {
             if result.success {
                 followUps.complete(item)
                 log("[LMS] ✓ \(result.message)")
-                if item.step == .takeAttendance && !settings.dryRun {
-                    notify(title: "Attendance uploaded", body: result.message)
+                let plan = result.body["plan"]
+                let joined = plan?["joinedCount"]?.number.map { Int($0) }
+                let notJoined = plan?["notJoinedCount"]?.number.map { Int($0) }
+                let rehearse = settings.dryRun ? " (rehearse)" : ""
+                if item.step == .takeAttendance {
+                    let counts = joined.map { "\($0) Joined\n\(notJoined ?? 0) Not Joined" } ?? result.message
+                    report(event(for: item, kind: .attendanceUploaded, severity: .success, title: "Attendance uploaded successfully ✅\(rehearse)", message: counts),
+                           notify: !settings.dryRun)
+                } else {
+                    let changes = result.body["changes"]?.array?.count ?? 0
+                    report(event(for: item, kind: .attendanceCorrected, severity: .success, title: "Late joiners corrected ✅\(rehearse)",
+                                 message: changes == 0 ? "The dashboard already matched" : "\(changes) row(s) changed"), notify: false)
                 }
             } else if item.step == .takeAttendance, result.body["alreadyTaken"]?.bool == true {
                 // Taken by hand already: the late-joiner pass will reconcile it.
                 followUps.complete(item)
                 log("[LMS] Attendance for \(item.group) was already taken on the dashboard; leaving it to the correction pass.")
+                report(event(for: item, kind: .attendanceUploaded, severity: .success, title: "Attendance already taken", message: "It was taken on the dashboard already; the late-joiner pass reconciles it"), notify: false)
             } else if item.step == .correctAttendance, result.body["notTakenYet"]?.bool == true,
                       followUps.read().contains(where: { $0.step == .takeAttendance && $0.group == item.group && $0.sessionDate == item.sessionDate }) {
                 followUps.postpone(item, until: now.addingTimeInterval(LmsFollowUpQueue.retryAfter), reason: "Waiting for the attendance upload first.")
             } else {
                 followUps.fail(item, reason: result.message, at: now)
                 log("[LMS] ✗ \(result.message)")
-                if item.attempts + 1 >= LmsFollowUpQueue.maximumAttempts {
-                    notify(title: "\(item.step.displayName) gave up", body: "\(item.describe): \(result.message)")
-                }
+                reportFailure(item, reason: result.message)
             }
 
         case .attachRecording:
             // The old start + 4 hours timer. Recording links come from the Recording Sync now.
             followUps.complete(item)
             log("[RECORDINGS] Removed a queued start + 4h recording step for \(item.group) \(item.sessionDate); Recording Sync handles recording links.")
+        }
+    }
+
+    private func event(for item: LmsFollowUp, kind: OperationsEventKind, severity: OperationsSeverity, title: String, message: String) -> OperationsEvent {
+        OperationsEvent(kind: kind, severity: severity, groupCode: item.group, sessionDate: item.sessionDate, scheduleID: item.scheduleID, title: title, message: message)
+    }
+
+    /// A failed attempt: grouped while it is retried, and said plainly once it has given up.
+    private func reportFailure(_ item: LmsFollowUp, reason: String) {
+        let gaveUp = item.attempts + 1 >= LmsFollowUpQueue.maximumAttempts
+        let verb = item.step == .takeAttendance ? "Attendance upload" : item.step.displayName
+        report(
+            event(for: item, kind: gaveUp ? .lmsStepGaveUp : .lmsStepFailed, severity: .failure,
+                  title: gaveUp ? "\(verb) gave up ❌" : "\(verb) failed ❌",
+                  message: "Reason:\n\(reason)\n\n" + (gaveUp ? "No more automatic retries; run it from the dashboard." : "Retry scheduled in 15 minutes")),
+            notify: true,
+            key: "\(OperationsSessionKey.make(groupCode: item.group, sessionDate: item.sessionDate))|\(item.step.rawValue)|\(gaveUp ? "gaveUp" : "failed")"
+        )
+    }
+
+    /// Into the event log when there is one; otherwise the plain notification it always was.
+    func report(_ event: OperationsEvent, notify: Bool, key: String? = nil) {
+        if let operations {
+            operations.record(event, notify: notify, key: key)
+        } else if notify {
+            self.notify(title: event.groupCode.map { "\($0): \(event.title)" } ?? event.title, body: event.message)
         }
     }
 
@@ -402,6 +450,17 @@ final class AutomationCoordinator {
 
     // MARK: - Web meetings
 
+    var webMeetingScheduleIDs: Set<UUID> {
+        webLock.lock()
+        defer { webLock.unlock() }
+        return Set(webMeetings.keys)
+    }
+
+    /// Health check: sign in and count the group's sessions on a date. Presses nothing.
+    func checkLmsSession(group: String, date: String) -> HealthProbeResults.LmsProbe {
+        lms.checkSession(group: group, date: date, onMessage: helperLine)
+    }
+
     var activeWebMeetingCount: Int {
         webLock.lock()
         defer { webLock.unlock() }
@@ -442,7 +501,8 @@ final class AutomationCoordinator {
                         self.log("[WEB] \(schedule.name): \(names.count) in the meeting, \(session.presentCount) matched.")
                     }
                 case "signInRequired":
-                    self.notify(title: "Zoom Web needs a sign-in", body: "Sign in to Zoom in the browser window for \(profile.name).")
+                    self.report(OperationsEvent(kind: .zoomFailed, severity: .warning, groupCode: group?.dashboardGroupName, sessionDate: LmsFollowUpQueue.dashboardDateAndTime(Date()).0, scheduleID: schedule.id,
+                                                title: "Zoom Web needs a sign-in ⚠️", message: "Sign in to Zoom in the browser window for \(profile.name)."), notify: true)
                 default:
                     break
                 }
@@ -517,7 +577,8 @@ final class AutomationCoordinator {
                 coHostHistory.remember(CoHostAssignmentRecord(groupID: group.id, candidateName: match.candidate.name, observedName: row.displayName, assignedAt: Date()))
                 log("[COHOST] ✓ \(row.displayName): \(outcome.message).")
                 if outcome == .assigned {
-                    notify(title: "Co-host assigned", body: "\(row.displayName) (\(match.candidate.name))")
+                    report(OperationsEvent(kind: .general, severity: .info, groupCode: group.dashboardGroupName, sessionDate: LmsFollowUpQueue.dashboardDateAndTime(session.startedAt).0, scheduleID: session.scheduleID,
+                                           title: "Co-host assigned", message: "\(row.displayName) (\(match.candidate.name))"), notify: operations == nil)
                 }
             } else {
                 log("[COHOST] ✗ \(row.displayName): \(outcome.message). Trying again next pass.")

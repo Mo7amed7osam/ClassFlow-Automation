@@ -13,6 +13,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     var onOpenSettings: (() -> Void)?
     var onOpenAttendance: (() -> Void)?
     var onOpenAutomation: (() -> Void)?
+    var onOpenDashboard: (() -> Void)?
     var onFinalizeAttendance: (() -> Void)?
     var onSnapshotNow: (() -> Void)?
     /// Snapshot evidence lines while a class is running. Deliberately not a
@@ -154,6 +155,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     private func addActionsSection() {
+        let dashboard = NSMenuItem(title: "Dashboard…", action: #selector(openDashboard), keyEquivalent: "d")
+        dashboard.target = self
+        dashboard.toolTip = "Every class today and tomorrow: Zoom, attendance, LMS, recording, health checks"
+        menu.addItem(dashboard)
+
         let attendance = NSMenuItem(title: "Attendance", action: nil, keyEquivalent: "")
         let attendanceMenu = NSMenu()
         let review = NSMenuItem(title: "Review Attendance…", action: #selector(openAttendance), keyEquivalent: "")
@@ -325,6 +331,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func openAttendance() { onOpenAttendance?() }
     @objc private func openAutomation() { onOpenAutomation?() }
     @objc private func finalizeAttendance() { onFinalizeAttendance?() }
+    @objc private func openDashboard() { onOpenDashboard?() }
     @objc private func snapshotNow() { onSnapshotNow?() }
     @objc private func showRunDetails() { onShowRunDetails?() }
     @objc private func quit() { onQuit?() }

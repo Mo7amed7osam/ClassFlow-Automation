@@ -36,6 +36,9 @@ final class SchedulerCoordinator {
     /// Schedules whose Auto Admit run was started by the scheduler, so an end
     /// time only ever stops monitoring the scheduler itself turned on.
     private var schedulerStartedMonitoring = Set<UUID>()
+    private var runningScheduleID: UUID?
+    /// The event log and notifications. Nil in tests, where notifications go out directly.
+    weak var operations: OperationsCenter?
 
     init(
         state: AppState,
@@ -135,6 +138,13 @@ final class SchedulerCoordinator {
         return true
     }
 
+    /// The schedule whose workflow is running, for the dashboard.
+    var activeWorkflowScheduleID: UUID? {
+        workflowLock.lock()
+        defer { workflowLock.unlock() }
+        return isWorkflowRunning ? runningScheduleID : nil
+    }
+
     /// True from the moment a workflow is queued until it finishes.
     var isWorkflowActive: Bool {
         workflowLock.lock()
@@ -190,6 +200,12 @@ final class SchedulerCoordinator {
                 }
             }
 
+            if let operations = self.operations {
+                // The operations layer extends this check, reports it and decides whether to notify.
+                operations.preflightCompleted(schedule: schedule, startsAt: startsAt, preflight: report)
+                DispatchQueue.main.async { [state] in state.setPreflightReport(report.issues.isEmpty ? nil : report) }
+                return
+            }
             guard !report.issues.isEmpty else { return }
             self.notify(
                 title: report.isReady
@@ -233,7 +249,9 @@ final class SchedulerCoordinator {
             return
         }
         isWorkflowRunning = true
+        runningScheduleID = schedule.id
         workflowLock.unlock()
+        report(schedule, kind: .zoomStarting, severity: .info, title: "Zoom starting", message: "Opening \(schedule.meeting.name) with \(profile.name)", notify: false)
 
         DispatchQueue.main.async { [state] in
             state.setRunOutcome(.running(scheduleName: schedule.name))
@@ -298,6 +316,7 @@ final class SchedulerCoordinator {
         switch result {
         case .completed(let autoAdmitStarted):
             schedulerLog.write("Workflow completed for \(schedule.name); autoAdmit=\(autoAdmitStarted)")
+            report(schedule, kind: .zoomStarted, severity: .success, title: "Zoom started", message: autoAdmitStarted ? "Meeting verified; Auto Admit is active" : "Meeting verified; Auto Admit is off", notify: false)
             // Attendance recording begins only once the meeting is verified.
             dispatchAttendanceStart(for: schedule)
             automationCoordinator?.meetingWentLive(
@@ -333,6 +352,7 @@ final class SchedulerCoordinator {
         case .failed(let failure):
             let copy = WorkflowPresentation.copy(for: failure)
             schedulerLog.write("Workflow FAILED for \(schedule.name): \(failure.message)")
+            report(schedule, kind: .zoomFailed, severity: .failure, title: "Zoom did not start ❌", message: "Reason:\n\(copy.title)\n\n\(copy.detail)", notify: true)
             DispatchQueue.main.async { [state] in
                 state.setRunOutcome(.failed(title: copy.title, detail: copy.detail))
             }
@@ -373,6 +393,7 @@ final class SchedulerCoordinator {
         if let automationCoordinator, automationCoordinator.isWebMeetingRunning(for: schedule.id) {
             schedulerLog.write("End time reached for \(schedule.name); closing its Web meeting")
             automationCoordinator.stopWebMeeting(scheduleID: schedule.id)
+            report(schedule, kind: .zoomEnded, severity: .info, title: "Web meeting closed", message: "End time reached", notify: false)
             notify(title: "Web meeting closed", body: "End time reached for \(schedule.name)")
             return
         }
@@ -382,6 +403,7 @@ final class SchedulerCoordinator {
             // still closes at the end time.
             if automationCoordinator?.liveAttendanceSession()?.scheduleID == schedule.id {
                 schedulerLog.write("End time reached for \(schedule.name); closing its attendance register only")
+                report(schedule, kind: .zoomEnded, severity: .info, title: "Class ended", message: "End time reached; register closed", notify: false)
                 DispatchQueue.main.async { [stopAttendance] in stopAttendance(true) }
                 return
             }
@@ -396,6 +418,7 @@ final class SchedulerCoordinator {
             // point at which "not seen yet" honestly becomes "absent".
             stopAttendance(true)
         }
+        report(schedule, kind: .zoomEnded, severity: .info, title: "Class ended", message: "End time reached; Auto Admit stopped and the register closed", notify: false)
         notify(title: "Auto Admit stopped", body: "End time reached for \(schedule.name)")
     }
 
@@ -414,12 +437,14 @@ final class SchedulerCoordinator {
             DispatchQueue.main.async { [state] in
                 state.setRunOutcome(.succeeded(meetingName: schedule.meeting.name, autoAdmitActive: schedule.enablesAutoAdmit))
             }
+            report(schedule, kind: .zoomStarted, severity: .success, title: "Zoom started in Zoom Web", message: detail, notify: false)
             notify(title: "\(schedule.meeting.name) started in Zoom Web", body: detail)
         case .failure(let error):
             schedulerLog.write("[WEB] FAILED for \(schedule.name): \(error.localizedDescription)")
             DispatchQueue.main.async { [state] in
                 state.setRunOutcome(.failed(title: "Web meeting not started", detail: error.localizedDescription))
             }
+            report(schedule, kind: .zoomFailed, severity: .failure, title: "Web meeting not started ❌", message: "Reason:\n\(error.localizedDescription)", notify: true)
             notify(title: "Web meeting not started", body: error.localizedDescription)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [state] in state.clearTransientRunState() }
@@ -445,8 +470,20 @@ final class SchedulerCoordinator {
         }
     }
 
+    /// Into the event log when there is one; the notification is then its decision.
+    private func report(_ schedule: ZoomSchedule, kind: OperationsEventKind, severity: OperationsSeverity, title: String, message: String, notify: Bool) {
+        guard let operations else { return }
+        let group = configuration.group(for: schedule)
+        operations.record(
+            OperationsEvent(kind: kind, severity: severity, groupCode: group?.dashboardGroupName, sessionDate: LmsFollowUpQueue.dashboardDateAndTime(AutomationCoordinator.scheduledStart(of: schedule, around: Date())).0,
+                            scheduleID: schedule.id, title: title, message: message),
+            notify: notify
+        )
+    }
+
+    /// The plain notifications, used only without the operations layer (tests, older wiring).
     private func notify(title: String, body: String) {
-        guard Bundle.main.bundleIdentifier != nil else { return }
+        guard operations == nil, Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

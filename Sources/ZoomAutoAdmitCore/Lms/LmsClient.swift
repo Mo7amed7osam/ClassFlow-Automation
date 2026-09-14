@@ -155,6 +155,27 @@ public final class LmsClient {
         dashboard("lms-sync-record-link", group: group, date: date, startTime: nil, settings: settings, extra: ["driveUrl": driveURL, "replaceZoomRecordingLinks": replaceZoomRecordingLinks], onMessage: onMessage)
     }
 
+    /// Health check: signs in headless and counts the group's sessions on `date`. Presses nothing.
+    public func checkSession(group: String, date: String, onMessage: AutomationHelper.LineHandler? = nil) -> HealthProbeResults.LmsProbe {
+        guard let account = credentials.read() else {
+            return HealthProbeResults.LmsProbe(signedIn: false, sessions: nil, message: "No LMS sign-in is saved.")
+        }
+        let result = helper.run("lms-check-session", request: [
+            "credentials": ["email": account.email, "password": account.password],
+            "group": group,
+            "day": date,
+            "lockWaitSeconds": 90
+        ], timeout: 4 * 60, onMessage: onMessage)
+        if result.failure == "busy" {
+            return HealthProbeResults.LmsProbe(signedIn: true, sessions: nil, message: "The dashboard was busy with another step, so the session list was not read.")
+        }
+        return HealthProbeResults.LmsProbe(
+            signedIn: result.body["signedIn"]?.bool ?? false,
+            sessions: result.body["sessions"]?.number.map { Int($0) },
+            message: result.message
+        )
+    }
+
     private func dashboard(_ command: String, group: String, date: String, startTime: String?, settings: LmsSettings, extra: [String: Any], onMessage: AutomationHelper.LineHandler?) -> AutomationResult {
         guard let account = credentials.read() else {
             return AutomationResult(success: false, message: "No LMS sign-in is saved. Add it in Settings → LMS first.", failure: "notSignedIn")

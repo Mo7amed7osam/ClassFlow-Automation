@@ -35,6 +35,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
     private let spreadsheetField = NSTextField()
     private let syncEnabledButton = NSButton(checkboxWithTitle: "Sync every day at 08:00 Cairo time", target: nil, action: nil)
     private let replaceZoomButton = NSButton(checkboxWithTitle: "Treat an existing Zoom recording link (zoom.us/rec/…) as temporary and replace it", target: nil, action: nil)
+    private let googleTestingModeButton = NSButton(checkboxWithTitle: "This Google app is in Testing mode (its sign-in expires 7 days after connecting; warn before)", target: nil, action: nil)
     private let syncStatus = NSTextField(wrappingLabelWithString: "")
     private let syncTable = NSTableView()
     private var syncRows: [RecordingSyncRecord] = []
@@ -232,7 +233,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         [googleClientIDField, googleClientSecretField, spreadsheetField].forEach { $0.widthAnchor.constraint(equalToConstant: 460).isActive = true }
         spreadsheetField.target = self
         spreadsheetField.action = #selector(syncSettingsChanged)
-        for control in [syncEnabledButton, replaceZoomButton] {
+        for control in [syncEnabledButton, replaceZoomButton, googleTestingModeButton] {
             control.target = self
             control.action = #selector(syncSettingsChanged)
         }
@@ -284,6 +285,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
                 DesignKit.horizontal([label("Client secret"), googleClientSecretField]),
                 DesignKit.horizontal([button("Save Client", #selector(saveGoogleClient)), button("Connect Google…", #selector(connectGoogle)), button("Disconnect", #selector(disconnectGoogle))]),
                 googleStatus,
+                googleTestingModeButton,
                 DesignKit.caption("Read-only access to spreadsheets. You sign in once in the browser; the refresh token is kept in the Keychain and the sync runs without a browser afterwards.", width: 700)
             ]),
             DesignKit.section("Recordings sheet", rows: [
@@ -318,6 +320,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         if spreadsheetField.currentEditor() == nil { spreadsheetField.stringValue = settings.spreadsheetID }
         syncEnabledButton.state = settings.enabled ? .on : .off
         replaceZoomButton.state = settings.replaceZoomRecordingLinks ? .on : .off
+        googleTestingModeButton.state = UserDefaults.standard.bool(forKey: OperationsCenter.googleTestingModeKey) ? .on : .off
         if !googleStatus.stringValue.hasPrefix("…") {
             googleStatus.stringValue = settings.clientID.isEmpty
                 ? "No OAuth client saved yet."
@@ -490,6 +493,7 @@ final class AutomationWindowController: NSWindowController, NSTableViewDataSourc
         settings.enabled = syncEnabledButton.state == .on
         settings.replaceZoomRecordingLinks = replaceZoomButton.state == .on
         settings.save()
+        UserDefaults.standard.set(googleTestingModeButton.state == .on, forKey: OperationsCenter.googleTestingModeKey)
         if wasEnabled != settings.enabled { coordinator.syncLaunchAgent() }
         refresh()
     }

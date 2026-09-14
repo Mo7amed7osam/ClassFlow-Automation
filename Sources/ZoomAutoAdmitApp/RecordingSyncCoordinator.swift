@@ -71,6 +71,7 @@ final class RecordingSyncCoordinator {
     var helperLine: AutomationHelper.LineHandler = { _ in }
     var notify: (String, String) -> Void = { _, _ in }
     var onChange: (() -> Void)?
+    weak var operations: OperationsCenter?
 
     init(
         lms: LmsClient,
@@ -124,6 +125,7 @@ final class RecordingSyncCoordinator {
         Task {
             do {
                 try await oauth.authorize(openURL: { url in DispatchQueue.main.async { NSWorkspace.shared.open(url) } })
+                UserDefaults.standard.set(Date(), forKey: OperationsCenter.googleConnectedAtKey)
                 log("[SHEETS] Google access authorized; the refresh token is in the Keychain.")
                 DispatchQueue.main.async { completion(.success(())) }
             } catch {
@@ -157,6 +159,24 @@ final class RecordingSyncCoordinator {
             }
             log("[SHEETS] Test connection: \(message)")
             DispatchQueue.main.async { completion(message) }
+        }
+    }
+
+    /// Health check: is the token accepted, and which tabs does the sheet have. Changes nothing.
+    /// Synchronous; call it off the main thread.
+    func probeSheet() -> HealthProbeResults.SheetProbe {
+        let spreadsheetID = settings.spreadsheetID
+        switch waitFor({ try await self.oauth.accessToken() }) {
+        case .failure(let error):
+            return HealthProbeResults.SheetProbe(tokenValid: false, tabs: nil, message: error.localizedDescription)
+        case .success:
+            break
+        }
+        switch waitFor({ try await self.sheets.readTabs(spreadsheetID: spreadsheetID) }) {
+        case .success(let tabs):
+            return HealthProbeResults.SheetProbe(tokenValid: true, tabs: tabs.map(\.title), message: "\(tabs.count) tab(s)")
+        case .failure(let error):
+            return HealthProbeResults.SheetProbe(tokenValid: true, tabs: nil, message: error.localizedDescription)
         }
     }
 
@@ -220,7 +240,13 @@ final class RecordingSyncCoordinator {
         case .success(let read): tabs = read
         case .failure(let error):
             log("[SHEETS] ✗ The sheet could not be read: \(error.localizedDescription)")
-            if case GoogleOAuthError.notAuthorized = error { notify("Recording sync needs Google", "Connect Google in Automation → Recording Sync.") }
+            if let operations {
+                operations.record(OperationsEvent(kind: .recordingFailed, severity: .failure, title: "Recording sync could not read the sheet ❌",
+                                                  message: "Reason:\n\(error.localizedDescription)\n\nFix: reconnect Google in Automation → Recording Sync"),
+                                  notify: true, key: "recording-sync|sheet")
+            } else if case GoogleOAuthError.notAuthorized = error {
+                notify("Recording sync needs Google", "Connect Google in Automation → Recording Sync.")
+            }
             record(summary: "Sheet not read: \(error.localizedDescription)", success: false)
             return
         }
@@ -276,6 +302,7 @@ final class RecordingSyncCoordinator {
             let updated = RecordingSyncOutcome.apply(result, to: record, dryRun: lmsSettings.dryRun)
             store.update(updated)
             changed()
+            recordOutcome(updated, message: result.message, dryRun: lmsSettings.dryRun)
             switch updated.state {
             case .attached:
                 attached += 1
@@ -296,9 +323,38 @@ final class RecordingSyncCoordinator {
             + (lmsSettings.dryRun ? " (rehearse: nothing written)" : "")
         log("[SHEETS] Done: \(summary).")
         record(summary: summary, success: true)
-        if conflicts > 0 || failed > 0 {
+        if let operations {
+            if conflicts > 0 || failed > 0 {
+                operations.record(OperationsEvent(kind: failed > 0 ? .recordingFailed : .recordingConflict, severity: failed > 0 ? .failure : .warning,
+                                                  title: "Recording sync needs attention ⚠️", message: summary),
+                                  notify: true, key: "recording-sync|\(schedule.dayKey(Date()))")
+            }
+            operations.recordingSyncFinished()
+        } else if conflicts > 0 || failed > 0 {
             notify("Recording sync needs attention", summary)
         }
+    }
+
+    /// One event per LMS answer; the sync's summary is the notification.
+    private func recordOutcome(_ record: RecordingSyncRecord, message: String, dryRun: Bool) {
+        guard let operations else { return }
+        let kind: OperationsEventKind
+        let severity: OperationsSeverity
+        let title: String
+        switch record.state {
+        case .attached:
+            (kind, severity, title) = (.recordingAttached, .success, "Recording attached ✅")
+        case .conflict:
+            (kind, severity, title) = (.recordingConflict, .warning, "Recording conflict ⚠️")
+        case .failed:
+            (kind, severity, title) = (.recordingFailed, .failure, "Recording not attached ❌")
+        case .pending, .processing:
+            (kind, severity, title) = (.recordingWaiting, .info, dryRun ? "Recording rehearsed" : "Recording still pending")
+        }
+        // A pending answer is not the morning warning; keep it out of that kind.
+        let loggedKind: OperationsEventKind = kind == .recordingWaiting ? .general : kind
+        operations.record(OperationsEvent(kind: loggedKind, severity: severity, groupCode: record.groupCode, sessionDate: record.sessionDate,
+                                          title: title, message: message), notify: false)
     }
 
     private func record(summary: String, success: Bool) {

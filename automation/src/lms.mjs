@@ -457,6 +457,33 @@ export function correctAttendance(request) {
   });
 }
 
+/**
+ * Health check: signs in and counts the group's sessions listed on a day. Read-only - no session
+ * page is opened and nothing is pressed.
+ */
+export async function checkSession(request) {
+  const group = String(request.group ?? "").trim();
+  const day = String(request.day ?? "").trim();
+  const account = request.credentials;
+  if (!account?.email || !account?.password) return fail(LmsFailure.notSignedIn, "No LMS sign-in is saved.", { signedIn: false });
+  if (!group || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return fail(LmsFailure.failed, "A group and a yyyy-MM-dd date are required.", { signedIn: false });
+  const context = await launchProfile(DASHBOARD_PROFILE, { headless: true, args: QUIET_CHROME_SWITCHES });
+  let signedIn = false;
+  try {
+    const page = await firstPage(context, STEP_TIMEOUT);
+    await signIn(page, account);
+    await openDaysSessions(page, day);
+    signedIn = true;
+    const found = await listGroupSessions(page, group);
+    return ok(`${found.matches.length} session(s) for ${group} are listed on ${day}.`, { signedIn, sessions: found.matches.length });
+  } catch (error) {
+    const message = error?.userFacing ? error.message : `The dashboard did not answer (${error?.name ?? "Error"}).`;
+    return fail(signedIn ? LmsFailure.failed : LmsFailure.notSignedIn, message, { signedIn });
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 /** Signs in with the saved account, or accepts a profile whose sign-in is still valid. */
 export async function verifySignIn(request) {
   const account = request.credentials;
