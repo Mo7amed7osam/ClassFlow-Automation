@@ -256,7 +256,8 @@ function LmsCard({ state, working, run }: { state: DashState; working: string | 
   const [adding, setAdding] = useState(false)
   const [label, setLabel] = useState('')
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState(state.me?.role === 'admin' ? 'admin' : 'coordinator')
+  // The account's role is the signed-in person's: nothing to choose.
+  const role = state.me?.role === 'admin' ? 'admin' : 'coordinator'
   const [password, setPassword] = useState('')
   const who = state.me?.username
   return (
@@ -272,7 +273,7 @@ function LmsCard({ state, working, run }: { state: DashState; working: string | 
           return (
             <li key={a.id} className={active ? 'active' : ''}>
               <span className="radio">{active && <i />}</span>
-              <div><b>{a.label}</b><span>{a.email} · {a.role}</span></div>
+              <div><b>{a.label}</b><span>{a.email}</span></div>
               {active ? <span className="tag">In use</span> : (
                 <>
                   <button type="button" className="btn small" disabled={working !== null} onClick={() => run('use', 'useLms', { id: a.id })}>Use</button>
@@ -286,8 +287,7 @@ function LmsCard({ state, working, run }: { state: DashState; working: string | 
       </ul>
       {adding && (
         <form className="form-grid" onSubmit={async (e) => { e.preventDefault(); await run('lms', 'saveLms', { label, email, role, password, makeActive: true }); setPassword(''); setAdding(false) }}>
-          <label className="field"><span>Label</span><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={role === 'admin' ? 'Admin' : 'Coordinator'} /></label>
-          <label className="field"><span>Role on the LMS</span><select value={role} onChange={(e) => setRole(e.target.value)}><option value="coordinator">coordinator</option><option value="admin">admin</option></select></label>
+          <label className="field wide"><span>Label</span><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={role === 'admin' ? 'Admin' : 'Coordinator'} /></label>
           <label className="field wide"><span>LMS email</span><input type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
           <label className="field wide"><span>LMS password {state.lms.onServer ? '(kept encrypted in the database)' : '(kept on this PC until you sign in)'}</span><input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
           <div className="row-actions wide"><button type="submit" className="btn primary" disabled={!email || !password || working !== null}>Save and use</button></div>

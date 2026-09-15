@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Account, Action, MaterialPreview, Row, State } from '../types'
+import type { Action, MaterialPreview, Row, State } from '../types'
 import { ACTIONS, shortGroup } from '../logic'
 import { Icon } from './Icon'
 
@@ -45,30 +45,18 @@ interface SettingsProps {
   onClose: () => void
   chooseTrack: (track: string, kind: 'folder' | 'file') => Promise<void>
   saveSheet: (url: string, tabs: Record<string, string>) => Promise<void>
-  useAccount: (id: string) => Promise<void>
-  removeAccount: (id: string) => Promise<void>
-  saveAccount: (label: string, email: string, role: string, password: string, makeActive: boolean) => Promise<void>
+  onOpenDashboard?: () => void
 }
 
-/** The recordings sheet, and the LMS accounts the app signs in with. */
-export function SettingsPanel({ state, onClose, chooseTrack, saveSheet, useAccount, removeAccount, saveAccount }: SettingsProps) {
+/** The recordings sheet and where the material is. The LMS account is chosen on the Dashboard. */
+export function SettingsPanel({ state, onClose, chooseTrack, saveSheet, onOpenDashboard }: SettingsProps) {
   const [url, setUrl] = useState(state.sheet.url)
   const [tabs, setTabs] = useState<Record<string, string>>(state.sheet.tabs)
-  const [label, setLabel] = useState('')
-  const [email, setEmail] = useState('')
-  const [role, setRole] = useState('coordinator')
-  const [password, setPassword] = useState('')
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
   }, [onClose])
-  const add = async (makeActive: boolean) => {
-    await saveAccount(label, email, role, password, makeActive)
-    setPassword('')
-    setLabel('')
-    setEmail('')
-  }
   return (
     <div className="scrim drawer-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <aside className="drawer" role="dialog" aria-modal="true" aria-label="Sessions settings">
@@ -108,28 +96,9 @@ export function SettingsPanel({ state, onClose, chooseTrack, saveSheet, useAccou
         </section>
 
         <section>
-          <h3><Icon name="user" size={16} /> LMS accounts</h3>
-          <p className="muted">The account the app signs in to the LMS with. Passwords go to Windows Credential Manager.</p>
-          <ul className="accounts">
-            {state.accounts.map((a: Account) => (
-              <li key={a.id} className={a.active ? 'active' : ''}>
-                <div><b>{a.label}</b><span>{a.email} · {a.role}</span></div>
-                {a.active ? <span className="tag">In use</span> : <button type="button" className="btn small" onClick={() => useAccount(a.id)}>Use</button>}
-                {!a.active && <button type="button" className="btn small ghost danger" onClick={() => removeAccount(a.id)}>Remove</button>}
-              </li>
-            ))}
-          </ul>
-          <div className="form-grid">
-            <label className="field"><span>Label</span><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Admin" /></label>
-            <label className="field"><span>Role</span>
-              <select value={role} onChange={(e) => setRole(e.target.value)}><option value="coordinator">coordinator</option><option value="admin">admin</option></select></label>
-            <label className="field wide"><span>Email</span><input type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-            <label className="field wide"><span>Password</span><input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
-          </div>
-          <div className="row-actions">
-            <button type="button" className="btn" disabled={!email || !password} onClick={() => add(false)}>Save</button>
-            <button type="button" className="btn primary" disabled={!email || !password} onClick={() => add(true)}>Save and use</button>
-          </div>
+          <h3><Icon name="user" size={16} /> LMS account</h3>
+          <p className="muted">Signs in to the LMS as <b>{state.account.split(' — ')[0] || 'no account yet'}</b>. Each person chooses their own LMS account on the Dashboard (Your LMS account).</p>
+          {onOpenDashboard && <button type="button" className="btn" onClick={onOpenDashboard}>Open the Dashboard</button>}
         </section>
       </aside>
     </div>

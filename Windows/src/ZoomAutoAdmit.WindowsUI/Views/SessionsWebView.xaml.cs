@@ -200,6 +200,10 @@ public partial class SessionsWebView : UserControl
                     return;
                 }
                 case "open": OpenOutside(S("url")); Reply(id, true); return;
+                case "openPage":
+                    (DataContext as MainViewModel)?.NavigateCommand.Execute(MainViewModel.DashboardPage.ToString());
+                    Reply(id, true);
+                    return;
                 case "useAccount": model.UseAccount(S("id")); Reply(id, new { ok = true, message = model.Status }); PushState(); return;
                 case "removeAccount": model.RemoveAccount(S("id")); Reply(id, new { ok = true, message = model.Status }); PushState(); return;
                 case "saveAccount":

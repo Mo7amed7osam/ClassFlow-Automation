@@ -17,14 +17,15 @@ public sealed class LmsServerAccounts(CentralApiClient api, LmsAccountDirectory?
     public bool CanKeepPasswords { get; private set; } = true;
 
     /// <summary>
-    /// Reads the user's accounts. The first time (nothing on the server yet) the accounts this PC
-    /// already has are uploaded, so nothing has to be typed again. Then the one in use is copied here.
+    /// Reads the user's accounts. The first time the admin signs in (nothing on the server yet) the
+    /// accounts this PC already has are uploaded, so nothing has to be typed again; a coordinator
+    /// never gets this PC's accounts - they add their own. Then the one in use is copied here.
     /// </summary>
     public async Task<string?> SyncAsync(CancellationToken token = default)
     {
         var answer = await api.LmsAccountsAsync(token);
         CanKeepPasswords = answer.CanKeepPasswords;
-        if (answer.Accounts.Count == 0 && answer.CanKeepPasswords)
+        if (answer.Accounts.Count == 0 && answer.CanKeepPasswords && api.Me?.IsAdmin == true)
         {
             var active = _local.Active();
             int uploaded = 0;

@@ -108,14 +108,20 @@ public partial class DashboardWebView : UserControl
                 sessions.UseAccount(Text(p, "id"));
                 return Done(sessions.Status);
             case "saveLms":
+            {
+                // The LMS account is the signed-in person's, so its role is theirs; before anyone signs
+                // in, the server PC's is the admin's and a coordinator's PC's a coordinator's.
+                string role = central.IsSignedIn ? (central.IsAdmin ? "admin" : "coordinator")
+                    : main.RecordingsDashboard.IsClientMode ? "coordinator" : "admin";
                 if (_serverLms != null)
                 {
-                    string? saved = await _serverLms.SaveAsync(Text(p, "label"), Text(p, "email"), Text(p, "role"), Text(p, "password"), Flag(p, "makeActive"));
+                    string? saved = await _serverLms.SaveAsync(Text(p, "label"), Text(p, "email"), role, Text(p, "password"), Flag(p, "makeActive"));
                     sessions.ReloadAccounts();
                     return Done($"Saved in the database (the password encrypted). {saved}");
                 }
-                sessions.SaveAccount(Text(p, "label"), Text(p, "email"), Text(p, "role"), Text(p, "password"), Flag(p, "makeActive"));
+                sessions.SaveAccount(Text(p, "label"), Text(p, "email"), role, Text(p, "password"), Flag(p, "makeActive"));
                 return Done(sessions.Status);
+            }
             case "removeLms":
                 if (_serverLms != null) { await _serverLms.RemoveAsync(Text(p, "id")); sessions.ReloadAccounts(); return Done("Removed from the database."); }
                 sessions.RemoveAccount(Text(p, "id"));

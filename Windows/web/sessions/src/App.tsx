@@ -240,9 +240,7 @@ export function App() {
         <SettingsPanel state={state} onClose={() => setSettings(false)}
           chooseTrack={async (track, kind) => { await run('track', async () => { const r = await api.trackFolder(track, kind); return r.message ? r : undefined }) }}
           saveSheet={async (url, tabs) => { await run('save', () => api.saveSheet(url, tabs)) }}
-          useAccount={async (id) => { await run('use', () => api.useAccount(id)) }}
-          removeAccount={async (id) => { await run('remove', () => api.removeAccount(id)) }}
-          saveAccount={async (l, e, r, p, m) => { await run('account', () => api.saveAccount(l, e, r, p, m)) }} />
+          onOpenDashboard={() => { setSettings(false); api.openPage('dashboard') }} />
       )}
       <Toasts toasts={toasts} dismiss={(id) => setToasts((all) => all.filter((t) => t.id !== id))} />
     </div>

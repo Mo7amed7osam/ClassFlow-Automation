@@ -66,6 +66,8 @@ export const api = {
   sheetAll: () => call<Result>('sheetAll'),
   saveSheet: (url: string, tabs: Record<string, string>) => call<Result>('saveSheet', { url, tabs }),
   open: (url: string) => call<boolean>('open', { url }),
+  /** Another page of the app (the Dashboard, where the LMS account is chosen). */
+  openPage: (page: 'dashboard') => call<boolean>('openPage', { page }),
   materialFolder: (group: string, date: string, start: string, clear = false) => call<Result>('materialFolder', { group, date, start, clear }),
   trackFolder: (track: string, kind: 'folder' | 'file' = 'folder') => call<Result>('trackFolder', { track, kind }),
   materialPreview: (group: string, date: string, start: string, kind: '' | 'folder' | 'file' = '') =>
