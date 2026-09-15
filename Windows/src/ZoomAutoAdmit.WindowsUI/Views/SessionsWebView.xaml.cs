@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
+using ZoomAutoAdmit.WebAutomation.Lms;
 using ZoomAutoAdmit.WindowsUI.Infrastructure;
 using ZoomAutoAdmit.WindowsUI.ViewModels;
 
@@ -136,11 +137,32 @@ public partial class SessionsWebView : UserControl
                 }
                 case "trackFolder":
                 {
-                    var picker = new Microsoft.Win32.OpenFolderDialog { Title = $"The {S("track")} material folder", InitialDirectory = MaterialStart(model) };
-                    if (picker.ShowDialog(Window.GetWindow(this)) != true) { Reply(id, new { ok = false, message = "" }); return; }
-                    model.ChooseTrackFolder(S("track"), picker.FolderName);
+                    // A track's default: a folder ("Session N" inside, or files named so) or one file.
+                    string? path = PickPath(S("kind"), $"The {S("track")} material", MaterialStart(model, S("track")));
+                    if (path == null) { Reply(id, new { ok = false, message = "" }); return; }
+                    model.ChooseTrackFolder(S("track"), path);
                     await model.ReloadAsync();
-                    Reply(id, new { ok = true, message = $"{S("track")} material comes from {picker.FolderName}." });
+                    Reply(id, new { ok = true, message = $"{S("track")} material comes from {path}." });
+                    return;
+                }
+                case "materialPreview":
+                {
+                    // The upload box: what a folder or file (or the class's own material) would put up.
+                    // Nothing is kept until Upload.
+                    var date = DateOnly.Parse(S("date")); var start = TimeOnly.Parse(S("start"));
+                    string? path = null;
+                    if (S("kind") is "folder" or "file")
+                    {
+                        path = PickPath(S("kind"), $"Material for {S("group")} · {date:ddd dd MMM} {start:HH\\:mm}", MaterialStart(model, MaterialPlanner.Technical));
+                        if (path == null) { Reply(id, new { ok = false, cancelled = true }); return; }
+                    }
+                    var (plan, files, assignment) = await model.PreviewMaterialAsync(S("group"), date, start, path);
+                    Reply(id, new
+                    {
+                        ok = true, path, label = plan.Label, note = plan.Note, folder = plan.Folder,
+                        files = files.Select(f => f.Title), skipped = plan.Skipped,
+                        assignment = assignment == null ? null : new { title = assignment.Title, deadline = assignment.Deadline.ToString("ddd dd MMM HH:mm") },
+                    });
                     return;
                 }
                 case "setAssignment":
@@ -191,12 +213,34 @@ public partial class SessionsWebView : UserControl
         catch (Exception ex) { Fail(id, ex.Message); }
     }
 
-    /// <summary>Where the folder picker opens: the material's own folder, next to the tracks.</summary>
-    private static string MaterialStart(LmsSessionsViewModel model)
+    /// <summary>
+    /// Where a picker opens: the track's own location when it has one (Technical's is where technical
+    /// material is kept), else next to the other tracks.
+    /// </summary>
+    private static string MaterialStart(LmsSessionsViewModel model, string? track = null)
     {
-        var track = model.Materials.Tracks.Values.FirstOrDefault(Directory.Exists);
-        string? parent = track == null ? null : Path.GetDirectoryName(Path.GetDirectoryName(track));
+        var tracks = model.Materials.Tracks;
+        if (track != null && tracks.TryGetValue(track, out var own))
+        {
+            if (Directory.Exists(own)) return own;
+            if (File.Exists(own) && Path.GetDirectoryName(own) is { } ownFolder) return ownFolder;
+        }
+        var any = tracks.Values.FirstOrDefault(Directory.Exists);
+        string? parent = any == null ? null : Path.GetDirectoryName(Path.GetDirectoryName(any));
         return parent != null && Directory.Exists(parent) ? parent : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    }
+
+    /// <summary>A folder or a file (PDF, ZIP, PowerPoint: what the LMS takes), or null when nothing was chosen.</summary>
+    private string? PickPath(string kind, string title, string start)
+    {
+        var owner = Window.GetWindow(this);
+        if (kind == "file")
+        {
+            var file = new Microsoft.Win32.OpenFileDialog { Title = title, InitialDirectory = start, Filter = "Files the LMS takes (PDF, ZIP, PowerPoint)|*.pdf;*.zip;*.ppt;*.pptx" };
+            return file.ShowDialog(owner) == true ? file.FileName : null;
+        }
+        var folder = new Microsoft.Win32.OpenFolderDialog { Title = title, InitialDirectory = start };
+        return folder.ShowDialog(owner) == true ? folder.FolderName : null;
     }
 
     private object BuildState()
@@ -217,7 +261,11 @@ public partial class SessionsWebView : UserControl
             accounts = model.Accounts.Select(a => new { id = a.Id, label = a.Label, email = a.Email, role = a.Role, active = a.Id == model.SelectedAccount?.Id }),
             sheet = new { url = sheet.Url ?? "", tabs = sheet.Tabs, groups },
             view = model.ViewRange is { } range ? new { from = range.From.ToString("yyyy-MM-dd"), to = range.To.ToString("yyyy-MM-dd") } : null,
-            materials = new { tracks = ZoomAutoAdmit.WebAutomation.Lms.MaterialPlanner.FixedTracks.Select(t => new { track = t, folder = materials.Tracks.GetValueOrDefault(t) ?? "" }) },
+            materials = new
+            {
+                tracks = MaterialPlanner.FixedTracks.Append(MaterialPlanner.Technical)
+                    .Select(t => new { track = t, folder = materials.Tracks.GetValueOrDefault(t) ?? "", isFile = File.Exists(materials.Tracks.GetValueOrDefault(t) ?? "") }),
+            },
             working,
             rows = model.Rows.Select(r => new
             {
@@ -230,7 +278,7 @@ public partial class SessionsWebView : UserControl
                 {
                     track = m.Track, number = m.Number, folder = m.Folder, files = m.Files, skipped = m.Skipped, technical = m.Technical,
                     @fixed = m.Fixed, note = m.Note, assignmentTitle = m.AssignmentTitle, deadline = m.Deadline, noAssignment = m.NoAssignment, done = m.Done,
-                    description = m.Description, assignmentFile = m.AssignmentFile,
+                    description = m.Description, assignmentFile = m.AssignmentFile, chosen = m.Chosen, removedOnLms = m.RemovedOnLms,
                 },
             }),
         };

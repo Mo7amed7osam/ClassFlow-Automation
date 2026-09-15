@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, inApp, onState } from './bridge'
-import type { Action, Row, State } from './types'
-import { bucketOf, groupHue, relative, shortGroup, startOf, type Bucket } from './logic'
+import type { Action, MaterialPreview, Row, State } from './types'
+import { bucketOf, groupHue, relative, shortGroup, startOf, workingKey, type Bucket } from './logic'
 import { SessionCard } from './components/SessionCard'
-import { AssignmentDialog, ConfirmDialog, SettingsPanel, Toasts, type Toast } from './components/Dialogs'
+import { AssignmentDialog, ConfirmDialog, MaterialDialog, SettingsPanel, Toasts, type Toast } from './components/Dialogs'
 import { Icon } from './components/Icon'
 import { DaysPicker, rangeOf, type DayRange } from './components/DaysPicker'
 
@@ -22,6 +22,7 @@ export function App() {
   const [query, setQuery] = useState('')
   const [confirm, setConfirm] = useState<{ row: Row; action: Action } | null>(null)
   const [assignment, setAssignment] = useState<Row | null>(null)
+  const [material, setMaterial] = useState<{ row: Row; preview: MaterialPreview | null } | null>(null)
   const [settings, setSettings] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [checking, setChecking] = useState<string | null>(null)
@@ -62,6 +63,23 @@ export function App() {
     } catch (e) {
       toast(false, (e as Error).message)
     }
+  }
+
+  // The material box: the class's own material first; a folder or file picked in it replaces the
+  // preview, and is kept for the class only when Upload is pressed.
+  const openMaterial = async (row: Row) => {
+    setMaterial({ row, preview: null })
+    try {
+      const preview = await api.materialPreview(row.group, row.date, row.start)
+      setMaterial((m) => (m && m.row.key === row.key ? { row, preview } : m))
+    } catch (e) { toast(false, (e as Error).message); setMaterial(null) }
+  }
+  const pickMaterial = async (kind: 'folder' | 'file') => {
+    if (!material) return
+    const row = material.row
+    const picked = await api.materialPreview(row.group, row.date, row.start, kind)
+    if (picked.cancelled || !picked.ok) return
+    setMaterial((m) => (m && m.row.key === row.key ? { row, preview: picked } : m))
   }
 
   const working = useMemo(() => new Set(state?.working ?? []), [state?.working])
@@ -178,11 +196,8 @@ export function App() {
             <div className="cards">
               {rows.map((row) => (
                 <SessionCard key={row.key} row={row} now={now} working={working}
-                  onAction={(r, a) => setConfirm({ row: r, action: a })} onOpen={(url) => api.open(url)}
-                  onMaterialFolder={(r, clear) => run('folder', async () => {
-                    const result = await api.materialFolder(r.group, r.date, r.start, clear)
-                    return result.message ? result : undefined
-                  })}
+                  onAction={(r, a) => (a === 'material' ? openMaterial(r) : setConfirm({ row: r, action: a }))} onOpen={(url) => api.open(url)}
+                  onMaterial={openMaterial}
                   onAssignment={(r) => setAssignment(r)} />
               ))}
             </div>
@@ -205,6 +220,12 @@ export function App() {
       )}
 
       {confirm && <ConfirmDialog row={confirm.row} action={confirm.action} onCancel={() => setConfirm(null)} onConfirm={(link) => doAction(confirm.row, confirm.action, link)} />}
+      {material && (
+        <MaterialDialog row={material.row} preview={material.preview} busy={working.has(workingKey(material.row, 'material'))}
+          onPick={pickMaterial} onCancel={() => setMaterial(null)}
+          onAssignment={() => setAssignment(material.row)}
+          onUpload={() => { const m = material; setMaterial(null); doAction(m.row, 'material', m.preview?.path ?? undefined) }} />
+      )}
       {assignment && (
         <AssignmentDialog row={assignment} onCancel={() => setAssignment(null)}
           pickFile={async () => { const r = await api.assignmentFile(assignment.group, assignment.date); return r.ok ? r : null }}
@@ -217,7 +238,7 @@ export function App() {
       )}
       {settings && (
         <SettingsPanel state={state} onClose={() => setSettings(false)}
-          chooseTrack={async (track) => { await run('track', async () => { const r = await api.trackFolder(track); return r.message ? r : undefined }) }}
+          chooseTrack={async (track, kind) => { await run('track', async () => { const r = await api.trackFolder(track, kind); return r.message ? r : undefined }) }}
           saveSheet={async (url, tabs) => { await run('save', () => api.saveSheet(url, tabs)) }}
           useAccount={async (id) => { await run('use', () => api.useAccount(id)) }}
           removeAccount={async (id) => { await run('remove', () => api.removeAccount(id)) }}

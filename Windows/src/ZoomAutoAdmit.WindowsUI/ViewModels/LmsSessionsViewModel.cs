@@ -1,4 +1,5 @@
 ﻿using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows.Input;
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.WebAutomation.Lms;
@@ -38,6 +39,10 @@ public sealed record MaterialInfo(
     public string? Description { get; init; }
     /// <summary>The assignment's own file, when one was chosen for it.</summary>
     public string? AssignmentFile { get; init; }
+    /// <summary>The folder or file chosen for this class by hand, if any.</summary>
+    public string? Chosen { get; init; }
+    /// <summary>The LMS showed some of it removed since the app put it there.</summary>
+    public bool RemovedOnLms { get; init; }
 }
 
 /// <summary>
@@ -362,8 +367,21 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 materials.Assignments.TryGetValue(materialKey, out var choice);
                 var files = MaterialPlanner.FilesFor(plan, choice);
                 string fileList = string.Join("\n", files.Select(f => f.Title));
+                // What the LMS showed at its last full read of the session: material or an assignment
+                // removed there shows as missing here, and material put there by hand shows as there.
+                var seenAt = lms?.Session.DetailsReadAt;
+                var shownOnLms = seenAt != null ? lms!.Session.Attachments : null;
+                bool readSinceDone = materialDone != null && seenAt > materialDone.At;
+                var removedFiles = readSinceDone && shownOnLms != null
+                    ? materialDone!.Files.Where(f => !shownOnLms.Any(a => LmsSessionRunner.Shows(a, f))).ToArray() : [];
+                bool removed = materialDone != null && removedFiles.Length > 0 && removedFiles.Length == materialDone.Files.Length;
+                bool alreadyOnLms = materialDone == null && shownOnLms != null && files.Count > 0 && files.All(f => shownOnLms.Any(a => LmsSessionRunner.Shows(a, f.Title)));
+                bool assignmentRemoved = materialDone?.Assignment != null && readSinceDone && lms!.Session.HasAssignment == false;
                 steps.Add(
-                    materialDone != null ? new StepState("material", "Material", "done", $"Done {materialDone.At.LocalDateTime:HH:mm}", $"{plan.Label}\n{string.Join("\n", materialDone.Files)}")
+                    removed ? new StepState("material", "Material", "due", "Removed on the LMS", $"The LMS showed none of it at {seenAt!.Value.LocalDateTime:ddd dd MMM HH:mm}. Upload again to put it back.\n{fileList}")
+                    : removedFiles.Length > 0 ? new StepState("material", "Material", "partial", $"{materialDone!.Files.Length - removedFiles.Length}/{materialDone.Files.Length} on the LMS", $"Removed on the LMS: {string.Join(", ", removedFiles)}")
+                    : materialDone != null ? new StepState("material", "Material", "done", $"Done {materialDone.At.LocalDateTime:HH:mm}", $"{plan.Label}\n{string.Join("\n", materialDone.Files)}")
+                    : alreadyOnLms ? new StepState("material", "Material", "lms", "On the LMS", $"{plan.Label}\n{fileList}")
                     : files.Count == 0 ? new StepState("material", "Material", "none", plan.IsTechnical ? "Choose folder" : plan.Track.Length == 0 ? "None" : "No files", plan.Note)
                     : materialError != null ? new StepState("material", "Material", "retry", "Retry", materialError)
                     : plan.IsFixed && classStart > now ? new StepState("material", "Material", "future", $"{plan.Label} · {files.Count} files at {start:HH\\:mm}", $"{plan.Note}\n{fileList}")
@@ -373,15 +391,21 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 DateTime? deadline = assignment?.Deadline ?? choice?.Deadline;
                 steps.Add(
                     choice?.None == true ? new StepState("assignment", "Assignment", "none", "None", "Marked as having no assignment.")
+                    : assignmentRemoved ? new StepState("assignment", "Assignment", "due", "Removed on the LMS", $"The LMS offered Add Assignment again at {seenAt!.Value.LocalDateTime:ddd dd MMM HH:mm}.\n{materialDone!.Assignment}")
                     : materialDone?.Assignment != null ? new StepState("assignment", "Assignment", "done", $"Due {materialDone.Deadline:dd MMM HH\\:mm}", materialDone.Assignment)
+                    : lms?.Session.HasAssignment == true && seenAt != null ? new StepState("assignment", "Assignment", "lms", "On the LMS", "The session has its assignment (Edit Assignment).")
                     : assignmentTitle == null ? new StepState("assignment", "Assignment", "none", plan.IsTechnical ? "Add" : "None", plan.IsTechnical ? "Add one if this session has an assignment: title, deadline and its file." : "No assignment file in its folder.")
                     : deadline == null ? new StepState("assignment", "Assignment", "due", "Set deadline", assignmentTitle)
                     : new StepState("assignment", "Assignment", classStart > now ? "future" : "due", $"Due {deadline:dd MMM HH\\:mm}", $"{assignmentTitle}\n{assignment?.Description}"));
                 var material = new MaterialInfo(plan.Track, plan.Number, plan.Folder, [.. files.Select(f => f.Title)], plan.Skipped,
-                    plan.IsTechnical, plan.IsFixed, plan.Note, assignmentTitle, deadline?.ToString("yyyy-MM-dd'T'HH:mm"), choice?.None == true, materialDone != null)
+                    plan.IsTechnical, plan.IsFixed, plan.Note, assignmentTitle, deadline?.ToString("yyyy-MM-dd'T'HH:mm"), choice?.None == true,
+                    (materialDone != null && !removed) || alreadyOnLms)
                 {
                     Description = choice?.Description ?? assignment?.Description,
                     AssignmentFile = choice?.File,
+                    Chosen = materials.Folders.GetValueOrDefault(materialKey),
+                    // Removed on the LMS on purpose: shown as empty, never put back by itself.
+                    RemovedOnLms = removed || removedFiles.Length > 0 || assignmentRemoved,
                 };
 
                 bool linkNext = next is "Waiting for the Drive link" or "Add the record link" or "Record link";
@@ -481,7 +505,8 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 "recording" => await RecordingAsync(processor, group, date, start),
                 "sheet" => await CheckSheetAsync(processor, group, date, start),
                 "link" => await AttachGivenLinkAsync(processor, group, date, start, link),
-                "material" or "assignment" => await MaterialAsync(processor, group, date, start),
+                // A folder or file picked in the upload box is kept for the class only now, on Upload.
+                "material" or "assignment" => await MaterialAsync(processor, group, date, start, string.IsNullOrWhiteSpace(link) ? null : link),
                 _ => (false, $"Unknown step '{step}'."),
             };
         }
@@ -635,8 +660,13 @@ public sealed class LmsSessionsViewModel : ObservableObject
     /// done is kept so it is never done twice.
     /// </summary>
     private async Task<(bool Ok, string Message)> MaterialAsync(ZoomAutoAdmit.WindowsUI.Services.LmsFollowUpProcessor processor,
-        string group, DateOnly date, TimeOnly start)
+        string group, DateOnly date, TimeOnly start, string? chosen = null)
     {
+        if (chosen != null)
+        {
+            if (!Directory.Exists(chosen) && !File.Exists(chosen)) return (false, $"{chosen} is not on this PC any more.");
+            ChooseMaterialFolder(group, date, start, chosen);
+        }
         var timetable = Timetable(await _schedules.ListAsync());
         var settings = MaterialSettings.Load();
         // The session's LMS title carries its week, which numbers Freelancing and Soft Skills.
@@ -663,6 +693,24 @@ public sealed class LmsSessionsViewModel : ObservableObject
         else settings.Errors[key] = result.Message;
         settings.Save();
         return (result.IsSuccess, result.Message);
+    }
+
+    /// <summary>
+    /// What a folder or file would put on a class's session, without keeping the choice: the upload
+    /// box shows it, and only Upload keeps it.
+    /// </summary>
+    public async Task<(MaterialPlan Plan, IReadOnlyList<LmsMaterialFile> Files, LmsAssignment? Assignment)> PreviewMaterialAsync(
+        string group, DateOnly date, TimeOnly start, string? path)
+    {
+        var timetable = Timetable(await _schedules.ListAsync());
+        var settings = MaterialSettings.Load();
+        string key = MaterialSettings.KeyOf(group, date, start);
+        if (!string.IsNullOrWhiteSpace(path)) settings.Folders[key] = path;              // this copy only; nothing is saved
+        string? lmsTitle = _cache.Read().Where(c => c.Session.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && c.Session.Date == date)
+            .OrderByDescending(c => c.ReadAt).Select(c => c.Session.Title).FirstOrDefault(t => !string.IsNullOrWhiteSpace(t));
+        var plan = MaterialPlanner.Plan(timetable, group, date, start, settings, lmsTitle);
+        settings.Assignments.TryGetValue(key, out var choice);
+        return (plan, MaterialPlanner.FilesFor(plan, choice), MaterialPlanner.AssignmentFor(plan, choice, date, start));
     }
 
     /// <summary>The folder chosen for one class (a technical class's material), or none.</summary>
@@ -711,7 +759,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
         if (Processor == null || DateTimeOffset.Now - _lastMaterialSweep < TimeSpan.FromMinutes(5)) return;
         _lastMaterialSweep = DateTimeOffset.Now;
         var now = DateTime.Now;
-        var due = Rows.Where(r => r.Material is { Fixed: true, Done: false, Files.Count: > 0 } && r.Date == DateOnly.FromDateTime(now))
+        var due = Rows.Where(r => r.Material is { Fixed: true, Done: false, RemovedOnLms: false, Files.Count: > 0 } && r.Date == DateOnly.FromDateTime(now))
             .Where(r => now >= r.Date.ToDateTime(r.Start).AddMinutes(10) && now <= r.Date.ToDateTime(r.Start).AddHours(8))
             .Where(r => !_materialTried.TryGetValue(r.Key, out var at) || DateTimeOffset.Now - at > TimeSpan.FromMinutes(30))
             .ToList();

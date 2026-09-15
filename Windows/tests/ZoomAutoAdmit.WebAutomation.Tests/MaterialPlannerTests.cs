@@ -138,5 +138,23 @@ public class MaterialPlannerTests : IDisposable
         Assert.Null(MaterialPlanner.AssignmentFor(plan, choice with { None = true }, new(2026, 9, 1), new(19, 0)));
     }
 
+    [Fact]
+    public void AClassOrATrackCanTakeASingleFile()
+    {
+        var settings = Settings();
+        string sheet = Path.Combine(_root, "Week 3", "Lab 3.pdf");
+        Directory.CreateDirectory(Path.GetDirectoryName(sheet)!);
+        File.WriteAllText(sheet, "x");
+        File.WriteAllText(Path.Combine(_root, "Week 3", "other.pdf"), "x");
+
+        // A file chosen for one class is that file only, not its folder.
+        settings.Folders[MaterialSettings.KeyOf("CAI5_AIS4_S7", new(2026, 9, 1), new(19, 0))] = sheet;
+        Assert.Equal("Lab 3", Assert.Single(MaterialPlanner.Plan(Timetable, "CAI5_AIS4_S7", new(2026, 9, 1), new(19, 0), settings).Files).Title);
+
+        // A track set to one file puts that file up for each of its sessions.
+        settings.Tracks[MaterialPlanner.English] = sheet;
+        Assert.Equal("Lab 3", Assert.Single(MaterialPlanner.Plan(Timetable, "CAI5_AIS4_S8", new(2026, 9, 8), new(17, 0), settings).Files).Title);
+    }
+
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
 }

@@ -48,6 +48,8 @@ public sealed class LmsSessionCache(string? path = null)
                         PageUrl = before.Session.PageUrl, RecordLink = before.Session.RecordLink, LinkKind = before.Session.LinkKind,
                         AttendanceTaken = before.Session.AttendanceTaken, PageStatus = s.ListStatus.Length > 0 ? s.ListStatus : before.Session.PageStatus,
                         Actions = before.Session.Actions,
+                        Attachments = before.Session.Attachments, HasAssignment = before.Session.HasAssignment,
+                        DetailsReadAt = before.Session.DetailsReadAt,
                     }
                     : s;
                 fresh.Add(new Entry(session, now, account));

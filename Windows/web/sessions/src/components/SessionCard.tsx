@@ -17,13 +17,13 @@ interface Props {
   working: Set<string>
   onAction: (row: Row, action: Action) => void
   onOpen: (url: string) => void
-  /** Choose (or, with clear, remove) the folder this class's material comes from. */
-  onMaterialFolder: (row: Row, clear?: boolean) => void
+  /** Open the class's material box: what goes up, a folder or file to pick, Upload or Cancel. */
+  onMaterial: (row: Row) => void
   /** Open the assignment's title and deadline. */
   onAssignment: (row: Row) => void
 }
 
-export function SessionCard({ row, now, working, onAction, onOpen, onMaterialFolder, onAssignment }: Props) {
+export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, onAssignment }: Props) {
   const [openStep, setOpenStep] = useState<StepKey | null>(null)
   const [menu, setMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -69,7 +69,8 @@ export function SessionCard({ row, now, working, onAction, onOpen, onMaterialFol
             const inFlight = (STEP_ACTIONS[step.key] ?? []).some((a) => working.has(workingKey(row, a)))
             return (
               <li key={step.key} className={`node s-${inFlight ? 'working' : step.state}`}>
-                <button type="button" className="node-btn" onClick={() => setOpenStep(openStep === step.key ? null : step.key)}
+                <button type="button" className="node-btn"
+                  onClick={() => (step.key === 'material' ? onMaterial(row) : setOpenStep(openStep === step.key ? null : step.key))}
                   aria-expanded={openStep === step.key} title={step.detail ?? step.text}>
                   <span className="orb">
                     {inFlight ? <span className="spinner" /> : <Icon name={step.state === 'future' || step.state === 'none' ? STEP_ICON[step.key] : STATE_ICON[step.state]} size={14} stroke={2.4} />}
@@ -81,22 +82,11 @@ export function SessionCard({ row, now, working, onAction, onOpen, onMaterialFol
                   <div className="popover" role="dialog" aria-label={step.label}>
                     <strong><Icon name={STEP_ICON[step.key]} size={14} /> {step.label}</strong>
                     <p>{step.detail || step.text}</p>
-                    {step.key === 'material' && row.material && row.material.skipped.length > 0 && (
-                      <p className="skipped">Not accepted by the LMS (PDF, ZIP, PowerPoint only): {row.material.skipped.join(', ')}</p>
-                    )}
                     <div className="popover-actions">
                       {(STEP_ACTIONS[step.key] ?? []).filter((a) => actions.includes(a)).map((a) => (
                         <button key={a} type="button" className="btn small" disabled={working.has(workingKey(row, a))}
                           onClick={() => { setOpenStep(null); onAction(row, a) }}>{ACTIONS[a].label}</button>
                       ))}
-                      {step.key === 'material' && (
-                        <button type="button" className="btn small" onClick={() => { setOpenStep(null); onMaterialFolder(row) }}>
-                          {row.material?.technical ? 'Choose folder…' : 'Other folder…'}
-                        </button>
-                      )}
-                      {step.key === 'material' && row.material?.folder && !row.material.fixed && (
-                        <button type="button" className="btn small ghost" onClick={() => { setOpenStep(null); onMaterialFolder(row, true) }}>Remove folder</button>
-                      )}
                       {step.key === 'assignment' && step.state !== 'done' && (
                         <button type="button" className="btn small" onClick={() => { setOpenStep(null); onAssignment(row) }}>
                           <Icon name="calendar" size={13} /> {row.material?.assignmentTitle ? 'Deadline…' : 'Add assignment…'}
@@ -127,17 +117,15 @@ export function SessionCard({ row, now, working, onAction, onOpen, onMaterialFol
               </button>
               {menu && (
                 <div className="menu" role="menu">
-                  {actions.map((a) => (
+                  {actions.filter((a) => a !== 'material').map((a) => (
                     <button key={a} type="button" role="menuitem" disabled={working.has(workingKey(row, a))} onClick={() => { setMenu(false); onAction(row, a) }}>
-                      <Icon name={a === 'run' ? 'play' : a === 'attendance' ? 'people' : a === 'correct' ? 'late' : a === 'complete' ? 'flag' : a === 'zoomRecording' || a === 'recording' ? 'film' : a === 'sheet' || a === 'material' ? 'sheet' : a === 'assignment' ? 'calendar' : 'link'} size={15} />
+                      <Icon name={a === 'run' ? 'play' : a === 'attendance' ? 'people' : a === 'correct' ? 'late' : a === 'complete' ? 'flag' : a === 'zoomRecording' || a === 'recording' ? 'film' : a === 'sheet' ? 'sheet' : a === 'assignment' ? 'calendar' : 'link'} size={15} />
                       {ACTIONS[a].label}
                     </button>
                   ))}
-                  {!row.material?.done && (
-                    <button type="button" role="menuitem" onClick={() => { setMenu(false); onMaterialFolder(row) }}>
-                      <Icon name="sheet" size={15} /> {row.material?.technical ? 'Choose material folder…' : 'Material from another folder…'}
-                    </button>
-                  )}
+                  <button type="button" role="menuitem" onClick={() => { setMenu(false); onMaterial(row) }}>
+                    <Icon name="sheet" size={15} /> Material…
+                  </button>
                   <button type="button" role="menuitem" onClick={() => { setMenu(false); onAssignment(row) }}>
                     <Icon name="calendar" size={15} /> Assignment…
                   </button>

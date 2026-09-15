@@ -195,13 +195,21 @@ public static class MaterialPlanner
         string how = "";
         int? number = track.Length > 0 && track != Technical ? TrackNumber(timetable, group, date, start, track, lmsTitle, settings, out how) : null;
 
-        if (settings.Folders.TryGetValue(key, out var chosen) && Directory.Exists(chosen))
-            return FromFolder(track, number, chosen, null, $"The folder chosen for this class: {Path.GetFileName(chosen)}.");
+        // Chosen for this class by hand: a folder (every file in it) or a single file.
+        if (settings.Folders.TryGetValue(key, out var chosen))
+        {
+            if (Directory.Exists(chosen)) return FromFolder(track, number, chosen, null, $"The folder chosen for this class: {Path.GetFileName(chosen)}.");
+            if (File.Exists(chosen)) return FromFolder(track, number, Path.GetDirectoryName(chosen)!, [chosen], $"The file chosen for this class: {Path.GetFileName(chosen)}.");
+        }
         if (track.Length == 0) return new(track, null, null, [], [], null, "No material for this kind of session.");
-        if (track == Technical) return new(track, null, null, [], [], null, "Choose this session's folder to upload its material.");
+        if (track == Technical) return new(track, null, null, [], [], null, "Choose this session's folder or file to upload its material.");
         if (number == null) return new(track, null, null, [], [], null, $"Not in the timetable, so its {track} number is unknown.");
-        if (!settings.Tracks.TryGetValue(track, out var root) || !Directory.Exists(root))
-            return new(track, number, null, [], [], null, $"The {track} folder is not set (Sessions settings).");
+        if (!settings.Tracks.TryGetValue(track, out var root))
+            return new(track, number, null, [], [], null, $"The {track} material location is not set (Sessions settings).");
+        // A track's default can be one file for all its sessions.
+        if (File.Exists(root)) return FromFolder(track, number, Path.GetDirectoryName(root)!, [root], $"{track}: the file set for all its sessions.");
+        if (!Directory.Exists(root))
+            return new(track, number, null, [], [], null, $"The {track} folder ({root}) is not on this PC.");
 
         var pattern = new Regex($@"^\s*Session\s*0*{number}(?!\d)", RegexOptions.IgnoreCase);
         string? sessionFolder = Directory.EnumerateDirectories(root).FirstOrDefault(d => pattern.IsMatch(Path.GetFileName(d)));

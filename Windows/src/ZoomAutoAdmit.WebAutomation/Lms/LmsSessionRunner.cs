@@ -698,7 +698,15 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     /// <summary>One session as the dashboard shows it, read without changing anything.</summary>
     public sealed record LmsSessionInfo(
         string Group, DateOnly? Date, TimeOnly? Start, string Title, string ListStatus, string? PageUrl,
-        string PageStatus, string RecordLink, string LinkKind, bool? AttendanceTaken, IReadOnlyList<string> Actions);
+        string PageStatus, string RecordLink, string LinkKind, bool? AttendanceTaken, IReadOnlyList<string> Actions)
+    {
+        /// <summary>The titles under Session Attachments, as a full read found them (null: not read).</summary>
+        public IReadOnlyList<string>? Attachments { get; init; }
+        /// <summary>The session has its assignment ("Edit Assignment"); null: not read.</summary>
+        public bool? HasAssignment { get; init; }
+        /// <summary>When the session's own page (attachments, assignment) was last read.</summary>
+        public DateTimeOffset? DetailsReadAt { get; init; }
+    }
 
     private static readonly System.Text.RegularExpressions.Regex GroupCode =
         new(@"\b[A-Z]{2,6}\d*_[A-Z0-9]+_[A-Z0-9]+\b", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
@@ -765,7 +773,9 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
                 continue;
             }
             string pageUrl = "", pageStatus = "", link = "", kind = "unknown";
-            bool? attendance = null;
+            bool? attendance = null, hasAssignment = null;
+            IReadOnlyList<string>? attachments = null;
+            DateTimeOffset? detailsAt = null;
             var actions = new List<string>();
             try
             {
@@ -789,6 +799,13 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
                         if (System.Text.RegularExpressions.Regex.IsMatch(name, @"Session|Record|Attendance|details", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) actions.Add(name);
                     if (actions.Any(a => a.Contains("View details", StringComparison.OrdinalIgnoreCase))) attendance = true;
                     else if (actions.Any(a => a.Contains("Take Session Attendance", StringComparison.OrdinalIgnoreCase))) attendance = false;
+                    // The material and the assignment as the session shows them now: one removed on the
+                    // LMS shows as missing in the app after this read.
+                    attachments = await ReadAttachmentsAsync(page);
+                    var assignmentButton = page.GetByRole(AriaRole.Button, new() { NameRegex = new(@"^\s*(Edit|Add)\s+Assignment\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase) }).First;
+                    if (await assignmentButton.CountAsync() > 0)
+                        hasAssignment = (await assignmentButton.InnerTextAsync()).Contains("Edit", StringComparison.OrdinalIgnoreCase);
+                    detailsAt = DateTimeOffset.Now;
 
                     var edit = page.GetByRole(AriaRole.Button, new() { NameRegex = new(@"Edit\s+Record\s+Link", System.Text.RegularExpressions.RegexOptions.IgnoreCase) }).First;
                     var add = page.GetByRole(AriaRole.Button, new() { NameRegex = new(@"Add\s+Record\s+Link", System.Text.RegularExpressions.RegexOptions.IgnoreCase) }).First;
@@ -814,7 +831,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { pageStatus = $"(error {ex.GetType().Name})"; }
-            result.Add(new(item.Group, item.Date, item.Start, item.Title, item.Status, pageUrl, pageStatus, link, kind, attendance, actions));
+            result.Add(new(item.Group, item.Date, item.Start, item.Title, item.Status, pageUrl, pageStatus, link, kind, attendance, actions)
+            { Attachments = attachments, HasAssignment = hasAssignment, DetailsReadAt = detailsAt });
         }
         return result;
     }
@@ -989,10 +1007,35 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     /// compared with every run of spaces as one; otherwise a file already there looks missing and is
     /// uploaded again.
     /// </summary>
-    internal static bool Shows(string pageText, string title) =>
+    public static bool Shows(string pageText, string title) =>
         OneSpace(pageText).Contains(OneSpace(title), StringComparison.OrdinalIgnoreCase);
 
     private static string OneSpace(string text) => System.Text.RegularExpressions.Regex.Replace(text ?? "", @"\s+", " ").Trim();
+
+    /// <summary>
+    /// The titles listed under "Session Attachments" (an empty list when it says "No attachments
+    /// available"), read from the card that holds that heading.
+    /// </summary>
+    private static async Task<IReadOnlyList<string>?> ReadAttachmentsAsync(IPage page)
+    {
+        try
+        {
+            string text = await page.EvaluateAsync<string>("""
+                () => {
+                  const heading = Array.from(document.querySelectorAll('div, h2, h3')).find(e => e.childElementCount <= 1 && (e.textContent || '').trim() === 'Session Attachments');
+                  if (!heading) return ' ';
+                  let card = heading;
+                  while (card && !(card.className || '').toString().includes('rounded-xl')) card = card.parentElement;
+                  if (!card) return ' ';
+                  const body = card.lastElementChild;
+                  return body ? body.innerText : '';
+                }
+                """);
+            if (text == "\0") return null;
+            return [.. text.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 1 && !l.Contains("No attachments available", StringComparison.OrdinalIgnoreCase))];
+        }
+        catch (PlaywrightException) { return null; }
+    }
 
     /// <summary>The session page's text once its actions and attachments have drawn.</summary>
     private static async Task<string> SessionTextAsync(IPage page)
@@ -1085,6 +1128,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         await page.WaitForTimeoutAsync(2500);
         var text = new System.Text.StringBuilder();
         text.AppendLine("PAGE TEXT: " + (await SessionTextAsync(page)).ReplaceLineEndings(" | "));
+        var listed = await ReadAttachmentsAsync(page);
+        text.AppendLine("ATTACHMENTS READ: " + (listed == null ? "(card not found)" : listed.Count == 0 ? "(none)" : string.Join(" | ", listed)));
         const string formScript = """
             root => Array.from(root.querySelectorAll('label, input, select, textarea, button, [role=combobox], [role=dialog] h2, [role=dialog] h3')).map(e => {
               const t = e.tagName.toLowerCase();

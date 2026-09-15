@@ -48,6 +48,23 @@ export interface Material {
   description?: string | null
   /** The assignment's own file, when one was chosen */
   assignmentFile?: string | null
+  /** The folder or file chosen for this class by hand */
+  chosen?: string | null
+  /** The last full check found some of it removed on the LMS */
+  removedOnLms?: boolean
+}
+
+/** What a folder or file (or the class's own material) would put up; nothing is kept until Upload. */
+export interface MaterialPreview {
+  ok: boolean
+  cancelled?: boolean
+  path?: string | null
+  label: string
+  note: string
+  folder?: string | null
+  files: string[]
+  skipped: string[]
+  assignment?: { title: string; deadline: string } | null
 }
 
 export interface Account {
@@ -67,7 +84,7 @@ export interface State {
   account: string
   accounts: Account[]
   sheet: { url: string; tabs: Record<string, string>; groups: string[] }
-  materials?: { tracks: { track: string; folder: string }[] }
+  materials?: { tracks: { track: string; folder: string; isFile?: boolean }[] }
   /** The days chosen with "Show these days"; null is the usual two weeks back and one ahead. */
   view?: { from: string; to: string } | null
   working: string[]

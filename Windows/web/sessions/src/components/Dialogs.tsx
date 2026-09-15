@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Account, Action, Row, State } from '../types'
+import type { Account, Action, MaterialPreview, Row, State } from '../types'
 import { ACTIONS, shortGroup } from '../logic'
 import { Icon } from './Icon'
 
@@ -43,7 +43,7 @@ export function ConfirmDialog({ row, action, onConfirm, onCancel }: { row: Row; 
 interface SettingsProps {
   state: State
   onClose: () => void
-  chooseTrack: (track: string) => Promise<void>
+  chooseTrack: (track: string, kind: 'folder' | 'file') => Promise<void>
   saveSheet: (url: string, tabs: Record<string, string>) => Promise<void>
   useAccount: (id: string) => Promise<void>
   removeAccount: (id: string) => Promise<void>
@@ -94,13 +94,14 @@ export function SettingsPanel({ state, onClose, chooseTrack, saveSheet, useAccou
         </section>
 
         <section>
-          <h3><Icon name="sheet" size={16} /> Material folders</h3>
-          <p className="muted">Freelancing, Soft Skills and English go up by themselves at class time: a class's number in its track (by the timetable) picks its "Session N" folder or file. A technical class gets the folder you choose on its card.</p>
+          <h3><Icon name="sheet" size={16} /> Material locations</h3>
+          <p className="muted">Where each kind of material is, by default — a folder or one file. Freelancing, Soft Skills and English go up by themselves at class time: a folder's "Session N" (N from the LMS week) is picked, a file goes up for every session. Technical is where the picker opens; each technical class's folder or file is chosen on its card.</p>
           <ul className="accounts">
             {(state.materials?.tracks ?? []).map((t) => (
               <li key={t.track}>
-                <div><b>{t.track}</b><span title={t.folder}>{t.folder || 'Not set'}</span></div>
-                <button type="button" className="btn small" onClick={() => chooseTrack(t.track)}>{t.folder ? 'Change…' : 'Choose…'}</button>
+                <div><b>{t.track}{t.isFile ? ' · file' : ''}</b><span title={t.folder}>{t.folder || 'Not set'}</span></div>
+                <button type="button" className="btn small" onClick={() => chooseTrack(t.track, 'folder')}>Folder…</button>
+                <button type="button" className="btn small" onClick={() => chooseTrack(t.track, 'file')}>File…</button>
               </li>
             ))}
           </ul>
@@ -209,6 +210,59 @@ export function AssignmentDialog({ row, onSave, onCancel, pickFile }: {
           <button type="button" className="btn primary" disabled={!ready} onClick={() => onSave(draft(), false, true)}>Save and create now</button>
         </div>
       </form>
+    </div>
+  )
+}
+
+/**
+ * A class's material in one box: what goes up (its own material, or a folder or file picked here),
+ * then Upload or Cancel. A pick is kept for the class only on Upload.
+ */
+export function MaterialDialog({ row, preview, busy, onPick, onUpload, onCancel, onAssignment }: {
+  row: Row
+  preview: MaterialPreview | null
+  busy: boolean
+  onPick: (kind: 'folder' | 'file') => void
+  onUpload: () => void
+  onCancel: () => void
+  onAssignment: () => void
+}) {
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && onCancel()
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [onCancel])
+  const files = preview?.files ?? []
+  const source = preview?.path ?? preview?.folder ?? row.material?.chosen ?? ''
+  return (
+    <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+      <div className="dialog material-dialog" role="dialog" aria-modal="true" aria-labelledby="material-title">
+        <span className="dialog-badge"><Icon name="sheet" size={14} /> Material</span>
+        <h2 id="material-title">{shortGroup(row.group)} · {row.title}</h2>
+        <p className="dialog-class">{row.date} {row.start}{preview?.label ? ` · ${preview.label}` : ''}</p>
+        {!preview ? <p className="muted"><span className="spinner" /> Reading the material…</p> : (
+          <>
+            {source && <p className="material-source" title={source}><Icon name="open" size={13} /> {source}</p>}
+            {files.length > 0 ? (
+              <ul className="material-files">{files.map((f) => <li key={f}><Icon name="sheet" size={14} /> {f}</li>)}</ul>
+            ) : <p className="muted">{preview.note}</p>}
+            {preview.skipped.length > 0 && <p className="warn-line"><Icon name="alert" size={13} /> Not taken by the LMS (PDF, ZIP, PowerPoint only): {preview.skipped.join(', ')}</p>}
+            {preview.assignment
+              ? <p className="material-assignment"><Icon name="calendar" size={13} /> Assignment “{preview.assignment.title}”, due {preview.assignment.deadline} <button type="button" className="link-btn" onClick={onAssignment}>Change</button></p>
+              : <p className="material-assignment muted"><Icon name="calendar" size={13} /> No assignment <button type="button" className="link-btn" onClick={onAssignment}>Add one</button></p>}
+            {row.material?.removedOnLms && <p className="warn-line"><Icon name="alert" size={13} /> The last check found some of it removed on the LMS; Upload puts back what is missing.</p>}
+          </>
+        )}
+        <div className="dialog-actions spread">
+          <button type="button" className="btn small" disabled={busy} onClick={() => onPick('folder')}><Icon name="open" size={13} /> Choose folder…</button>
+          <button type="button" className="btn small" disabled={busy} onClick={() => onPick('file')}><Icon name="sheet" size={13} /> Choose file…</button>
+          <span className="grow" />
+          <button type="button" className="btn ghost" onClick={onCancel}>Cancel</button>
+          <button type="button" className="btn primary" disabled={busy || !preview || (files.length === 0 && !preview.assignment)} onClick={onUpload}>
+            {busy ? <span className="spinner light" /> : <Icon name="bolt" size={14} />} Upload
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

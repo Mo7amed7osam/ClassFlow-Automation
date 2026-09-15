@@ -1,4 +1,4 @@
-import type { Result, State } from './types'
+import type { MaterialPreview, Result, State } from './types'
 import { demoState } from './demo'
 
 // The page talks to the app through WebView2: { id, method, params } out, { id, result | error }
@@ -67,7 +67,9 @@ export const api = {
   saveSheet: (url: string, tabs: Record<string, string>) => call<Result>('saveSheet', { url, tabs }),
   open: (url: string) => call<boolean>('open', { url }),
   materialFolder: (group: string, date: string, start: string, clear = false) => call<Result>('materialFolder', { group, date, start, clear }),
-  trackFolder: (track: string) => call<Result>('trackFolder', { track }),
+  trackFolder: (track: string, kind: 'folder' | 'file' = 'folder') => call<Result>('trackFolder', { track, kind }),
+  materialPreview: (group: string, date: string, start: string, kind: '' | 'folder' | 'file' = '') =>
+    call<MaterialPreview>('materialPreview', { group, date, start, kind }),
   viewRange: (from: string, to: string, clear = false) => call<Result>('viewRange', { from, to, clear }),
   setAssignment: (group: string, date: string, start: string, title: string, deadline: string, none: boolean, description = '', file = '') =>
     call<Result>('setAssignment', { group, date, start, title, deadline, none, description, file }),
