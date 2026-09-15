@@ -24,7 +24,7 @@ public sealed class LmsFollowUpQueueTests : IDisposable
         var upload = scheduled.Single(item => item.Step == LmsFollowUpStep.TakeAttendance);
         var correct = scheduled.Single(item => item.Step == LmsFollowUpStep.CorrectAttendance);
         var complete = scheduled.Single(item => item.Step == LmsFollowUpStep.CompleteSession);
-        Assert.Equal(At(19, 0), upload.DueAt);                  // an hour in
+        Assert.Equal(At(19, 30), upload.DueAt);                 // an hour and a half in
         Assert.Equal(At(21, 0), correct.DueAt);
         Assert.Equal(At(21, 0), complete.DueAt);
     }
@@ -34,7 +34,7 @@ public sealed class LmsFollowUpQueueTests : IDisposable
     {
         await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start);
 
-        Assert.Empty(await Queue.DueAsync(At(18, 59)));
+        Assert.Empty(await Queue.DueAsync(At(19, 29)));
         var atNineThirty = await Queue.DueAsync(At(19, 45));
         Assert.Equal(LmsFollowUpStep.TakeAttendance, Assert.Single(atNineThirty).Step);
         var later = await Queue.DueAsync(At(21, 30));

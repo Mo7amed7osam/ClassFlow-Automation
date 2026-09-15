@@ -8,7 +8,7 @@ namespace ZoomAutoAdmit.WindowsUI.Services;
 /// Matches each class's Zoom names to its roster by itself, once an hour counted from the class's
 /// time (at 55 minutes, 1 h 55, …) - the Attendance page's "Match with AI" without anyone opening
 /// the page. The name rules go first, then the AI for what they cannot settle (with the app's key,
-/// when one is saved). The result is kept for the LMS upload, which happens an hour in: the upload
+/// when one is saved). The result is kept for the LMS upload, an hour and a half in: the upload
 /// asks for a fresh match first if this one is old, so it never goes up unmatched.
 /// </summary>
 public sealed class AppAttendanceMatcher(

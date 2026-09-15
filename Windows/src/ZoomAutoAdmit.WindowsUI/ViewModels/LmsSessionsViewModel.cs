@@ -295,7 +295,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 if (classStart > now.AddMinutes(20)) { next = zoom.StartsWith("Opens") ? zoom : "Scheduled"; tone = "future"; }
                 else if (zoom == "Not opened" && !running && !finished) { next = "Meeting did not open"; tone = "bad"; }
                 else if (!running && !finished) { next = run.StartsWith('✗') ? "Run Session failed — press it on the LMS" : "Run Session"; tone = run.StartsWith('✗') || past ? "bad" : "live"; }
-                else if (!attendance.StartsWith('✓')) { next = attendance == "—" ? (past ? "Attendance not taken" : "Attendance at 1 h") : $"Attendance {attendance}"; tone = attendance.Contains("Retry") || (past && attendance == "—") ? "bad" : "live"; }
+                else if (!attendance.StartsWith('✓')) { next = attendance == "—" ? (past ? "Attendance not taken" : "Attendance at 1.5 h") : $"Attendance {attendance}"; tone = attendance.Contains("Retry") || (past && attendance == "—") ? "bad" : "live"; }
                 else if (!finished && !complete.StartsWith('✓')) { next = complete == "—" ? "Correction + Complete at 3 h" : $"Complete {complete}"; tone = complete.Contains("Retry") ? "bad" : "live"; }
                 else if (link is "No link" or "—") { next = finished ? "Add the record link" : "Record link"; tone = lms?.Session.LinkKind == "none" ? "warn" : "live"; }
                 else if (link.StartsWith("Zoom")) { next = "Waiting for the Drive link"; tone = "warn"; }

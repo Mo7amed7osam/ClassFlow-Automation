@@ -97,7 +97,7 @@ public sealed class LmsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Writes down the attendance steps this class still owes: the upload an hour in,
+    /// Writes down the attendance steps this class still owes: the upload an hour and a half in,
     /// the late-joiner pass at three hours. They are due whenever the app is next running.
     /// </summary>
     public async Task ScheduleFollowUpAsync(string group, DateOnly date, TimeOnly start)

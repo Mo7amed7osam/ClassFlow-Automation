@@ -67,7 +67,7 @@ export function primaryAction(row: Row, now: Date): Action | null {
   if (hours < -0.25) return null
   if (!isDone(row, 'run') && row.lmsStatus !== 'running' && row.lmsStatus !== 'finished') return 'run'
   if (hours >= 0.25 && hasMaterial(row) && ['due', 'retry'].includes(stepOf(row, 'material')?.state ?? '')) return 'material'
-  if (hours >= 1 && !isDone(row, 'attendance')) return 'attendance'
+  if (hours >= 1.5 && !isDone(row, 'attendance')) return 'attendance'
   if (hours >= 3 && !isDone(row, 'correct') && row.lmsStatus !== 'finished') return 'correct'
   if (hours >= 3 && !isDone(row, 'complete') && row.lmsStatus !== 'finished') return 'complete'
   if (hours >= 2.5 || row.lmsStatus === 'finished') {

@@ -8,7 +8,7 @@ namespace ZoomAutoAdmit.Inspector.Runtime;
 /// <summary>
 /// The LMS half of a class, done the moment its meeting goes live: presses Run Session for the
 /// meeting's group at its scheduled time, and writes down what the class still owes (attendance at
-/// 1 h, the late-joiner correction and Complete Session at 3 h) in the durable follow-up queue.
+/// 1.5 h, the late-joiner correction and Complete Session at 3 h) in the durable follow-up queue.
 ///
 /// It lives in the runtime, not in the window, because a scheduled meeting is usually opened by a
 /// Windows task running <c>meeting-start</c>, a process with no window at all. Tied to the window,

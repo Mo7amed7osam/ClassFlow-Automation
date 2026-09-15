@@ -6,7 +6,7 @@ namespace ZoomAutoAdmit.WebAutomation.Lms;
 /// <summary>What still has to happen to a class after its meeting has started.</summary>
 public enum LmsFollowUpStep
 {
-    /// <summary>Fill in the attendance sheet, an hour in (after the hourly name match at 55 minutes).</summary>
+    /// <summary>Fill in the attendance sheet, an hour and a half in (with a fresh name match first).</summary>
     TakeAttendance,
     /// <summary>Move whoever turned up late from Not-joined to Joined, three hours in.</summary>
     CorrectAttendance,
@@ -44,7 +44,7 @@ public sealed record LmsFollowUp
 /// <summary>
 /// The work a class leaves behind, written down instead of remembered.
 ///
-/// Attendance is filled in an hour after a class starts and corrected at three hours -
+/// Attendance is filled in an hour and a half after a class starts and corrected at three hours -
 /// long after anyone has stopped watching, and long enough that the app will often have been closed
 /// and reopened in between. Keeping the list in memory would mean a class that ran overnight simply
 /// never got its attendance, with nothing to show that anything was missed. So it lives in a file:
@@ -55,7 +55,7 @@ public sealed record LmsFollowUp
 public sealed class LmsFollowUpQueue
 {
     /// <summary>How long after a class starts each step becomes due.</summary>
-    public static readonly TimeSpan TakeAttendanceAfter = TimeSpan.FromHours(1);
+    public static readonly TimeSpan TakeAttendanceAfter = TimeSpan.FromHours(1.5);
     public static readonly TimeSpan CorrectAttendanceAfter = TimeSpan.FromHours(3);
 
     /// <summary>
