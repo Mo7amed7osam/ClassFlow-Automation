@@ -298,7 +298,7 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
                         continue;
                     }
                     if (!inJoinedSection) continue;   // Waiting room is never attendance.
-                    names.Add(new(CleanParticipantName(label)));
+                    names.Add(new(CleanParticipantName(label)) { RowLabel = label });
                 }
                 if (names.Count == 0) throw new InvalidOperationException("Attendance UIA rows unavailable; not proof of empty attendance.");
                 // Complete when the list was read to its end and holds as many people as Zoom counts.

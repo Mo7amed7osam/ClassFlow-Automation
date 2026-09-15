@@ -295,7 +295,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 if (classStart > now.AddMinutes(20)) { next = zoom.StartsWith("Opens") ? zoom : "Scheduled"; tone = "future"; }
                 else if (zoom == "Not opened" && !running && !finished) { next = "Meeting did not open"; tone = "bad"; }
                 else if (!running && !finished) { next = run.StartsWith('✗') ? "Run Session failed — press it on the LMS" : "Run Session"; tone = run.StartsWith('✗') || past ? "bad" : "live"; }
-                else if (!attendance.StartsWith('✓')) { next = attendance == "—" ? (past ? "Attendance not taken" : "Attendance at 1.5 h") : $"Attendance {attendance}"; tone = attendance.Contains("Retry") || (past && attendance == "—") ? "bad" : "live"; }
+                else if (!attendance.StartsWith('✓')) { next = attendance == "—" ? (past ? "Attendance not taken" : "Attendance at 1 h") : $"Attendance {attendance}"; tone = attendance.Contains("Retry") || (past && attendance == "—") ? "bad" : "live"; }
                 else if (!finished && !complete.StartsWith('✓')) { next = complete == "—" ? "Correction + Complete at 3 h" : $"Complete {complete}"; tone = complete.Contains("Retry") ? "bad" : "live"; }
                 else if (link is "No link" or "—") { next = finished ? "Add the record link" : "Record link"; tone = lms?.Session.LinkKind == "none" ? "warn" : "live"; }
                 else if (link.StartsWith("Zoom")) { next = "Waiting for the Drive link"; tone = "warn"; }
@@ -718,6 +718,25 @@ public sealed class LmsSessionsViewModel : ObservableObject
         var plan = MaterialPlanner.Plan(timetable, group, date, start, settings, lmsTitle);
         settings.Assignments.TryGetValue(key, out var choice);
         return (plan, MaterialPlanner.FilesFor(plan, choice), MaterialPlanner.AssignmentFor(plan, choice, date, start));
+    }
+
+    /// <summary>
+    /// Forgets a class on this PC (the admin clearing a test session): what it still owed and what
+    /// was done for it, including a meeting opened by hand near its time. Nothing on the LMS or in
+    /// Zoom is touched. A class with a schedule keeps its card until the schedule is deleted.
+    /// </summary>
+    public async Task<string> DeleteClassAsync(string group, DateOnly date, TimeOnly start)
+    {
+        var schedules = await _schedules.ListAsync();
+        int removed = await _queue.ForgetClassAsync(group, date,
+            t => (ScheduleTiming.ClassStartNear(schedules, group, date, t) ?? t) == start);
+        bool scheduled = schedules.Any(s => s.OccurrenceDate == date && new TimeOnly(s.Time.Hour, s.Time.Minute) == start &&
+                                            (s.GroupName ?? s.AccountId).Equals(group, StringComparison.OrdinalIgnoreCase));
+        ConsoleLogger.Info($"[LMS] Deleted {group} {date:yyyy-MM-dd} {start:HH\\:mm} from this PC ({removed} entries).");
+        await ReloadAsync();
+        return scheduled
+            ? $"{group} {date:dd MMM} {start:HH\\:mm}: its steps were forgotten; it is still on the Schedules page, so the card stays until that schedule is deleted."
+            : $"{group} {date:dd MMM} {start:HH\\:mm} was deleted from this PC.";
     }
 
     /// <summary>The folder chosen for one class (a technical class's material), or none.</summary>

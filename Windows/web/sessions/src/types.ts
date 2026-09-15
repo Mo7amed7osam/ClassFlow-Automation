@@ -89,6 +89,8 @@ export interface State {
   materials?: { tracks: { track: string; folder: string; isFile?: boolean }[] }
   /** The days chosen with "Show these days"; null is the usual two weeks back and one ahead. */
   view?: { from: string; to: string } | null
+  /** The signed-in admin may delete sessions (test ones) from this PC's list. */
+  canDelete?: boolean
   working: string[]
   rows: Row[]
 }

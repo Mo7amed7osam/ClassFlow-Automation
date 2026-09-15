@@ -6,7 +6,7 @@ namespace ZoomAutoAdmit.WebAutomation.Lms;
 /// <summary>What still has to happen to a class after its meeting has started.</summary>
 public enum LmsFollowUpStep
 {
-    /// <summary>Fill in the attendance sheet, an hour and a half in.</summary>
+    /// <summary>Fill in the attendance sheet, an hour in (after the hourly name match at 55 minutes).</summary>
     TakeAttendance,
     /// <summary>Move whoever turned up late from Not-joined to Joined, three hours in.</summary>
     CorrectAttendance,
@@ -44,7 +44,7 @@ public sealed record LmsFollowUp
 /// <summary>
 /// The work a class leaves behind, written down instead of remembered.
 ///
-/// Attendance is filled in an hour and a half after a class starts and corrected at three hours -
+/// Attendance is filled in an hour after a class starts and corrected at three hours -
 /// long after anyone has stopped watching, and long enough that the app will often have been closed
 /// and reopened in between. Keeping the list in memory would mean a class that ran overnight simply
 /// never got its attendance, with nothing to show that anything was missed. So it lives in a file:
@@ -55,7 +55,7 @@ public sealed record LmsFollowUp
 public sealed class LmsFollowUpQueue
 {
     /// <summary>How long after a class starts each step becomes due.</summary>
-    public static readonly TimeSpan TakeAttendanceAfter = TimeSpan.FromHours(1.5);
+    public static readonly TimeSpan TakeAttendanceAfter = TimeSpan.FromHours(1);
     public static readonly TimeSpan CorrectAttendanceAfter = TimeSpan.FromHours(3);
 
     /// <summary>
@@ -189,6 +189,34 @@ public sealed class LmsFollowUpQueue
             };
             return items;
         }, cancellationToken);
+
+    /// <summary>
+    /// Forgets a class altogether (the admin deleting a test session): what it still owed and what
+    /// was done for it. <paramref name="isThisClass"/> says which start times are that class (a
+    /// meeting opened by hand at 18:51 is the 19:00 class). Returns how many entries went.
+    /// </summary>
+    public async Task<int> ForgetClassAsync(string group, DateOnly date, Func<TimeOnly, bool> isThisClass, CancellationToken cancellationToken = default)
+    {
+        bool Match(string g, DateOnly d, TimeOnly t) =>
+            g.Equals(group.Trim(), StringComparison.OrdinalIgnoreCase) && d == date && isThisClass(t);
+        int removed = 0;
+        await UpdateAsync(items => { removed += items.RemoveAll(i => Match(i.Group, i.SessionDate, i.SessionStart)); return items; }, cancellationToken);
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var all = LoadHistory();
+            int gone = all.RemoveAll(o => Match(o.Group, o.SessionDate, o.SessionStart));
+            if (gone > 0)
+            {
+                removed += gone;
+                string temporary = HistoryPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                File.WriteAllText(temporary, JsonSerializer.Serialize(all, Json));
+                File.Move(temporary, HistoryPath, overwrite: true);
+            }
+        }
+        finally { _gate.Release(); }
+        return removed;
+    }
 
     public async Task<IReadOnlyList<LmsFollowUp>> ReadAsync(CancellationToken cancellationToken = default)
     {

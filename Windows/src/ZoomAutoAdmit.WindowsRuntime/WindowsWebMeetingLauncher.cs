@@ -107,7 +107,10 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
                 TimeoutExplicitlySet = false,
                 // Show the browser unless it was deliberately hidden, so a Web meeting is
                 // something you can watch instead of a window that never appears.
-                WebHeaded = AdmissionControl.ShowWebBrowser
+                WebHeaded = AdmissionControl.ShowWebBrowser,
+                // A profile not signed in to Zoom joins as a guest; with the account's saved password
+                // it is signed in as the host first.
+                WebSignInCredential = string.IsNullOrWhiteSpace(context.Account.CredentialReference) ? null : context.Account.CredentialReference,
             };
             // Browser/session lifetime is explicitly owned by this launcher. Do not link it to
             // the short-lived meeting-start command token after startup has been accepted.

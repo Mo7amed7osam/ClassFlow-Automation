@@ -111,6 +111,14 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
     private async Task OpenMeetingAsync(CliOptions options, ZoomBrowserProfile profile)
     {
         var session = _session!;
+        // A profile not yet known to host (new, or it joined as a guest last time) is signed in to
+        // Zoom first with the account's saved password, so it joins as the host.
+        if (!profile.HasReusableSession && ZoomSignInCredential.Read(options.WebSignInCredential) is { } credential)
+        {
+            var outcome = await ZoomWebSignIn.EnsureSignedInAsync(session.Context, credential, _stopCancellation!.Token);
+            if (outcome is ZoomSignInOutcome.NeedsPerson or ZoomSignInOutcome.Failed && session.IsHeadless)
+                throw new ZoomWebSignInRequiredException(profile.Name, $"Profile '{profile.Name}' could not be signed in to Zoom by itself.");
+        }
         try
         {
             await _meetingController.OpenAndWaitForHostControlsAsync(
@@ -161,6 +169,8 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
         bool pageMissingLogged = false;
 
         bool pausedLogged = false;
+        var nextPanelCheck = DateTimeOffset.UtcNow;
+        var nextLauncherCheck = DateTimeOffset.UtcNow;
         while (!linked.IsCancellationRequested)
         {
             try
@@ -185,6 +195,17 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
                 var surface = await _meetingController.FindActiveMeetingAsync(session);
                 if (surface == null)
                 {
+                    // Back on Zoom's "open the app" page (a reload, a rejoin): join from the browser again.
+                    if (DateTimeOffset.UtcNow >= nextLauncherCheck)
+                    {
+                        nextLauncherCheck = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+                        try
+                        {
+                            if (!await ZoomLauncherPage.TryJoinFromBrowserAsync(session.Context))
+                                await ZoomLauncherPage.TryPressJoinOnPreviewAsync(session.Context);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException) { ConsoleLogger.Debug($"WEB_LAUNCHER_PAGE: {ex.Message}"); }
+                    }
                     if (ZoomWebMeetingController.HasOpenMeetingPage(session))
                     {
                         await DelayAsync(options.WebPollIntervalMilliseconds, linked.Token);
@@ -201,6 +222,11 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
                 }
 
                 pageMissingLogged = false;
+                if (DateTimeOffset.UtcNow >= nextPanelCheck)
+                {
+                    nextPanelCheck = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+                    await EnsureParticipantsPanelOpenAsync(surface);
+                }
                 var snapshot = await _dom.CaptureAsync(surface);
                 var decision = WebAdmissionPolicy.Decide(snapshot);
                 if (decision.Kind == WebAdmissionKind.None)
@@ -264,6 +290,31 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
             cancellationToken);
 
     public ValueTask DisposeAsync() => new(StopAsync());
+
+    private static readonly Regex OpenParticipants = new(@"^open the manage participants list pane|^participants(,|\s*\(\d+\))?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex CloseParticipants = new(@"^close the manage participants list pane|^close participants", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// The participants panel is kept open: the waiting room, admission and attendance all read it.
+    /// Opened again whenever it was closed (by Zoom or by a person), never closed.
+    /// </summary>
+    private static async Task EnsureParticipantsPanelOpenAsync(ZoomMeetingSurface surface)
+    {
+        try
+        {
+            if (await ZoomWaitingRoomDom.HasWaitingRoomHeaderAsync(surface.Frame)) return;
+            foreach (var close in await surface.Frame.GetByRole(AriaRole.Button, new() { NameRegex = CloseParticipants }).AllAsync())
+                if (await close.IsVisibleAsync()) return;
+            foreach (var open in await surface.Frame.GetByRole(AriaRole.Button, new() { NameRegex = OpenParticipants }).AllAsync())
+            {
+                if (!await open.IsVisibleAsync()) continue;
+                await open.EvaluateAsync<object?>("element => element.click()");
+                ConsoleLogger.Info("WEB_PARTICIPANTS_PANEL: opened it again.");
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { }
+    }
 
     private async Task<bool> EnsureMeetingControlOffAsync(
         Regex alreadyOffName,

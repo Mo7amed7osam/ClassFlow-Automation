@@ -116,6 +116,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public SessionRolesViewModel SessionRoles { get; }
+    /// <summary>Matches every recorded class to its roster by itself, hourly from the class's time.</summary>
+    public AppAttendanceMatcher AttendanceMatcher { get; } = new();
     public DashboardViewModel Dashboard { get; }
     /// <summary>The central backend's dashboard (recordings, groups, users), and the server this PC may run for it.</summary>
     public RecordingsDashboardViewModel RecordingsDashboard { get; }
@@ -309,6 +311,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (DateTimeOffset.Now - _lastLmsFollowUpCheck >= TimeSpan.FromSeconds(30))
             {
                 _lastLmsFollowUpCheck = DateTimeOffset.Now;
+                // Each recorded class's names are matched to its roster once an hour from its time
+                // (not awaited: an AI round can take a minute, and the page must keep refreshing).
+                // Only in the app itself: a test's view model never sends real names to the AI.
+                if (System.Windows.Application.Current is App) _ = AttendanceMatcher.TickAsync(DateTime.Now);
                 await Lms.ProcessDueFollowUpAsync();
                 if (_disposed) return;
                 await LmsSessions.TickAsync();

@@ -100,6 +100,23 @@ public sealed class ZoomWebMeetingLocator : IZoomWebMeetingLocator
         return false;
     }
 
+    // Controls a guest never has: the host ends the meeting (a guest only leaves), and only the host
+    // has Host tools / Security.
+    private static readonly Regex HostOnlyPattern = new(
+        @"^End(?:\s+Meeting)?$|^Host\s+tools$|security\s+options|^Security$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>The profile is in the meeting as its host, not as a guest.</summary>
+    public static async Task<bool> IsHostAsync(IFrame frame)
+    {
+        try
+        {
+            foreach (var control in await frame.GetByRole(AriaRole.Button, new() { NameRegex = HostOnlyPattern }).AllAsync())
+                if (await control.IsVisibleAsync()) return true;
+        }
+        catch (PlaywrightException) { }
+        return false;
+    }
+
     private static async Task<string> SafeTitleAsync(IPage page)
     {
         try { return await page.TitleAsync(); }

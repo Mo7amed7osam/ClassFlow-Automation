@@ -199,7 +199,11 @@ export function App() {
                   onAction={(r, a) => (a === 'material' ? openMaterial(r) : setConfirm({ row: r, action: a }))} onOpen={(url) => api.open(url)}
                   onMaterial={openMaterial}
                   onAssignment={(r) => setAssignment(r)}
-                  onCheck={(r) => run('check', () => api.check(true, r.date, r.date))} />
+                  onCheck={(r) => run('check', () => api.check(true, r.date, r.date))}
+                  onDelete={state.canDelete ? (r) => {
+                    if (window.confirm(`Delete ${r.group} · ${r.date} ${r.start} from this PC?\n\nWhat it still owes (attendance, Complete…) and what was done for it are forgotten. Nothing is changed on the LMS or in Zoom.`))
+                      run('delete', () => api.deleteClass(r.group, r.date, r.start))
+                  } : undefined} />
               ))}
             </div>
           </section>

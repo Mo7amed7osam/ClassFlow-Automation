@@ -24,7 +24,7 @@ public sealed class LmsFollowUpQueueTests : IDisposable
         var upload = scheduled.Single(item => item.Step == LmsFollowUpStep.TakeAttendance);
         var correct = scheduled.Single(item => item.Step == LmsFollowUpStep.CorrectAttendance);
         var complete = scheduled.Single(item => item.Step == LmsFollowUpStep.CompleteSession);
-        Assert.Equal(At(19, 30), upload.DueAt);
+        Assert.Equal(At(19, 0), upload.DueAt);                  // an hour in
         Assert.Equal(At(21, 0), correct.DueAt);
         Assert.Equal(At(21, 0), complete.DueAt);
     }
@@ -34,7 +34,7 @@ public sealed class LmsFollowUpQueueTests : IDisposable
     {
         await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start);
 
-        Assert.Empty(await Queue.DueAsync(At(19, 0)));
+        Assert.Empty(await Queue.DueAsync(At(18, 59)));
         var atNineThirty = await Queue.DueAsync(At(19, 45));
         Assert.Equal(LmsFollowUpStep.TakeAttendance, Assert.Single(atNineThirty).Step);
         var later = await Queue.DueAsync(At(21, 30));
@@ -50,6 +50,24 @@ public sealed class LmsFollowUpQueueTests : IDisposable
 
         // A meeting reopened, or the app restarted, must not take attendance twice.
         Assert.Equal(4, again.Count);
+    }
+
+    [Fact]
+    public async Task ADeletedClassIsForgottenWithItsHistoryAndNothingElseIs()
+    {
+        await Queue.ScheduleAsync("CAI5_AIS9_S4", Day, new TimeOnly(0, 54));
+        await Queue.ScheduleAsync("CAI5_AIS9_S4", Day, new TimeOnly(0, 57));
+        await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start);
+        var run = (await Queue.ReadAsync()).First(i => i.SessionStart == new TimeOnly(0, 54));
+        await Queue.RecordAsync(run with { Step = LmsFollowUpStep.RunSession, Id = "CAI5_AIS9_S4|2026-09-03|00:54|RunSession" }, false, "Run Session failed");
+
+        int removed = await Queue.ForgetClassAsync("cai5_ais9_s4", Day, t => t == new TimeOnly(0, 54));
+
+        Assert.Equal(5, removed);                                            // four steps owed + one done
+        var left = await Queue.ReadAsync();
+        Assert.Equal(8, left.Count);                                         // the 00:57 test and S8 stay
+        Assert.DoesNotContain(left, i => i.SessionStart == new TimeOnly(0, 54));
+        Assert.Empty(await Queue.ReadHistoryAsync());
     }
 
     [Fact]

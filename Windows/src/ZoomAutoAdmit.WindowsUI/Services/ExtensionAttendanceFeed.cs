@@ -132,6 +132,47 @@ public sealed class ExtensionAttendanceFeed(string? root = null, IGroupRosterSer
             return LoadResults().TryGetValue($"{group}|{date.ToDateTime(start):yyyy-MM-dd HH:mm}", out var r) ? r : null;
     }
 
+    /// <summary>
+    /// What the app itself matched for a class (AppAttendanceMatcher: the name rules, then the AI),
+    /// kept beside the page's results under its own key so neither overwrites the other.
+    /// </summary>
+    public static void SaveAppResults(string group, DateTime start, IReadOnlyList<string> present, IReadOnlyList<string> review, IReadOnlyList<string> absent)
+    {
+        var result = new ClassResult(group, start, [.. present], [.. review], [.. absent], false, DateTimeOffset.Now);
+        lock (ResultsGate)
+        {
+            var all = LoadResults();
+            all[$"{group}|{start:yyyy-MM-dd HH:mm}|app"] = result;
+            Directory.CreateDirectory(Path.GetDirectoryName(ResultsPath)!);
+            string temporary = ResultsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(all, ResultsJson));
+            File.Move(temporary, ResultsPath, overwrite: true);
+        }
+    }
+
+    /// <summary>
+    /// The page's (or, with <paramref name="app"/>, the app's) results for the group's class nearest a
+    /// start time on that day - a class opened by hand is recorded at the minute it went live.
+    /// </summary>
+    public static ClassResult? ResultsNear(string group, DateOnly date, TimeOnly start, TimeSpan window, bool app)
+    {
+        var wanted = date.ToDateTime(start);
+        lock (ResultsGate)
+            return LoadResults()
+                .Where(kv => kv.Key.EndsWith("|app", StringComparison.Ordinal) == app &&
+                             kv.Value.Group.Equals(group, StringComparison.OrdinalIgnoreCase) &&
+                             DateOnly.FromDateTime(kv.Value.Start) == date &&
+                             Math.Abs((kv.Value.Start - wanted).TotalMinutes) <= window.TotalMinutes)
+                .OrderBy(kv => Math.Abs((kv.Value.Start - wanted).TotalMinutes))
+                .Select(kv => kv.Value).FirstOrDefault();
+    }
+
+    public static ClassResult? AppResultsFor(string group, DateOnly date, TimeOnly start)
+    {
+        lock (ResultsGate)
+            return LoadResults().TryGetValue($"{group}|{date.ToDateTime(start):yyyy-MM-dd HH:mm}|app", out var r) ? r : null;
+    }
+
     private static Dictionary<string, ClassResult> LoadResults()
     {
         try

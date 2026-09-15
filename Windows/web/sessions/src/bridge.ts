@@ -73,6 +73,8 @@ export const api = {
   materialPreview: (group: string, date: string, start: string, kind: '' | 'folder' | 'file' = '') =>
     call<MaterialPreview>('materialPreview', { group, date, start, kind }),
   viewRange: (from: string, to: string, clear = false) => call<Result>('viewRange', { from, to, clear }),
+  /** The admin only: forget a class on this PC (a test session). */
+  deleteClass: (group: string, date: string, start: string) => call<Result>('deleteClass', { group, date, start }),
   setAssignment: (group: string, date: string, start: string, title: string, deadline: string, none: boolean, description = '', file = '') =>
     call<Result>('setAssignment', { group, date, start, title, deadline, none, description, file }),
   assignmentFile: (group: string, date: string) => call<{ ok: boolean; path: string; name: string }>('assignmentFile', { group, date }),

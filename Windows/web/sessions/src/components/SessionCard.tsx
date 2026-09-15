@@ -23,9 +23,11 @@ interface Props {
   onAssignment: (row: Row) => void
   /** Read this one class on the LMS now: status, link, attendance, attachments, assignment. */
   onCheck: (row: Row) => void
+  /** The admin only: forget this class on this PC (a test session). */
+  onDelete?: (row: Row) => void
 }
 
-export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, onAssignment, onCheck }: Props) {
+export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, onAssignment, onCheck, onDelete }: Props) {
   const [openStep, setOpenStep] = useState<StepKey | null>(null)
   const [menu, setMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -137,6 +139,11 @@ export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, o
                   {row.lmsUrl && (
                     <button type="button" role="menuitem" onClick={() => { setMenu(false); onOpen(row.lmsUrl!) }}>
                       <Icon name="open" size={15} /> Open on the LMS
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(false); onDelete(row) }}>
+                      <Icon name="trash" size={15} /> Delete this session
                     </button>
                   )}
                 </div>

@@ -24,6 +24,11 @@ public class CliOptions
     public string? TargetEmail { get; set; }
     public Guid? ScheduleId { get; set; }
     public bool WebHeaded { get; set; }
+    /// <summary>
+    /// Where the account's Zoom password is kept ("wincred:…"), so a Web profile that is not signed
+    /// in can be signed in as the host. Only a reference: the secret itself is read when needed.
+    /// </summary>
+    public string? WebSignInCredential { get; set; }
     /// <summary>The dashboard group whose session should be started, e.g. CAI5_AIS4_S7.</summary>
     public string? LmsGroup { get; set; }
     /// <summary>Ask for the LMS email and password and keep them for later runs.</summary>

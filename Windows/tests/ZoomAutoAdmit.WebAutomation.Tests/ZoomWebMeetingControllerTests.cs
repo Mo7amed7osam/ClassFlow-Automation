@@ -22,6 +22,8 @@ public class ZoomWebMeetingControllerTests
     [InlineData("https://us06web.zoom.us/wc/join/91473108490?pwd=abc", "https://us06web.zoom.us/j/91473108490?pwd=abc")]
     [InlineData("https://zoom.us/wc/91473108490/join", "https://zoom.us/j/91473108490")]
     [InlineData("https://zoom.us/my/some.teacher", "https://zoom.us/my/some.teacher")]                     // not a meeting number
+    [InlineData("https://zoom.us/s/96059366847", "https://zoom.us/j/96059366847")]                          // a host's start link
+    [InlineData("https://zoom.us/s/96059366847?zak=secret&pwd=abc#success", "https://zoom.us/j/96059366847?pwd=abc")]
     public void MeetingLinksAlwaysOpenInTheirJForm(string link, string expected)
     {
         Assert.Equal(expected, ZoomWebMeetingController.ValidateMeetingUrl(link).AbsoluteUri);
@@ -72,6 +74,45 @@ public class ZoomWebMeetingControllerTests
         context.Verify(item => item.NewPageAsync(), Times.Never);
     }
 
+    /// <summary>A meeting frame that shows the host's "End" button, or only what a guest has.</summary>
+    private static Mock<IFrame> MeetingFrame(bool host)
+    {
+        var frame = new Mock<IFrame>();
+        var end = new Mock<ILocator>();
+        end.Setup(b => b.IsVisibleAsync(It.IsAny<LocatorIsVisibleOptions>())).ReturnsAsync(true);
+        var buttons = new Mock<ILocator>();
+        buttons.Setup(b => b.AllAsync()).ReturnsAsync(host ? [end.Object] : []);
+        frame.Setup(f => f.GetByRole(AriaRole.Button, It.IsAny<FrameGetByRoleOptions>())).Returns(buttons.Object);
+        return frame;
+    }
+
+    [Fact]
+    public async Task AGuestJoinIsNotRememberedAsASignedInProfile()
+    {
+        string profilesRoot = Path.Combine(Path.GetTempPath(), $"zoom-web-guest-{Guid.NewGuid():N}");
+        try
+        {
+            const string meetingUrl = "https://example.zoom.us/j/123456789";
+            var page = new Mock<IPage>();
+            page.SetupGet(item => item.IsClosed).Returns(false);
+            page.SetupGet(item => item.Url).Returns(meetingUrl);
+            var context = new Mock<IBrowserContext>();
+            context.SetupGet(item => item.Pages).Returns([page.Object]);
+            var profileManager = new ZoomProfileManager(profilesRoot);
+            var session = new ZoomBrowserSession(new Mock<IPlaywright>().Object, context.Object,
+                new ZoomBrowserLaunchPlan(profileManager.GetOrCreate("new-account"), Headless: false));
+            var surface = new ZoomMeetingSurface(page.Object, MeetingFrame(host: false).Object);
+            var controller = new ZoomWebMeetingController(new SequenceMeetingLocator(surface), (_, _) => Task.CompletedTask);
+
+            Assert.Same(surface, await controller.OpenAndWaitForHostControlsAsync(session, meetingUrl, profileManager, CancellationToken.None));
+            Assert.False(session.Profile.HasReusableSession);     // it stays "sign in first" for the next launch
+        }
+        finally
+        {
+            if (Directory.Exists(profilesRoot)) Directory.Delete(profilesRoot, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task ManualLoginSurvivesDetachedFrameAndReacquiresJoinedMeeting()
     {
@@ -82,7 +123,7 @@ public class ZoomWebMeetingControllerTests
             var page = new Mock<IPage>();
             page.SetupGet(item => item.IsClosed).Returns(false);
             page.SetupGet(item => item.Url).Returns(meetingUrl);
-            var frame = new Mock<IFrame>();
+            var frame = MeetingFrame(host: true);
             var context = new Mock<IBrowserContext>();
             context.SetupGet(item => item.Pages).Returns([page.Object]);
             var playwright = new Mock<IPlaywright>();

@@ -199,6 +199,15 @@ public partial class SessionsWebView : UserControl
                     Reply(id, new { ok = true, message = v == null ? "Back to the last two weeks and the next one." : $"{shown} class(es) from {v.Value.From:dd MMM yyyy} to {v.Value.To:dd MMM yyyy} on this PC." });
                     return;
                 }
+                case "deleteClass":
+                {
+                    // The admin's alone: forgetting a class (a test session) on this PC.
+                    if ((DataContext as MainViewModel)?.Central.IsAdmin != true) { Reply(id, new { ok = false, message = "Only the admin can delete sessions." }); return; }
+                    string text = await model.DeleteClassAsync(S("group"), DateOnly.Parse(S("date")), TimeOnly.Parse(S("start")));
+                    Reply(id, new { ok = true, message = text });
+                    PushState();
+                    return;
+                }
                 case "open": OpenOutside(S("url")); Reply(id, true); return;
                 case "openPage":
                     (DataContext as MainViewModel)?.NavigateCommand.Execute(MainViewModel.DashboardPage.ToString());
@@ -265,6 +274,7 @@ public partial class SessionsWebView : UserControl
             accounts = model.Accounts.Select(a => new { id = a.Id, label = a.Label, email = a.Email, role = a.Role, active = a.Id == model.SelectedAccount?.Id }),
             sheet = new { url = sheet.Url ?? "", tabs = sheet.Tabs, groups },
             view = model.ViewRange is { } range ? new { from = range.From.ToString("yyyy-MM-dd"), to = range.To.ToString("yyyy-MM-dd") } : null,
+            canDelete = (DataContext as MainViewModel)?.Central.IsAdmin == true,
             materials = new
             {
                 tracks = MaterialPlanner.FixedTracks.Append(MaterialPlanner.Technical)

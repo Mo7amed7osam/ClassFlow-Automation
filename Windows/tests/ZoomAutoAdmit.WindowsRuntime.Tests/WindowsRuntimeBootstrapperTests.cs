@@ -27,7 +27,8 @@ public sealed class WindowsRuntimeBootstrapperTests : IDisposable
             profilesRoot,
             new AlwaysResolvableCredentialReference(),
             SchedulesPath,
-            new NoTaskScheduler());
+            new NoTaskScheduler(),
+            createAutoEnd: _ => null);
 
         Assert.NotNull(bootstrapper.AccountManager);
         Assert.NotNull(bootstrapper.ProfileMapper);
@@ -57,7 +58,8 @@ public sealed class WindowsRuntimeBootstrapperTests : IDisposable
                     lmsRuns.Enqueue($"{group} {day:yyyy-MM-dd} {start:HH\\:mm}");
                     return Task.FromResult(ZoomAutoAdmit.WebAutomation.Lms.LmsRunResult.Success("started"));
                 },
-                queue, hasLogin: () => true, log: _ => { }));
+                queue, hasLogin: () => true, log: _ => { }),
+            createAutoEnd: _ => null);   // never the real Zoom from a test
         var meeting = new ZoomAutoAdmit.Core.Meetings.ScheduledMeeting(
             new Uri("https://zoom.us/j/12345678901"), "teacher-1", DateTimeOffset.UtcNow,
             GroupId: "CAI5_AIS4_S7", ScheduledStartTime: new DateTimeOffset(2026, 9, 15, 19, 0, 0, TimeSpan.FromHours(3)));

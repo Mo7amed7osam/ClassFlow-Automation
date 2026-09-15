@@ -26,22 +26,38 @@ public sealed class LmsFollowUpProcessor
         IAttendanceHistoryReader? history = null,
         IGroupRosterService? roster = null,
         IAiMatchingService? matching = null,
-        Func<LmsSessionRunner>? runner = null)
+        Func<LmsSessionRunner>? runner = null,
+        AppAttendanceMatcher? appMatcher = null)
     {
         _queue = queue;
         var historyReader = history ?? new AttendanceHistoryReader();
         var rosterStore = roster ?? new GroupRosterStore(log: ConsoleLogger.Info);
         var matchingService = matching ?? new AiMatchingService();
+        var matcher = appMatcher ?? new AppAttendanceMatcher(rosters: rosterStore, matching: matchingService);
         _presentNames = presentNames ?? (async (item, token) =>
         {
-            // What the Attendance page (the extension's) shows is what goes to the LMS: its Present
-            // list, with every confirmation and correction made there. Needs-review names are not
-            // uploaded as present until someone confirms them on the page.
-            var page = ExtensionAttendanceFeed.ResultsFor(item.Group, item.SessionDate, item.SessionStart);
-            if (page != null && (page.Finalized || DateTimeOffset.Now - page.UpdatedAt < TimeSpan.FromHours(2)) && page.Present.Count > 0)
+            var window = ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduleTiming.SameClassWindow;
+            // What the Attendance page shows (with every confirmation made there) and what the app
+            // matched by itself (the name rules, then the AI). A page someone finalized is taken as
+            // it is; otherwise both lists together. Needs-review names are never uploaded as present.
+            var page = ExtensionAttendanceFeed.ResultsNear(item.Group, item.SessionDate, item.SessionStart, window, app: false);
+            bool pageFresh = page != null && (page.Finalized || DateTimeOffset.Now - page.UpdatedAt < TimeSpan.FromHours(2)) && page.Present.Count > 0;
+            if (pageFresh && page!.Finalized)
             {
-                ConsoleLogger.Info($"[LMS] {item.Describe}: from the Attendance page - {page.Present.Count} present, {page.Review.Count} still to review, {page.Absent.Count} absent.");
+                ConsoleLogger.Info($"[LMS] {item.Describe}: from the finalized Attendance page - {page.Present.Count} present.");
                 return page.Present;
+            }
+            var app = ExtensionAttendanceFeed.ResultsNear(item.Group, item.SessionDate, item.SessionStart, window, app: true);
+            if (app == null || DateTimeOffset.Now - app.UpdatedAt > TimeSpan.FromMinutes(15))
+                app = await matcher.MatchClassAsync(item.Group, item.SessionDate.ToDateTime(item.SessionStart), token) ?? app;
+            var present = new List<string>(pageFresh ? page!.Present : []);
+            foreach (var name in app?.Present ?? [])
+                if (!present.Contains(name, StringComparer.OrdinalIgnoreCase)) present.Add(name);
+            if (present.Count > 0)
+            {
+                ConsoleLogger.Info($"[LMS] {item.Describe}: {present.Count} present ({(pageFresh ? $"{page!.Present.Count} from the Attendance page, " : "")}" +
+                                   $"{app?.Present.Count ?? 0} from the app's own match); {app?.Review.Count ?? 0} still to review.");
+                return present;
             }
             return await FindPresentNamesAsync(item, historyReader, rosterStore, matchingService, token);
         });
@@ -207,8 +223,10 @@ public sealed class LmsFollowUpProcessor
             if (snapshot.Meeting is not { } meeting ||
                 !meeting.AccountId.Equals(item.Group, StringComparison.OrdinalIgnoreCase)) return false;
             var scheduled = meeting.ScheduledStart.ToLocalTime();
+            // A class opened by hand is recorded at the minute it went live (18:51 for the 19:00 class).
             return DateOnly.FromDateTime(scheduled.Date) == item.SessionDate &&
-                   Math.Abs((TimeOnly.FromDateTime(scheduled.DateTime).ToTimeSpan() - item.SessionStart.ToTimeSpan()).TotalMinutes) <= 5;
+                   Math.Abs((TimeOnly.FromDateTime(scheduled.DateTime).ToTimeSpan() - item.SessionStart.ToTimeSpan()).TotalMinutes)
+                       <= ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduleTiming.SameClassWindow.TotalMinutes;
         }).ToArray();
         if (snapshots.Length == 0)
             throw new InvalidOperationException("No attendance snapshot exists for this group and scheduled session.");

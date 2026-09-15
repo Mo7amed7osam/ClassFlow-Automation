@@ -4,7 +4,14 @@ public enum AttendanceSource { Desktop, Web }
 public enum SnapshotTrigger { MeetingStart, Interval, Admission, Manual, MeetingEnd }
 
 // Names are raw observations, not student identities. Duplicate names are intentional.
-public sealed record ParticipantPresence(string Name);
+public sealed record ParticipantPresence(string Name)
+{
+    /// <summary>
+    /// Zoom's whole row text ("Name,(Host, me), Computer audio muted,Video off…"), for whoever needs
+    /// more than the name (is it me, is the mic on). Never saved with a snapshot.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore] public string? RowLabel { get; init; }
+}
 
 public sealed record ParticipantReadResult(
     IReadOnlyList<ParticipantPresence> Participants,

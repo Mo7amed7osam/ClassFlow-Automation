@@ -55,6 +55,7 @@ public sealed class ZoomWebMeetingController
             : manualLoginTimeout.HasValue
                 ? DateTimeOffset.UtcNow + manualLoginTimeout.Value
                 : null;
+        var nextLauncherCheck = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(3);
         while (!cancellationToken.IsCancellationRequested)
         {
             ZoomMeetingSurface? surface;
@@ -78,9 +79,27 @@ public sealed class ZoomWebMeetingController
                 await session.SelectMeetingPageAsync(
                     surface.Page,
                     rediscovered: !ReferenceEquals(surface.Page, openingPage));
+                // Only a join as the host proves the profile is signed in; a guest join (a profile
+                // nobody signed in) must not be remembered as ready, or it would stay a guest.
                 if (!session.Profile.HasReusableSession)
-                    session.Profile = profileManager.MarkSessionReady(session.Profile);
+                {
+                    if (await ZoomWebMeetingLocator.IsHostAsync(surface.Frame))
+                        session.Profile = profileManager.MarkSessionReady(session.Profile);
+                    else ConsoleLogger.Warn($"WEB_JOINED_AS_GUEST: profile '{session.Profile.Name}' is in the meeting but not as its host; sign it in to Zoom.");
+                }
                 return surface;
+            }
+
+            // Zoom's "open the app" page: press "Join from browser", as a person would.
+            if (DateTimeOffset.UtcNow >= nextLauncherCheck)
+            {
+                nextLauncherCheck = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(4);
+                try
+                {
+                    if (!await ZoomLauncherPage.TryJoinFromBrowserAsync(session.Context))
+                        await ZoomLauncherPage.TryPressJoinOnPreviewAsync(session.Context);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException) { ConsoleLogger.Debug($"WEB_LAUNCHER_PAGE: {ex.Message}"); }
             }
 
             if (deadline != null && DateTimeOffset.UtcNow >= deadline.Value)
@@ -158,10 +177,17 @@ public sealed class ZoomWebMeetingController
             [var n] when MeetingNumber.IsMatch(n) => n,
             ["wc", "join", var n] when MeetingNumber.IsMatch(n) => n,
             ["wc", var n, "join" or "start"] when MeetingNumber.IsMatch(n) => n,
+            // A host's start link opens Zoom's "open the app" page; the signed-in profile joins
+            // through the same meeting's /j/ link as its host.
+            ["s", var n] when MeetingNumber.IsMatch(n) => n,
             _ => null,
         };
         if (number == null) return uri;
-        return new UriBuilder(uri) { Path = "/j/" + number }.Uri;
+        // Keep the passcode; a start link's one-time host token (zak) is never carried over.
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        query.Remove("zak");
+        string rest = query.Count == 0 ? "" : "?" + query;
+        return new UriBuilder(uri) { Path = "/j/" + number, Query = rest.TrimStart('?'), Fragment = "" }.Uri;
     }
 
     public static async Task<IPage> OpenMeetingPageAsync(IBrowserContext context, Uri meetingUrl)
