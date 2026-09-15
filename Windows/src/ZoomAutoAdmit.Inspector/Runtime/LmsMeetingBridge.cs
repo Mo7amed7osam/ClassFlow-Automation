@@ -35,10 +35,16 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
     private readonly HashSet<Guid> _handled = [];
     private readonly List<Task> _pending = [];
 
+    /// <summary>The group's scheduled class nearest the moment the meeting went live (null: none that close).</summary>
+    public delegate Task<TimeOnly?> ClassStart(string group, DateOnly day, TimeOnly live, CancellationToken token);
+    private readonly ClassStart? _classStart;
+
     public LmsMeetingBridge(MeetingLifecycleEvents events, RunSession? runSession = null, LmsFollowUpQueue? queue = null,
-        Func<bool>? hasLogin = null, Action<string>? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<bool>? hasLogin = null, Action<string>? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null,
+        ClassStart? classStart = null)
     {
         _events = events;
+        _classStart = classStart;
         // Headless: an unattended class must not have a browser window pop over the Zoom window
         // the admission automation is driving.
         _runSession = runSession ?? ((group, start, day, token) =>
@@ -77,6 +83,20 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
         var day = DateOnly.FromDateTime(local.DateTime);
         var start = TimeOnly.FromDateTime(local.DateTime);
         start = new TimeOnly(start.Hour, start.Minute);
+        // A meeting opened by hand (or late) has only the moment it went live: it is the class it is
+        // nearest to, so its steps are that class's and the Sessions page shows one card, not two.
+        if (_classStart != null)
+        {
+            try
+            {
+                if (await _classStart(group, day, start, token) is { } scheduled && scheduled != start)
+                {
+                    _log($"{group}: live at {start:HH\\:mm}, taken as the {scheduled:HH\\:mm} class.");
+                    start = scheduled;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { }
+        }
 
         // Written down first: whatever happens to Run Session, the attendance steps are owed.
         try

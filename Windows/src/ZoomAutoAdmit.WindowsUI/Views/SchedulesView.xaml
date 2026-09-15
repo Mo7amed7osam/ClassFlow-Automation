@@ -22,6 +22,9 @@
 <CheckBox Content="Mon" IsChecked="{Binding Monday}"/><CheckBox Content="Tue" IsChecked="{Binding Tuesday}"/><CheckBox Content="Wed" IsChecked="{Binding Wednesday}"/><CheckBox Content="Thu" IsChecked="{Binding Thursday}"/>
 <CheckBox Content="Fri" IsChecked="{Binding Friday}"/><CheckBox Content="Sat" IsChecked="{Binding Saturday}"/><CheckBox Content="Sun" IsChecked="{Binding Sunday}"/>
 </WrapPanel></Expander>
+<StackPanel Margin="0,10,0,0"><TextBlock Text="Opens with" Style="{DynamicResource FieldLabel}"/>
+<ComboBox ItemsSource="{Binding OpensWithChoices}" SelectedItem="{Binding OpensWith}" HorizontalAlignment="Left" MinWidth="220" AutomationProperties.Name="Opens with"/>
+<TextBlock Text="If it does not open, the other one is tried, again and again until the class is open." Style="{DynamicResource Muted}" TextWrapping="Wrap" Margin="0,4,0,0"/></StackPanel>
 <WrapPanel Margin="-3,10,0,0">
 <CheckBox Content="Enabled" IsChecked="{Binding Enabled}" VerticalAlignment="Center" Margin="3,0,12,0"/>
 <Button Style="{DynamicResource PrimaryButton}" Content="Save session" Command="{Binding SaveCommand}"/>
@@ -39,6 +42,8 @@
 <Button Content="Select all dates" Command="{Binding SelectAllImportCommand}"/>
 <Button Content="Clear selection" Command="{Binding ClearImportSelectionCommand}"/>
 <CheckBox Content="Enable imported meetings" IsChecked="{Binding EnableImported}" Margin="12,8" VerticalAlignment="Center"/>
+<TextBlock Text="Opens with" VerticalAlignment="Center" Margin="4,0,6,0" Style="{DynamicResource Muted}"/>
+<ComboBox ItemsSource="{Binding OpensWithChoices}" SelectedItem="{Binding ImportOpensWith}" MinWidth="190" VerticalAlignment="Center" AutomationProperties.Name="Imported meetings open with"/>
 <Button Content="Confirm import" Command="{Binding ConfirmImportCommand}"/></WrapPanel>
 <TextBlock Text="{Binding ImportSelectionSummary}" Style="{DynamicResource Muted}" Margin="0,6,0,0"/>
 <TextBlock Text="Check the account and link above before importing. Dates in the past and rows you already have are skipped." Style="{DynamicResource Muted}" Margin="0,8"/>

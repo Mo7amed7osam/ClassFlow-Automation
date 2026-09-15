@@ -292,7 +292,7 @@ public sealed class SessionRolesTests
         var participants = new FakeParticipants(["Assistant One", "Someone Random", "Ahmed Mohamed"]);
         var events = new MeetingLifecycleEvents();
         await using var bridge = new SessionRoleBridge(events, _ => participants, new FakeNames("CAI5_AIS4_S7 • 12 • Advanced Python"),
-            store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20));
+            store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20), presenters: NoPresenterSource.Instance);
 
         var context = Context("CAI5_AIS4_S7");
         await events.PublishAsync(context, MeetingLifecycleEventKind.Active);
@@ -317,7 +317,7 @@ public sealed class SessionRolesTests
         var assigner = new FakeAssigner();
         var events = new MeetingLifecycleEvents();
         await using var bridge = new SessionRoleBridge(events, _ => new FakeParticipants(["Assistant One"]),
-            new FakeNames("CAI5_AIS4_S7 • 3 • Revision"), store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20));
+            new FakeNames("CAI5_AIS4_S7 • 3 • Revision"), store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20), presenters: NoPresenterSource.Instance);
 
         await events.PublishAsync(Context("CAI5_AIS4_S7"), MeetingLifecycleEventKind.Active);
         await Task.Delay(150);
@@ -334,7 +334,7 @@ public sealed class SessionRolesTests
         var ai = new FakeAi();
         var events = new MeetingLifecycleEvents();
         await using var bridge = new SessionRoleBridge(events, _ => new FakeParticipants(["Mo7ab __TA", "Ghareeb Person"]),
-            new FakeNames("Advanced Python"), store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20))
+            new FakeNames("Advanced Python"), store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20), presenters: NoPresenterSource.Instance)
         { AiMatcher = ai };
 
         await events.PublishAsync(Context("CAI5_AIS4_S7"), MeetingLifecycleEventKind.Active);
@@ -357,7 +357,7 @@ public sealed class SessionRolesTests
         var events = new MeetingLifecycleEvents();
         List<SessionRoleNotice> notices = [];
         await using var bridge = new SessionRoleBridge(events, _ => new FakeParticipants(["Random Guest", "Another Guest"]),
-            new FakeNames("Advanced Python"), store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20));
+            new FakeNames("Advanced Python"), store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20), presenters: NoPresenterSource.Instance);
         bridge.Notice += notice => { lock (notices) notices.Add(notice); };
 
         await events.PublishAsync(Context("CAI5_AIS4_S7"), MeetingLifecycleEventKind.Active);
@@ -377,7 +377,7 @@ public sealed class SessionRolesTests
         var events = new MeetingLifecycleEvents();
         List<SessionRoleNotice> notices = [];
         await using var bridge = new SessionRoleBridge(events, _ => new FakeParticipants(["Assistant One"]),
-            new FakeNames("Advanced Python"), store, new FakeAssigner(), log: _ => { }, interval: TimeSpan.FromMilliseconds(20));
+            new FakeNames("Advanced Python"), store, new FakeAssigner(), log: _ => { }, interval: TimeSpan.FromMilliseconds(20), presenters: NoPresenterSource.Instance);
         bridge.Notice += notice => { lock (notices) notices.Add(notice); };
 
         await events.PublishAsync(Context("CAI5_AIS4_S7"), MeetingLifecycleEventKind.Active);

@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows.Input;
 using ZoomAutoAdmit.Core.Formatting;
@@ -236,8 +236,12 @@ public sealed class LmsSessionsViewModel : ObservableObject
             foreach (var c in cache.Where(c => c.Session.Date.HasValue && c.Session.Start.HasValue))
                 if (!keys.Values.Any(k => k.Group.Equals(c.Session.Group, StringComparison.OrdinalIgnoreCase) && k.Date == c.Session.Date))
                     Add(c.Session.Group, c.Session.Date!.Value, c.Session.Start!.Value);
-            foreach (var h in history) Add(h.Group, h.SessionDate, h.SessionStart);
-            foreach (var p in pending) Add(p.Group, p.SessionDate, p.SessionStart);
+            // A class opened by hand at 18:51 is the 19:00 class: its steps are shown on that one card.
+            TimeOnly Snap(string g, DateOnly d, TimeOnly t) => ScheduleTiming.ClassStartNear(schedules, g, d, t) ?? t;
+            var historyAt = new Dictionary<object, TimeOnly>(ReferenceEqualityComparer.Instance);
+            var pendingAt = new Dictionary<object, TimeOnly>(ReferenceEqualityComparer.Instance);
+            foreach (var h in history) { historyAt[h] = Snap(h.Group, h.SessionDate, h.SessionStart); Add(h.Group, h.SessionDate, historyAt[h]); }
+            foreach (var p in pending) { pendingAt[p] = Snap(p.Group, p.SessionDate, p.SessionStart); Add(p.Group, p.SessionDate, pendingAt[p]); }
 
             var rows = new List<ClassRow>();
             foreach (var (group, date, start) in keys.Values)
@@ -248,9 +252,9 @@ public sealed class LmsSessionsViewModel : ObservableObject
                                .OrderBy(c => c.Session.Start is { } t ? Math.Abs((t.ToTimeSpan() - start.ToTimeSpan()).TotalMinutes) : 9999)
                                .ThenByDescending(c => c.ReadAt).FirstOrDefault();
                 LmsFollowUpQueue.Outcome? Done(LmsFollowUpStep step) => history.FirstOrDefault(h =>
-                    h.Step == step && h.SessionDate == date && h.SessionStart == start && h.Group.Equals(group, StringComparison.OrdinalIgnoreCase));
+                    h.Step == step && h.SessionDate == date && historyAt[h] == start && h.Group.Equals(group, StringComparison.OrdinalIgnoreCase));
                 LmsFollowUp? Owed(LmsFollowUpStep step) => pending.FirstOrDefault(p =>
-                    p.Step == step && p.SessionDate == date && p.SessionStart == start && p.Group.Equals(group, StringComparison.OrdinalIgnoreCase));
+                    p.Step == step && p.SessionDate == date && pendingAt[p] == start && p.Group.Equals(group, StringComparison.OrdinalIgnoreCase));
 
                 var classStart = date.ToDateTime(start);
                 string lmsStatus = lms is null ? "" : (lms.Session.PageStatus.Length > 0 && !lms.Session.PageStatus.StartsWith('(') ? lms.Session.PageStatus : lms.Session.ListStatus);

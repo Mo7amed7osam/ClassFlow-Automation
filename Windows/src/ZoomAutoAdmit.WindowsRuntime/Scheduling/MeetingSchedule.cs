@@ -25,6 +25,23 @@ public static class ScheduleTiming
     /// <summary>The moment this schedule should be launched for a given day.</summary>
     public static DateTime LaunchMoment(this MeetingSchedule schedule, DateOnly date) =>
         date.ToDateTime(schedule.Time) - StartLead;
+
+    /// <summary>How far a meeting that went live can be from its class and still be that class.</summary>
+    public static readonly TimeSpan SameClassWindow = TimeSpan.FromMinutes(90);
+
+    /// <summary>
+    /// The scheduled start of the group's class that day nearest a moment (a meeting opened by hand at
+    /// 18:51 is the 19:00 class), or null when no class of the group is that close.
+    /// </summary>
+    public static TimeOnly? ClassStartNear(IEnumerable<MeetingSchedule> schedules, string group, DateOnly day, TimeOnly moment) =>
+        schedules
+            .Where(s => group.Equals(s.GroupName, StringComparison.OrdinalIgnoreCase) || group.Equals(s.AccountId, StringComparison.OrdinalIgnoreCase))
+            .Where(s => s.OccurrenceDate == day || (s.OccurrenceDate == null && s.Days.Includes(day.DayOfWeek)))
+            .Select(s => new TimeOnly(s.Time.Hour, s.Time.Minute))
+            .Where(t => Math.Abs((t.ToTimeSpan() - moment.ToTimeSpan()).TotalMinutes) <= SameClassWindow.TotalMinutes)
+            .OrderBy(t => Math.Abs((t.ToTimeSpan() - moment.ToTimeSpan()).TotalMinutes))
+            .Select(t => (TimeOnly?)t)
+            .FirstOrDefault();
 }
 
 public sealed record MeetingSchedule(
@@ -37,7 +54,10 @@ public sealed record MeetingSchedule(
     bool Enabled,
     DateOnly? LastTriggeredDate = null,
     DateOnly? OccurrenceDate = null,
-    string? GroupName = null);
+    string? GroupName = null,
+    // The engine this class opens with first (null: the account's choice, normally the Zoom app).
+    // When it fails, the other one is tried.
+    ZoomAutoAdmit.Core.Sessions.SessionEngineType? PreferredEngine = null);
 
 public static class ScheduleDaysExtensions
 {

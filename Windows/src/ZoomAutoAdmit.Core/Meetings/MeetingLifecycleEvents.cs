@@ -49,6 +49,9 @@ public static class MeetingAdmissionScope
         return new Scope(() => Current.Value = previous);
     }
 
+    /// <summary>Inside an app meeting session (whose own engine writes the admissions down).</summary>
+    public static bool IsBound => Current.Value != null;
+
     /// <param name="name">Who was let in, when the monitor read it.</param>
     /// <param name="people">How many one action let in (Admit all).</param>
     public static void NotifyVerified(string? name = null, int people = 1)

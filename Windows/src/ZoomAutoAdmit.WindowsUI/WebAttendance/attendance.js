@@ -626,4 +626,15 @@ $("roster").oninput=()=>{rosterDirty=true;$("rosterCount").textContent=rosterNam
 $("saveKey").onclick=async()=>{const key=$("apiKey").value.trim();if(!key)return;apiKey=key;model=$("model").value.trim()||DEFAULT_MODEL;await chrome.storage.local.set({openRouterAPIKey:key,openRouterModel:model});$("apiKey").value="";$("keyStatus").textContent=`Key stored locally · ending ${key.slice(-4)}`;};
 $("clearKey").onclick=async()=>{apiKey="";$("apiKey").value="";await chrome.storage.local.remove("openRouterAPIKey");$("keyStatus").textContent="No API key stored.";};
 $("runAI").onclick=runAI;$("recalculate").onclick=render;$("exportCSV").onclick=exportCSV;
+// Once an hour while a meeting is being recorded, the AI reviews the names still unresolved - the
+// same as pressing "Match unresolved" (nothing runs without a key, and never twice at once).
+const AUTO_AI_EVERY=60*60*1000;const autoAiDone={};
+setInterval(()=>{
+  if(!session?.active || session.finalized || finalizing || aiRun || !apiKey) return;
+  const id=session.id||session.startedAt,last=autoAiDone[id]??Date.parse(session.startedAt||"")??Date.now();
+  if(!Number.isFinite(last)){autoAiDone[id]=Date.now();return;}
+  if(Date.now()-last<AUTO_AI_EVERY) return;
+  autoAiDone[id]=Date.now();
+  runAI().catch(()=>{});
+},60*1000);
 $("clearCaptured").onclick=async()=>{if(!session)return;cancelAI();session.rejectedMatches={};session.observed={};session.aiMatches={};session.manualMatches={};session.snapshots=0;session.lastCapturedAt=null;await persist({observed:{},aiMatches:{},manualMatches:{},rejectedMatches:{},snapshots:0,lastCapturedAt:null});};

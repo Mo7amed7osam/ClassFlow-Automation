@@ -86,6 +86,9 @@ public partial class App : Application
             _service.SessionRoleNotice += notice =>
                 Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show(notice); } catch { } });
             WindowsUiRuntimeLog.Write("SERVICES", "Windows runtime services initialized.");
+            // A class that could not be opened after every try is said out loud, not only logged.
+            ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduledClassStarter.GaveUp += (schedule, why) =>
+                Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show("Class did not open", $"{schedule.Name}: {why}. Open it by hand.", "#F05252"); } catch { } });
             _viewModel = new MainViewModel(_service);
             // Saving a profile says so on the desktop, naming the group it was saved for: with one
             // type set up per group, seeing which one was written is the whole confirmation.

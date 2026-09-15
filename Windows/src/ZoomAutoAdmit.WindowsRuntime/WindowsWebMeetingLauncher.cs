@@ -113,12 +113,32 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
             // the short-lived meeting-start command token after startup has been accepted.
             _sessionCancellation?.Dispose();
             _sessionCancellation = new CancellationTokenSource();
-            await _engine.StartAsync(_options, _sessionCancellation.Token);
+            // A page that stays blank is a failed start, not a wait without end: after JoinTimeout
+            // the browser is closed and the start reports failure, so the other engine can try.
+            var starting = _engine.StartAsync(_options, _sessionCancellation.Token);
+            var finished = await Task.WhenAny(starting, Task.Delay(JoinTimeout, cancellationToken));
+            if (finished != starting)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _sessionCancellation.Cancel();
+                try { await starting; } catch { }
+                await StopEngineQuietlyAsync();
+                return MeetingOperationResult.Failure($"The Web meeting did not open within {JoinTimeout.TotalMinutes:0} minutes.");
+            }
+            await starting;
             _joined = true;
             return MeetingOperationResult.Success();
         }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex) { return MeetingOperationResult.Failure(ex.Message); }
+        catch (OperationCanceledException) { await StopEngineQuietlyAsync(); throw; }
+        catch (Exception ex) { await StopEngineQuietlyAsync(); return MeetingOperationResult.Failure(ex.Message); }
+    }
+
+    /// <summary>How long a Web meeting may take to open before another way is tried.</summary>
+    public static TimeSpan JoinTimeout { get; set; } = TimeSpan.FromMinutes(3);
+
+    private async Task StopEngineQuietlyAsync()
+    {
+        try { await _engine.StopAsync(); } catch { }
     }
 
     public Task<MeetingOperationResult> VerifyJoinedAsync(

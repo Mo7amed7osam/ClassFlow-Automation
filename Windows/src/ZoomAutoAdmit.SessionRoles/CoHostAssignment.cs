@@ -78,11 +78,14 @@ public sealed class ZoomCoHostAssigner : ICoHostAssigner
             if (more == null)
             { outcome = new(false, "That participant's More menu is not exposed."); return; }
 
-            // "More options for …" is a split button: its main half is the participant's mic
-            // (Mute / Ask to unmute) and only its arrow opens the menu. Invoking it pressed the mic
-            // and muted the instructor, so the menu is only ever opened (Expand), never invoked.
+            // "More options for …" is a split button. On a build where it doubled as the participant's
+            // mic (Mute / Ask to unmute), invoking it muted the instructor, so it is only invoked when
+            // the row shows its own mic button beside it - then the split button is only the menu
+            // (checked on Zoom Workplace 2026-09-15: invoking it opened Chat/Pin/Make co-host/…).
+            bool ownMicButton = row.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                .Any(element => MicAction.IsMatch(SafeName(element)));
             token.ThrowIfCancellationRequested();
-            if (!OpenRowMenu(more, out var opened))
+            if (!OpenRowMenu(more, out var opened, ownMicButton))
             { outcome = new(false, "That participant's More menu could not be opened without pressing the mic, so nothing was pressed."); return; }
             Thread.Sleep(_menuWait);
 
@@ -91,6 +94,7 @@ public sealed class ZoomCoHostAssigner : ICoHostAssigner
             {
                 // Leave Zoom as it was found: close the menu that was opened (never press the mic).
                 CloseRowMenu(opened);
+                CloseMenuPopups(automation, process.ProcessId);
                 outcome = new(false, "The \"Make co-host\" item did not appear in the row menu.");
                 return;
             }
@@ -117,7 +121,7 @@ public sealed class ZoomCoHostAssigner : ICoHostAssigner
     /// a split button that cannot be expanded is opened through its own arrow/"more" child; a plain
     /// button (older Zoom) only opens a menu, so it may be invoked. Anything else is left alone.
     /// </summary>
-    internal static bool OpenRowMenu(AutomationElement more, out AutomationElement opened)
+    internal static bool OpenRowMenu(AutomationElement more, out AutomationElement opened, bool rowHasOwnMicButton = false)
     {
         opened = more;
         try
@@ -128,6 +132,12 @@ public sealed class ZoomCoHostAssigner : ICoHostAssigner
                 return true;
             }
             bool split = more.Properties.ControlType.ValueOrDefault == ControlType.SplitButton;
+            // The mic has its own button in the row, so this split button is only the menu.
+            if (split && rowHasOwnMicButton && !MicAction.IsMatch(SafeName(more)) && more.Patterns.Invoke.IsSupported)
+            {
+                more.Patterns.Invoke.Pattern.Invoke();
+                return true;
+            }
             if (split)
             {
                 var arrow = more.FindAllChildren().FirstOrDefault(child =>
@@ -160,7 +170,28 @@ public sealed class ZoomCoHostAssigner : ICoHostAssigner
         catch { }
     }
 
-    private static readonly Regex MicAction = new(@"\b(mute|unmute|ask to unmute|audio|microphone|mic)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    /// <summary>Closes a participant menu left open (Escape to its popup window only).</summary>
+    private static void CloseMenuPopups(UIA3Automation automation, int processId)
+    {
+        try
+        {
+            var process = new ZoomProcessDiscovery().FindCandidates(logInfo: false).FirstOrDefault(c => c.ProcessId == processId);
+            if (process == null) return;
+            foreach (var window in process.Windows.Where(w => w.IsVisible))
+            {
+                var element = automation.FromHandle(window.Handle);
+                if (element == null) continue;
+                bool participantMenu = element.FindAllDescendants(cf => cf.ByControlType(ControlType.MenuItem))
+                    .Any(item => MakeCoHostItem.IsMatch(SafeName(item)) || SafeName(item).Equals("Rename", StringComparison.OrdinalIgnoreCase));
+                if (!participantMenu) continue;
+                NativeMethods.PostMessage(window.Handle, 0x0100, (IntPtr)0x1B, IntPtr.Zero);
+                NativeMethods.PostMessage(window.Handle, 0x0101, (IntPtr)0x1B, IntPtr.Zero);
+            }
+        }
+        catch { }
+    }
+
+    private static readonly Regex MicAction =new(@"\b(mute|unmute|ask to unmute|audio|microphone|mic)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static ZoomProcessCandidate? ResolveMeetingProcess()
     {

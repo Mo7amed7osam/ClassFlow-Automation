@@ -95,15 +95,31 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
         _session = await _browserLauncher.LaunchAsync(plan, _stopCancellation.Token);
         ConsoleLogger.Success("WEB_BROWSER_STARTED");
         ConsoleLogger.Info($"Browser mode: {(_session.IsHeadless ? "headless" : "visible")}");
+        try { await OpenMeetingAsync(options, profile); }
+        catch
+        {
+            // A meeting that did not open leaves nothing behind: the browser is closed (it would
+            // otherwise keep the profile locked, so the next try "opened in an existing session"
+            // and failed) and the engine can be started again.
+            await CloseSessionAsync();
+            Interlocked.Exchange(ref _stopped, 0);
+            throw;
+        }
+        ConsoleLogger.Success("Waiting room monitor started");
+    }
+
+    private async Task OpenMeetingAsync(CliOptions options, ZoomBrowserProfile profile)
+    {
+        var session = _session!;
         try
         {
             await _meetingController.OpenAndWaitForHostControlsAsync(
-                _session,
-                options.MeetingUrl,
+                session,
+                options.MeetingUrl!,
                 _profileManager,
-                _stopCancellation.Token);
+                _stopCancellation!.Token);
         }
-        catch (ZoomWebSignInRequiredException ex) when (_session.IsHeadless)
+        catch (ZoomWebSignInRequiredException ex) when (session.IsHeadless)
         {
             // A saved sign-in Zoom no longer accepts is a request for a login, not a dead end.
             // Reopen the same profile in a visible browser so it can be signed in once, exactly
@@ -113,18 +129,17 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
                 $"[WEB_PROFILE] Opening a visible browser for profile '{profile.Name}'. Sign in to Zoom there and the meeting continues by itself; the sign-in is saved for next time.");
             await CloseSessionAsync();
             profile = _profileManager.MarkSessionExpired(profile);
-            plan = _profileManager.CreateLaunchPlan(profile, forceHeaded: true);
-            _session = await _browserLauncher.LaunchAsync(plan, _stopCancellation.Token);
+            var plan = _profileManager.CreateLaunchPlan(profile, forceHeaded: true);
+            _session = await _browserLauncher.LaunchAsync(plan, _stopCancellation!.Token);
             ConsoleLogger.Info("Browser mode: visible (waiting for sign-in)");
             await _meetingController.OpenAndWaitForHostControlsAsync(
                 _session,
-                options.MeetingUrl,
+                options.MeetingUrl!,
                 _profileManager,
                 _stopCancellation.Token,
                 ManualSignInTimeout);
             ConsoleLogger.Success($"[WEB_PROFILE] Profile '{profile.Name}' is signed in and saved.");
         }
-        ConsoleLogger.Success("Waiting room monitor started");
     }
 
     private async Task CloseSessionAsync()

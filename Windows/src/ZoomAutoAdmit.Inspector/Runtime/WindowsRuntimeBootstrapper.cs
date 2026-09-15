@@ -65,7 +65,8 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
             new ScheduleNameSource(ScheduleStore));
         // The LMS half of every class: Run Session when the meeting goes live, and the attendance
         // steps written down. Here so it works however the meeting was started (app or Windows task).
-        Lms = createLmsBridge?.Invoke(LifecycleEvents) ?? new LmsMeetingBridge(LifecycleEvents);
+        Lms = createLmsBridge?.Invoke(LifecycleEvents) ?? new LmsMeetingBridge(LifecycleEvents,
+            classStart: async (group, day, live, token) => ScheduleTiming.ClassStartNear(await ScheduleStore.ListAsync(token), group, day, live));
         ConsoleLogger.Success("[BOOTSTRAP] Services initialized");
     }
 

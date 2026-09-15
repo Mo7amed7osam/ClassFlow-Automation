@@ -67,12 +67,36 @@ public sealed class DesktopWaitingRoomDetector : IDesktopWaitingRoomDetector
     /// co-host watcher, so the Desktop engine reports an admission exactly the way Web does;
     /// without it, a whole class admitted from the Zoom app was never counted at all.
     /// </summary>
-    private static void CountAdmission(int people = 1, string? name = null)
+    private static void CountAdmission(int people = 1, string? name = null) =>
+        CountAdmissions(name is null ? [] : [name], people);
+
+    /// <summary>
+    /// One line per person let in (Admit all lets in everyone it listed), written down once: outside
+    /// an app session NotifyVerified writes the line itself, so it is not written here as well.
+    /// </summary>
+    private static void CountAdmissions(IReadOnlyList<string> names, int people)
     {
-        // By name, for the Waiting Room and Attendance pages - whichever process admitted.
-        ZoomAutoAdmit.Core.Meetings.AdmissionLedger.Record(name, "desktop", people);
-        for (int i = 0; i < Math.Max(1, people); i++)
-            ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
+        var scope = ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.IsBound;
+        var named = names.Where(n => !string.IsNullOrWhiteSpace(n)).ToArray();
+        if (named.Length == 0)
+        {
+            people = Math.Max(1, people);
+            if (scope)
+            {
+                ZoomAutoAdmit.Core.Meetings.AdmissionLedger.Record(null, "desktop", people);
+                for (int i = 0; i < people; i++) ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
+                return;
+            }
+            // One line for the whole group; today's count still goes up by each person.
+            ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified(null, people);
+            for (int i = 1; i < people; i++) ZoomAutoAdmit.Core.Meetings.AdmissionControl.RecordAdmission();
+            return;
+        }
+        foreach (var name in named)
+        {
+            if (scope) ZoomAutoAdmit.Core.Meetings.AdmissionLedger.Record(name, "desktop");
+            ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified(name);
+        }
     }
 
     /// <summary>Admits from a Zoom or Windows arrival notification without touching the mouse.</summary>
@@ -105,7 +129,7 @@ public sealed class DesktopWaitingRoomDetector : IDesktopWaitingRoomDetector
         {
             if (!_uiaAdmitter.TryAdmit(cancellationToken)) return false;
             TesterLogger.Action("Admitted from the Participants panel without the mouse");
-            CountAdmission(name: _uiaAdmitter.LastAdmittedName);
+            CountAdmissions(_uiaAdmitter.LastAdmittedNames, Math.Max(1, _uiaAdmitter.LastAdmittedNames.Count));
             return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -208,7 +232,8 @@ public sealed class DesktopWaitingRoomDetector : IDesktopWaitingRoomDetector
             if (TryClick(clickX, clickY))
             {
                 TesterLogger.Action($"Clicked 'Admit all' ({count} participants)");
-                CountAdmission(count);
+                // Everyone the panel listed, by name (read before the click).
+                CountAdmissions(admitAll.OriginalParticipants, count);
                 return;
             }
         }

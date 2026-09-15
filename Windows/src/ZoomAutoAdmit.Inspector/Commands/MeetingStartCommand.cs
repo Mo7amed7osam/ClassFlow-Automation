@@ -37,9 +37,8 @@ public static class MeetingStartCommand
                     }
                     if (string.IsNullOrWhiteSpace(options.AccountId)) options.AccountId = schedule.AccountId;
                     if (string.IsNullOrWhiteSpace(options.MeetingUrl)) options.MeetingUrl = schedule.MeetingUrl;
-
-                    var today = DateOnly.FromDateTime(DateTime.Now);
-                    await bootstrapper.ScheduleStore.UpsertAsync(schedule with { LastTriggeredDate = today }, cancellationToken);
+                    // Marked opened only once it has opened (ScheduledClassStarter), so a failed
+                    // start is tried again - here and by the app's own scheduler.
                 }
             }
             catch (Exception ex)
@@ -88,16 +87,20 @@ public static class MeetingStartCommand
         try
         {
 
-            session = await bootstrapper.Orchestrator.RunAsync(
-                new ScheduledMeeting(
-                    meetingUrl,
-                    options.AccountId,
-                    DateTimeOffset.UtcNow,
-                    GroupId: loadedSchedule?.GroupName ?? loadedSchedule?.AccountId ?? options.AccountId,
-                    ScheduledStartTime: loadedSchedule?.OccurrenceDate is { } scheduledDay
-                        ? new DateTimeOffset(scheduledDay.ToDateTime(loadedSchedule.Time), DateTimeOffset.Now.Offset)
-                        : null),
-                linkedCancellation.Token);
+            if (loadedSchedule != null)
+            {
+                // A scheduled class: opened once across every process, retried with the other
+                // engine until it opens (see ScheduledClassStarter).
+                var day = loadedSchedule.OccurrenceDate ?? DateOnly.FromDateTime(DateTime.Now);
+                session = await new ScheduledClassStarter(new OrchestratedScheduledMeetingRunner(bootstrapper.Orchestrator),
+                        bootstrapper.ScheduleStore, message => WindowsSchedulerLog.Write("SCHEDULER", message))
+                    .StartAsync(loadedSchedule, day, DateTimeOffset.Now, linkedCancellation.Token);
+                if (session == null) return 0;       // opened (or being opened) by the app itself
+            }
+            else
+                session = await bootstrapper.Orchestrator.RunAsync(
+                    new ScheduledMeeting(meetingUrl, options.AccountId, DateTimeOffset.UtcNow, GroupId: options.AccountId),
+                    linkedCancellation.Token);
             if (session.State == MeetingState.Failed)
             {
                 string reason = session.FailureReason ?? "Meeting startup failed.";

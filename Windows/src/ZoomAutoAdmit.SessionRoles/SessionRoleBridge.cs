@@ -144,6 +144,8 @@ public sealed class SessionRoleBridge : IAsyncDisposable
 
             var source = _participants(context);
             var handled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // The same failure again is not shown again; after three, that person is left to the host.
+            var failures = new Dictionary<string, (string Message, int Count)>(StringComparer.OrdinalIgnoreCase);
             var rejected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             bool assignedAnyone = false, reportedNobody = false;
             while (!token.IsCancellationRequested)
@@ -211,13 +213,23 @@ public sealed class SessionRoleBridge : IAsyncDisposable
                     else
                     {
                         Log($"[COHOST] Assignment failed: {outcome.Message}", session.SessionId);
-                        Raise(new(SessionRoleNoticeKind.AssignmentFailed, "Co-host assignment failed", outcome.Message, session.SessionId));
-                        handled.Remove(name);   // Try again on the next pass.
+                        var last = failures.GetValueOrDefault(name);
+                        int count = last.Message == outcome.Message ? last.Count + 1 : 1;
+                        failures[name] = (outcome.Message, count);
+                        if (count == 1)
+                            Raise(new(SessionRoleNoticeKind.AssignmentFailed, "Co-host assignment failed", outcome.Message, session.SessionId));
+                        if (count >= 3)
+                        {
+                            Log($"[COHOST] Gave up on {match.Person.Name} after 3 identical failures; make them co-host by hand.", session.SessionId);
+                            Raise(new(SessionRoleNoticeKind.AssignmentFailed, "Make co-host by hand",
+                                $"{match.Person.Name} could not be made co-host automatically ({outcome.Message}).", session.SessionId));
+                        }
+                        else handled.Remove(name);   // Try again on the next pass.
                     }
                 }
                 // Everyone in the meeting was checked — including by the AI — and none of them is on
                 // this profile. Say so once, on the desktop, instead of staying silent.
-                if (!assignedAnyone && !reportedNobody && rejected.Count > 0 && observed.Count > 0)
+                if (!assignedAnyone && !reportedNobody && failures.Count == 0 && rejected.Count > 0 && observed.Count > 0)
                 {
                     reportedNobody = true;
                     Log($"[COHOST] No co-host found among {rejected.Count} participant(s) for {profile!.SessionType}", session.SessionId);

@@ -34,6 +34,14 @@ public sealed class WindowsMeetingScheduleStore
         finally { _fileLock.Release(); }
     }
 
+    /// <summary>Notes that the class opened on that day, on the schedule as it is now (not a stale copy).</summary>
+    public async Task MarkOpenedAsync(Guid id, DateOnly day, CancellationToken cancellationToken = default)
+    {
+        var current = (await ListAsync(cancellationToken)).FirstOrDefault(s => s.Id == id);
+        if (current != null && current.LastTriggeredDate != day)
+            await UpsertAsync(current with { LastTriggeredDate = day }, cancellationToken);
+    }
+
     public async Task UpsertAsync(MeetingSchedule schedule, CancellationToken cancellationToken = default)
     {
         Validate(schedule);

@@ -113,8 +113,27 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
             Friday = value.Days.HasFlag(ScheduleDays.Friday);
             Saturday = value.Days.HasFlag(ScheduleDays.Saturday);
             Sunday = value.Days.HasFlag(ScheduleDays.Sunday);
+            OpensWith = OpensWithLabel(value.PreferredEngine);
         }
     }
+
+    /// <summary>What a class opens with first; the other one is tried when it fails.</summary>
+    public IReadOnlyList<string> OpensWithChoices { get; } = ["Auto (Zoom app first)", "Zoom app", "Web (browser)"];
+    public string OpensWith { get => _opensWith; set => SetProperty(ref _opensWith, value ?? OpensWithChoices[0]); }
+    public string ImportOpensWith { get => _importOpensWith; set => SetProperty(ref _importOpensWith, value ?? OpensWithChoices[0]); }
+    private string _opensWith = "Auto (Zoom app first)", _importOpensWith = "Auto (Zoom app first)";
+    public static ZoomAutoAdmit.Core.Sessions.SessionEngineType? EngineOf(string? label) => label switch
+    {
+        "Zoom app" => ZoomAutoAdmit.Core.Sessions.SessionEngineType.Desktop,
+        "Web (browser)" => ZoomAutoAdmit.Core.Sessions.SessionEngineType.Web,
+        _ => null,
+    };
+    public static string OpensWithLabel(ZoomAutoAdmit.Core.Sessions.SessionEngineType? engine) => engine switch
+    {
+        ZoomAutoAdmit.Core.Sessions.SessionEngineType.Desktop => "Zoom app",
+        ZoomAutoAdmit.Core.Sessions.SessionEngineType.Web => "Web (browser)",
+        _ => "Auto (Zoom app first)",
+    };
     public string Name { get => _name; set => SetProperty(ref _name, value); }
     public string MeetingUrl { get => _meetingUrl; set => SetProperty(ref _meetingUrl, value); }
     public WindowsMeetingAccountMetadata? SelectedAccount { get => _selectedAccount; set { if (SetProperty(ref _selectedAccount, value) && value != null && _editingId == Guid.Empty) MeetingUrl = value.DefaultMeetingUrl ?? ""; } }
@@ -203,7 +222,8 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
                 Enabled,
                 existing?.LastTriggeredDate,
                 OccurrenceDate.HasValue ? DateOnly.FromDateTime(OccurrenceDate.Value) : null,
-                SelectedAccount.GroupName ?? SelectedAccount.AccountId));
+                SelectedAccount.GroupName ?? SelectedAccount.AccountId,
+                EngineOf(OpensWith)));
             _editingId = id;
             await RefreshAsync();
             StatusMessage = "Done — schedule saved.";
@@ -279,7 +299,8 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
                 { skipped++; continue; }
                 ImportStatus = $"Saving exact-date schedules… {saved} saved.";
                 var schedule = new MeetingSchedule(Guid.NewGuid(), $"{_importGroup} • {row.SessionNumber} • {row.Topic}", url,
-                    accountId, row.StartTime.Value, ScheduleDays.None, enableImported, OccurrenceDate: row.Date, GroupName: _importGroup);
+                    accountId, row.StartTime.Value, ScheduleDays.None, enableImported, OccurrenceDate: row.Date, GroupName: _importGroup,
+                    PreferredEngine: EngineOf(ImportOpensWith));
                 await _service.SaveScheduleAsync(schedule);
                 existing.Add(schedule); saved++;
             }

@@ -23,11 +23,21 @@ public static class AdmissionLedger
 
     public static string PathFor(DateOnly day) => Path.Combine(Folder, $"admissions-{day:yyyy-MM-dd}.jsonl");
 
-    /// <summary>The person's name as Zoom shows it, without a notification's "entered the waiting room".</summary>
+    // What Zoom's accessibility text adds to a waiting row: ", Press Space to admit" and "(Guest)".
+    private static readonly Regex ScreenReaderTail = new(@",\s*press\s+\w+\s+to\s+.*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex RoleTag = new(@"\s*\((guest|host|co-host|cohost|me|host,\s*me|co-host,\s*me)\)\s*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// The person's name as Zoom shows it, without a notification's "entered the waiting room" or
+    /// the list's "(Guest), Press Space to admit".
+    /// </summary>
     public static string? CleanName(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
-        string name = ToastTail.Replace(raw.Trim().Trim('\'', '"', '“', '”'), "").Trim(' ', '.', ',', ':', '-', '\'', '"', '“', '”');
+        string name = ScreenReaderTail.Replace(raw.Trim(), "");
+        name = RoleTag.Replace(name, " ");
+        name = ToastTail.Replace(name.Trim().Trim('\'', '"', '“', '”'), "").Trim(' ', '.', ',', ':', '-', '\'', '"', '“', '”');
+        name = Regex.Replace(name, @"\s{2,}", " ");
         return name.Length is 0 or > 120 ? null : name;
     }
 
@@ -66,7 +76,8 @@ public static class AdmissionLedger
             while (reader.ReadLine() is { } line)
             {
                 if (line.Length == 0) continue;
-                try { if (JsonSerializer.Deserialize<Entry>(line, Json) is { } e) list.Add(e); } catch (JsonException) { }
+                // Lines written before the name was cleaned read clean too.
+                try { if (JsonSerializer.Deserialize<Entry>(line, Json) is { } e) list.Add(e with { Name = CleanName(e.Name) }); } catch (JsonException) { }
             }
             return list;
         }

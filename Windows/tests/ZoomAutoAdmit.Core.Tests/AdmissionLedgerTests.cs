@@ -22,6 +22,10 @@ public sealed class AdmissionLedgerTests : IDisposable
     [InlineData("  \"Omar Khaled\" has joined the waiting room.", "Omar Khaled")]
     [InlineData("Mona Adel is waiting", "Mona Adel")]
     [InlineData("Youssef Ali", "Youssef Ali")]
+    // What the Zoom app's waiting list reads out (seen on 2026-09-15).
+    [InlineData("Haya Elnagdy(Guest), Press Space to admit", "Haya Elnagdy")]
+    [InlineData("Ahmed Hammouda Korany Salama(Guest), Press Space to admit", "Ahmed Hammouda Korany Salama")]
+    [InlineData("Sayed ayman Sayed ibrahim (Guest)", "Sayed ayman Sayed ibrahim")]
     public void CleanNameKeepsOnlyThePersonsName(string raw, string expected) =>
         Assert.Equal(expected, AdmissionLedger.CleanName(raw));
 

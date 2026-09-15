@@ -82,7 +82,9 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
         var now = DateTimeOffset.Now;
         var date = DateOnly.FromDateTime(now.LocalDateTime);
         var store = Store();
-        var schedule = Schedule(true, ScheduleDays.None, TimeOnly.MinValue) with { OccurrenceDate = date };
+        // A class at this minute today (one hours past its time is too late to open any more).
+        var at = TimeOnly.FromDateTime(now.LocalDateTime);
+        var schedule = Schedule(true, ScheduleDays.None, new TimeOnly(at.Hour, at.Minute)) with { OccurrenceDate = date };
         await store.UpsertAsync(schedule);
         Assert.Equal(date, Assert.Single(await store.ListAsync()).OccurrenceDate);
         var runner = new FakeScheduledMeetingRunner();

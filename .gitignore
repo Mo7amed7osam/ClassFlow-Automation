@@ -31,3 +31,6 @@ api.env
 api_key.env
 *.env
 .env
+
+# WPF's temporary project copies made during a build
+*_wpftmp.csproj

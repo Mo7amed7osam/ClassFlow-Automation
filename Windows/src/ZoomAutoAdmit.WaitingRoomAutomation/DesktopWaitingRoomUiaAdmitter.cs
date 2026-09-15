@@ -26,12 +26,13 @@ internal sealed class DesktopWaitingRoomUiaAdmitter
         ActionExecutor = new ActionExecutor(logger, sessionId, SessionEngineType.Desktop);
     }
 
-    /// <summary>Who the last successful Admit was for (null after "Admit all").</summary>
-    public string? LastAdmittedName { get; private set; }
+    /// <summary>Who the last successful Admit let in: one person, or everyone "Admit all" let in (read before pressing it).</summary>
+    public IReadOnlyList<string> LastAdmittedNames { get; private set; } = [];
+    private string? LastAdmittedName { set => LastAdmittedNames = value is null ? [] : [value]; }
 
     public bool TryAdmit(CancellationToken cancellationToken)
     {
-        LastAdmittedName = null;
+        LastAdmittedNames = [];
         bool admitted = false;
         DesktopThread.RunOnInteractiveDesktop(() =>
         {
@@ -66,9 +67,11 @@ internal sealed class DesktopWaitingRoomUiaAdmitter
         if (globalAdmitAll != null && globalAdmitAll.Properties.IsEnabled.ValueOrDefault)
         {
             TesterLogger.Desktop("[WAITING_ROOM] [PRIORITY 1] Found 'Admit all' button via UIA");
+            var waiting = WaitingNames(root);
             if (ActionExecutor.InvokeDesktopElementUiaOnly(globalAdmitAll, "Admit all"))
             {
-                TesterLogger.Action("[WAITING_ROOM] Clicked 'Admit all' via UIA");
+                LastAdmittedNames = waiting;
+                TesterLogger.Action($"[WAITING_ROOM] Clicked 'Admit all' via UIA ({waiting.Count} named)");
                 TesterLogger.Desktop("[WAITING_ROOM] Participant admitted successfully");
                 return true;
             }
@@ -91,9 +94,11 @@ internal sealed class DesktopWaitingRoomUiaAdmitter
             if (scopeAdmitAll != null && scopeAdmitAll.Properties.IsEnabled.ValueOrDefault)
             {
                 TesterLogger.Desktop("[WAITING_ROOM] [PRIORITY 1] Found 'Admit all' button in scope via UIA");
+                var waiting = FindWaitingRows(scope, header).Select(ParticipantNameOf).Where(n => n.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 if (ActionExecutor.InvokeDesktopElementUiaOnly(scopeAdmitAll, "Admit all"))
                 {
-                    TesterLogger.Action("[WAITING_ROOM] Clicked 'Admit all' via UIA");
+                    LastAdmittedNames = waiting;
+                    TesterLogger.Action($"[WAITING_ROOM] Clicked 'Admit all' via UIA ({waiting.Length} named)");
                     TesterLogger.Desktop("[WAITING_ROOM] Participant admitted successfully");
                     return true;
                 }
@@ -182,6 +187,28 @@ internal sealed class DesktopWaitingRoomUiaAdmitter
             }
         }
         return !sawWaitingHeader && TryAdmitAboveJoined(root, cancellationToken);
+    }
+
+    /// <summary>Everyone listed as waiting (under "Waiting room", or above "Joined" when that header scrolled away).</summary>
+    private static IReadOnlyList<string> WaitingNames(AutomationElement root)
+    {
+        try
+        {
+            var names = new List<string>();
+            foreach (var header in DescendantsAndSelf(root).Where(e => NameOf(e).Contains("Waiting room", StringComparison.OrdinalIgnoreCase)).ToArray())
+                names.AddRange(FindWaitingRows(header.Parent ?? root, header).Select(ParticipantNameOf));
+            if (names.Count == 0)
+                foreach (var joined in DescendantsAndSelf(root).Where(e => JoinedHeader.IsMatch(NameOf(e))).ToArray())
+                {
+                    double joinedY = RectOf(joined).Y;
+                    names.AddRange(Descendants(joined.Parent ?? root)
+                        .Where(e => RectOf(e) is { Height: > 0 } r && r.Y < joinedY &&
+                            e.Properties.ControlType.ValueOrDefault is var t && (t == ControlType.ListItem || t == ControlType.DataItem || t == ControlType.TreeItem))
+                        .Select(ParticipantNameOf));
+                }
+            return names.Where(n => n.Length > 0 && !JoinedHeader.IsMatch(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+        catch { return []; }
     }
 
     private static readonly System.Text.RegularExpressions.Regex JoinedHeader =
