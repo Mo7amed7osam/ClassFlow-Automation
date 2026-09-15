@@ -30,7 +30,7 @@ public sealed class RecordingsDashboardViewModel : ObservableObject, IDisposable
     {
         _store = store ?? new RecordingsDashboardSettingsStore();
         _passwords = passwords ?? new DatabasePasswordStore();
-        _host = host ?? new CentralServerHost(_passwords);
+        _host = host ?? new CentralServerHost(_passwords) { HandToBackground = true };
         _settings = _store.Load();
         _status = _host.Status;
         _host.StatusChanged += OnStatusChanged;

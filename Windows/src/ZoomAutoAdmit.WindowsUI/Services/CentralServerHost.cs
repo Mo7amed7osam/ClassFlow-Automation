@@ -98,6 +98,56 @@ public sealed class CentralServerHost(IDatabasePasswordStore passwords) : ICentr
     public event Action<ServerStatus>? StatusChanged;
     public ServerStatus Status { get { lock (_gate) return _status; } }
 
+    /// <summary>
+    /// The app's host: the backend and agent run in the background server (BackgroundServer), which
+    /// outlives the app, rather than as children of the window. Off for the background server itself.
+    /// </summary>
+    public bool HandToBackground { get; init; }
+
+    /// <summary>For the background server: starts whatever is not running, and says nothing when all is.</summary>
+    public async Task KeepRunningAsync(RecordingsDashboardSettings settings, CancellationToken cancellationToken = default)
+    {
+        bool agentUp = _agent is { HasExited: false } || !File.Exists(DeviceFile) || AgentAlreadyRunning();
+        if (agentUp && settings.BaseUri is { } uri && await IsHealthyAsync(uri, cancellationToken)) return;
+        await StartAsync(settings, cancellationToken);
+    }
+
+    /// <summary>Starts the background server (or finds it running) and waits for its backend to answer.</summary>
+    private async Task StartInBackgroundAsync(RecordingsDashboardSettings settings, CancellationToken cancellationToken)
+    {
+        var baseUri = settings.BaseUri!;
+        if (!await IsHealthyAsync(baseUri, cancellationToken))
+        {
+            if (settings.Problem() is { } problem) { Report(ServerState.Failed, Status.Agent, problem); return; }
+            if (string.IsNullOrEmpty(passwords.Read())) { Report(ServerState.Failed, Status.Agent, "Save the database password first (below)."); return; }
+            if (!BackgroundServer.EnsureRunning()) { Report(ServerState.Failed, Status.Agent, "The background server could not be started from here."); return; }
+            Report(ServerState.Starting, Status.Agent, "Starting the server in the background…");
+            // A database update (backed up first) can take a while before the backend answers.
+            var deadline = DateTime.UtcNow.AddSeconds(120);
+            while (DateTime.UtcNow < deadline && !await IsHealthyAsync(baseUri, cancellationToken))
+            {
+                if (BackgroundServer.LastStatus() is { State: ServerState.Failed } failed && !BackgroundServer.IsRunning())
+                {
+                    Report(ServerState.Failed, failed.Agent, failed.Message);
+                    return;
+                }
+                await Task.Delay(1000, cancellationToken);
+            }
+            if (!await IsHealthyAsync(baseUri, cancellationToken))
+            {
+                var last = BackgroundServer.LastStatus();
+                Report(ServerState.Failed, Status.Agent, last is { State: ServerState.Failed } ? last.Message
+                    : "The server did not answer within 2 minutes. See Logs\\central-backend.log.");
+                return;
+            }
+        }
+        else BackgroundServer.EnsureRunning();       // started by hand: the background server still watches it
+        // The agent follows the backend by a moment.
+        for (int i = 0; i < 10 && File.Exists(DeviceFile) && !AgentAlreadyRunning(); i++) await Task.Delay(1000, cancellationToken);
+        var agent = !File.Exists(DeviceFile) ? AgentState.NotRegistered : AgentAlreadyRunning() ? AgentState.RunningElsewhere : AgentState.Stopped;
+        Report(ServerState.RunningElsewhere, agent, "The server runs in the background: it keeps going when the app is closed.");
+    }
+
     private void Report(ServerState state, AgentState agent, string message)
     {
         var status = new ServerStatus(state, agent, message);
@@ -112,6 +162,7 @@ public sealed class CentralServerHost(IDatabasePasswordStore passwords) : ICentr
         if (!await _starting.WaitAsync(0, cancellationToken)) return;       // a start is already under way
         try
         {
+            if (HandToBackground) { await StartInBackgroundAsync(settings, cancellationToken); return; }
             var baseUri = settings.BaseUri!;
             if (await IsHealthyAsync(baseUri, cancellationToken))
             {
@@ -336,6 +387,7 @@ public sealed class CentralServerHost(IDatabasePasswordStore passwords) : ICentr
 
     public void Stop()
     {
+        if (HandToBackground) BackgroundServer.Stop();
         StopProcesses();
         Report(ServerState.Stopped, File.Exists(DeviceFile) ? AgentState.Stopped : AgentState.NotRegistered, "Stopped.");
     }

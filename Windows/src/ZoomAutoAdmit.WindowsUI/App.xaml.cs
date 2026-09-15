@@ -26,6 +26,15 @@ public partial class App : Application
             Shutdown();
             return;
         }
+        // The server PC's central server, with no window: it outlives the app (see BackgroundServer).
+        if (e.Args.Any(a => a.Equals(BackgroundServer.Argument, StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            try { await BackgroundServer.RunAsync(); }
+            catch (Exception ex) { WindowsUiErrorLog.Write("The background server stopped with an error.", ex); }
+            Shutdown();
+            return;
+        }
         WindowsUiRuntimeLog.Initialize();
         WindowsUiRuntimeLog.Write("STARTUP", "Application startup entered.");
         // Tier 2 means the GPU draws the window. Tier 0 is software rendering, where every
@@ -130,7 +139,12 @@ public partial class App : Application
     private static void StartCentralServerInBackground(RecordingsDashboardViewModel dashboard) =>
         _ = Task.Run(async () =>
         {
-            try { await dashboard.StartIfConfiguredAsync(); }
+            try
+            {
+                // It also comes back by itself when Windows signs in, with or without the app.
+                if (dashboard.Settings is { Mode: DashboardMode.Server, StartWithApp: true }) BackgroundServer.StartAtSignIn();
+                await dashboard.StartIfConfiguredAsync();
+            }
             catch (Exception ex) { WindowsUiErrorLog.Write("The central server could not be started with the app.", ex); }
         });
 

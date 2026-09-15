@@ -31,7 +31,8 @@ public static class Uninstaller
             installed = key?.GetValue("InstallLocation") as string;
         bool ours = installed != null && string.Equals(Path.TrimEndingDirectorySeparator(installed), folder, StringComparison.OrdinalIgnoreCase);
 
-        StopOtherCopies();
+        StopOtherCopies();                        // the background server too
+        BackgroundServer.RemoveStartAtSignIn();
         RemoveScheduledClasses();
         foreach (var link in Shortcuts()) try { if (File.Exists(link)) File.Delete(link); } catch { }
         try { Registry.CurrentUser.DeleteSubKeyTree(RegistryKey, throwOnMissingSubKey: false); } catch { }
