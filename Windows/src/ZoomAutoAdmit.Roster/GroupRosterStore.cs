@@ -61,6 +61,9 @@ public sealed class GroupRosterStore : IGroupRosterService
     public Task AddStudentAsync(RosterGroup expected, GroupStudent student, CancellationToken token = default) =>
         ChangeAsync(expected, group => group with { Students = group.Students.Append(student).ToArray() }, "Student added", token);
 
+    public Task AddStudentsAsync(RosterGroup expected, IReadOnlyList<GroupStudent> students, CancellationToken token = default) =>
+        ChangeAsync(expected, group => group with { Students = group.Students.Concat(students).ToArray() }, $"Students added; Students: {students.Count}", token);
+
     public Task UpdateStudentAsync(RosterGroup expected, GroupStudent student, CancellationToken token = default) =>
         ChangeAsync(expected, group =>
         {

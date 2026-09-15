@@ -75,10 +75,15 @@ public partial class App : Application
             _viewModel.SessionRoles.ProfileSaved += (title, message) =>
                 Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show(title, message, "#2ED9A0"); } catch { } });
             WindowsUiRuntimeLog.Write("VIEWMODELS", "Main view model graph created.");
+            // The app opens on the Dashboard: who is signed in, their LMS account, every session.
+            _viewModel.SelectedTabIndex = MainViewModel.DashboardPage;
             window.DataContext = _viewModel;
             await _viewModel.InitializeAsync();
             WindowsUiRuntimeLog.Write("VIEWMODELS", "View model initialization completed.");
+            StartCentralServerInBackground(_viewModel.RecordingsDashboard);
             RepairScheduledMeetingsInBackground(bootstrapper);
+            // Opened mid-class (after a crash, or closed by hand): take the open meeting back.
+            _ = Task.Run(() => MeetingAdoption.AdoptLiveMeetingAsync(bootstrapper));
         }
         catch (Exception ex)
         {
@@ -104,6 +109,17 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// On the server PC, the central backend and its agent start with the app (and end with it:
+    /// disposing the view model stops them). A failure is shown on the Recordings page, never here.
+    /// </summary>
+    private static void StartCentralServerInBackground(RecordingsDashboardViewModel dashboard) =>
+        _ = Task.Run(async () =>
+        {
+            try { await dashboard.StartIfConfiguredAsync(); }
+            catch (Exception ex) { WindowsUiErrorLog.Write("The central server could not be started with the app.", ex); }
+        });
+
     private void RegisterExceptionHandlers()
     {
         DispatcherUnhandledException += OnDispatcherUnhandledException;
@@ -128,12 +144,29 @@ public partial class App : Application
         ShowErrorDialog("An unexpected interface error occurred. The application will stay open.", e.Exception);
     }
 
+    private static readonly DateTime StartedAt = DateTime.Now;
+
     private void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)
     {
         if (e.ExceptionObject is Exception exception)
             WindowsUiErrorLog.Write("Unhandled application exception.", exception);
         if (e.ExceptionObject is Exception runtimeException)
             WindowsUiRuntimeLog.Write("EXCEPTION", runtimeException.ToString());
+        if (!e.IsTerminating) return;
+        // The app is going down. A class in progress keeps its admission (in its own process), and
+        // the app comes back by itself a few seconds later and takes the meeting back.
+        try
+        {
+            if (!MeetingAdoption.ZoomMeetingIsOpen()) return;
+            MeetingAdoption.StartStandaloneAdmission();
+            if (DateTime.Now - StartedAt < TimeSpan.FromMinutes(2)) return;     // never a restart loop
+            string exe = Environment.ProcessPath ?? System.IO.Path.Combine(AppContext.BaseDirectory, "ZoomAutoAdmit.WindowsUI.exe");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe",
+                $"/c timeout /t 5 /nobreak >nul & start \"\" \"{exe}\"")
+            { CreateNoWindow = true, UseShellExecute = false });
+            WindowsUiRuntimeLog.Write("EXCEPTION", "The app will reopen by itself in a few seconds; admission continues meanwhile.");
+        }
+        catch { }
     }
 
     private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)

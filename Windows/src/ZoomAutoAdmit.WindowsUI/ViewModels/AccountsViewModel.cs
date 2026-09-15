@@ -10,19 +10,22 @@ namespace ZoomAutoAdmit.WindowsUI.ViewModels;
 public sealed class AccountsViewModel : ObservableObject
 {
     private readonly IWindowsUiService _service;
+    private readonly IZoomProfileCredentialStore _credentials;
     private WindowsMeetingAccountMetadata? _selectedAccount;
     private string _accountId = string.Empty;
     private string _displayName = string.Empty;
     private string _credentialReference = string.Empty;
     private string _zoomEmail = string.Empty;
+    private string _groupName = string.Empty;
     private string _defaultMeetingUrl = string.Empty;
     private string _webProfileName = string.Empty;
     private EnginePreference _preferredEngine;
     private string _statusMessage = string.Empty;
 
-    public AccountsViewModel(IWindowsUiService service)
+    public AccountsViewModel(IWindowsUiService service, IZoomProfileCredentialStore? credentials = null)
     {
         _service = service;
+        _credentials = credentials ?? new ZoomProfileCredentialStore();
         NewCommand = new RelayCommand(_ => ClearEditor());
         SaveCommand = new AsyncRelayCommand(_ => SaveAsync());
         DeleteCommand = new AsyncRelayCommand(_ => DeleteAsync());
@@ -39,6 +42,7 @@ public sealed class AccountsViewModel : ObservableObject
         {
             if (!SetProperty(ref _selectedAccount, value) || value == null) return;
             AccountId = value.AccountId;
+            GroupName = value.GroupName ?? value.AccountId;
             DisplayName = value.DisplayName;
             CredentialReference = value.CredentialReference;
             ZoomEmail = value.ZoomEmail ?? string.Empty;
@@ -53,16 +57,19 @@ public sealed class AccountsViewModel : ObservableObject
                 AccountEnginePreference.Web => EnginePreference.Web,
                 _ => EnginePreference.Auto
             };
+            OnPropertyChanged(nameof(HasSavedPassword));
         }
     }
     public string AccountId { get => _accountId; set => SetProperty(ref _accountId, value); }
     public string DisplayName { get => _displayName; set => SetProperty(ref _displayName, value); }
     public string CredentialReference { get => _credentialReference; set => SetProperty(ref _credentialReference, value); }
     public string ZoomEmail { get => _zoomEmail; set => SetProperty(ref _zoomEmail, value); }
+    public string GroupName { get => _groupName; set => SetProperty(ref _groupName, value); }
     public string DefaultMeetingUrl { get => _defaultMeetingUrl; set => SetProperty(ref _defaultMeetingUrl, value); }
     public string WebProfileName { get => _webProfileName; set => SetProperty(ref _webProfileName, value); }
     public EnginePreference PreferredEngine { get => _preferredEngine; set => SetProperty(ref _preferredEngine, value); }
     public string StatusMessage { get => _statusMessage; private set => SetProperty(ref _statusMessage, value); }
+    public bool HasSavedPassword => !string.IsNullOrWhiteSpace(AccountId) && SafeHasPassword(AccountId);
     public ICommand NewCommand { get; }
     public ICommand SaveCommand { get; }
     public ICommand DeleteCommand { get; }
@@ -94,14 +101,44 @@ public sealed class AccountsViewModel : ObservableObject
                 DisplayName.Trim(),
                 CredentialReference.Trim(),
                 engine) { ZoomEmail = email,
+                    GroupName = string.IsNullOrWhiteSpace(GroupName) ? AccountId.Trim() : GroupName.Trim(),
                     DefaultMeetingUrl = WindowsMeetingAccountManager.NormalizeDefaultMeetingUrl(DefaultMeetingUrl),
                     WebProfileName = WindowsMeetingAccountManager.NormalizeWebProfileName(WebProfileName) });
             await RefreshAsync();
             SelectedAccount = Items.First(account => account.AccountId.Equals(AccountId, StringComparison.OrdinalIgnoreCase));
-            StatusMessage = "Account saved. Passwords are never stored here.";
+            StatusMessage = HasSavedPassword
+                ? "Profile saved. Its password is protected by Windows Credential Manager."
+                : "Profile saved. Save a password if this Zoom profile needs one.";
             AccountsChanged?.Invoke();
         }
         catch (Exception ex) { StatusMessage = ex.Message; }
+    }
+
+    public void SavePassword(string? password)
+    {
+        try
+        {
+            var email = WindowsMeetingAccountManager.NormalizeZoomEmail(ZoomEmail)
+                ?? throw new ArgumentException("Enter a valid Zoom Email before saving the password.");
+            _credentials.Save(AccountId, email, password ?? string.Empty);
+            CredentialReference = _credentials.ReferenceFor(AccountId);
+            StatusMessage = "Zoom password saved in Windows Credential Manager. Save the profile to keep its reference.";
+        }
+        catch (Exception ex) { StatusMessage = ex.Message; }
+        OnPropertyChanged(nameof(HasSavedPassword));
+    }
+
+    public void ForgetPassword()
+    {
+        try { _credentials.Delete(AccountId); StatusMessage = "The saved Zoom password was removed."; }
+        catch (Exception ex) { StatusMessage = ex.Message; }
+        OnPropertyChanged(nameof(HasSavedPassword));
+    }
+
+    private bool SafeHasPassword(string accountId)
+    {
+        try { return _credentials.HasPassword(accountId); }
+        catch { return false; }
     }
 
     public async Task DeleteAsync()
@@ -110,6 +147,7 @@ public sealed class AccountsViewModel : ObservableObject
         try
         {
             bool removed = await _service.DeleteAccountAsync(AccountId);
+            if (removed) _credentials.Delete(AccountId);
             await RefreshAsync();
             ClearEditor();
             StatusMessage = removed ? "Account deleted." : "Account was not found.";
@@ -145,6 +183,7 @@ public sealed class AccountsViewModel : ObservableObject
         DisplayName = string.Empty;
         CredentialReference = string.Empty;
         ZoomEmail = string.Empty;
+        GroupName = string.Empty;
         DefaultMeetingUrl = string.Empty;
         WebProfileName = string.Empty;
         PreferredEngine = EnginePreference.Auto;

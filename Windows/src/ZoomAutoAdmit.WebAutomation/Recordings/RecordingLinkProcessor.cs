@@ -112,7 +112,7 @@ public sealed class RecordingLinkProcessor(
     Func<DateOnly>? today = null) : IRecordingLinkProcessor
 {
     /// <summary>The browser profile the dashboard is driven with.</summary>
-    public const string DashboardProfile = LmsSessionRunner.DashboardProfile;
+    public static string DashboardProfile => LmsSessionRunner.DashboardProfile;
 
     /// <summary>How long to wait for a busy profile before answering "busy".</summary>
     public static readonly TimeSpan DefaultLockWait = TimeSpan.FromMinutes(2);

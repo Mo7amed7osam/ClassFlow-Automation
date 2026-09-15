@@ -1,4 +1,6 @@
-# Exact versions the Phase 1 tests passed with (Python 3.13). Ranges are in pyproject.toml.
+# Exact versions the backend tests pass with (Python 3.13 and 3.14). Ranges are in pyproject.toml.
+# Install into the backend's virtual environment, never the system Python:
+#   .venv\Scripts\python -m pip install -r requirements.txt      (tests: requirements-dev.txt)
 fastapi==0.141.1
 starlette==1.6.0
 pydantic==2.13.5
@@ -8,3 +10,4 @@ SQLAlchemy==2.0.52
 greenlet==3.5.5
 asyncpg==0.31.0
 alembic==1.20.0
+cryptography==46.0.3

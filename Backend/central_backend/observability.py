@@ -17,7 +17,7 @@ from typing import Any
 LOGGER_NAME = "central"
 logger = logging.getLogger(LOGGER_NAME)
 
-_SECRET_LIKE = re.compile(r"zaa[kde]_[A-Za-z0-9_.\-]+")
+_SECRET_LIKE = re.compile(r"zaa[kdes]_[A-Za-z0-9_.\-]+")
 _DRIVE_ID = re.compile(r"(drive\.google\.com/(?:file/d/|open\?id=))([A-Za-z0-9_-]{6})[A-Za-z0-9_-]*")
 # In the scrubber only ids longer than a preview are shortened, so a preview is not shortened twice.
 _DRIVE_ID_IN_TEXT = re.compile(r"(drive\.google\.com/(?:file/d/|open\?id=))([A-Za-z0-9_-]{6})[A-Za-z0-9_-]+")

@@ -23,7 +23,8 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
         string? schedulesPath = null,
         IWindowsTaskScheduler? taskScheduler = null,
         Func<MeetingLaunchContext, IAttendanceParticipantSource>? attendanceSources = null,
-        IAttendanceSnapshotStore? attendanceStore = null)
+        IAttendanceSnapshotStore? attendanceStore = null,
+        Func<MeetingLifecycleEvents, LmsMeetingBridge>? createLmsBridge = null)
     {
         ProfileMapper = new WindowsAccountWebProfileMapper(profilesRoot);
         AccountManager = new WindowsMeetingAccountManager(
@@ -62,6 +63,9 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
             LifecycleEvents,
             attendanceSources ?? (context => sources.Create(context, mayOpenPanel: false)),
             new ScheduleNameSource(ScheduleStore));
+        // The LMS half of every class: Run Session when the meeting goes live, and the attendance
+        // steps written down. Here so it works however the meeting was started (app or Windows task).
+        Lms = createLmsBridge?.Invoke(LifecycleEvents) ?? new LmsMeetingBridge(LifecycleEvents);
         ConsoleLogger.Success("[BOOTSTRAP] Services initialized");
     }
 
@@ -73,6 +77,7 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
     public MeetingLifecycleEvents LifecycleEvents { get; }
     public AttendanceLifecycleBridge Attendance { get; }
     public SessionRoleBridge SessionRoles { get; }
+    public LmsMeetingBridge Lms { get; }
     public IWindowsTaskScheduler TaskScheduler { get; }
     public WindowsMeetingScheduleStore ScheduleStore { get; }
     public WindowsMeetingScheduler Scheduler { get; }
@@ -81,6 +86,7 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
     {
         await Scheduler.DisposeAsync();
         await SessionRoles.DisposeAsync();
+        await Lms.DisposeAsync();
         await Attendance.DisposeAsync();
         await _webLauncher.DisposeAsync();
         await _desktopLauncher.DisposeAsync();

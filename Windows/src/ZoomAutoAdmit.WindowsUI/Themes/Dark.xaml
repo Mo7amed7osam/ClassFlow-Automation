@@ -1,46 +1,44 @@
-<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:sys="clr-namespace:System;assembly=System.Runtime">
-    <!-- Tokens translated from the user-supplied standalone HTML, not runtime settings. -->
-    <SolidColorBrush x:Key="CanvasBrush" Color="#05080F"/>
-    <SolidColorBrush x:Key="SidebarBrush" Color="#EB080D1A"/>
-    <SolidColorBrush x:Key="TextBrush" Color="#E8EDF7"/>
-    <SolidColorBrush x:Key="MutedBrush" Color="#9AA6BD"/>
-    <SolidColorBrush x:Key="SubtleBrush" Color="#66738C"/>
-    <SolidColorBrush x:Key="LineBrush" Color="#14FFFFFF"/>
-    <SolidColorBrush x:Key="StrongLineBrush" Color="#24FFFFFF"/>
-    <SolidColorBrush x:Key="InputBrush" Color="#09FFFFFF"/>
-    <SolidColorBrush x:Key="HoverBrush" Color="#0DFFFFFF"/>
-    <SolidColorBrush x:Key="SelectedBrush" Color="#293B7CF6"/>
-    <SolidColorBrush x:Key="AccentBrush" Color="#6F9DFF"/>
-    <SolidColorBrush x:Key="SuccessBrush" Color="#2ED9A0"/>
-    <SolidColorBrush x:Key="WarningBrush" Color="#F5A524"/>
-    <SolidColorBrush x:Key="ErrorBrush" Color="#F4525F"/>
-    <SolidColorBrush x:Key="IconTileBrush" Color="#26A78BFA"/>
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Studio, night. The same design as Light.xaml with the same keys; only the values change. -->
+    <SolidColorBrush x:Key="CanvasBrush" Color="#0D1017"/>
+    <SolidColorBrush x:Key="SidebarBrush" Color="#11151D"/>
+    <SolidColorBrush x:Key="TextBrush" Color="#E7EAF0"/>
+    <SolidColorBrush x:Key="MutedBrush" Color="#9AA3B5"/>
+    <SolidColorBrush x:Key="SubtleBrush" Color="#6B7486"/>
+    <SolidColorBrush x:Key="LineBrush" Color="#222835"/>
+    <SolidColorBrush x:Key="StrongLineBrush" Color="#323A4B"/>
+    <SolidColorBrush x:Key="InputBrush" Color="#0F131B"/>
+    <SolidColorBrush x:Key="HoverBrush" Color="#1B212C"/>
+    <SolidColorBrush x:Key="SelectedBrush" Color="#23264A"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="#8B8FF9"/>
+    <SolidColorBrush x:Key="SuccessBrush" Color="#34D399"/>
+    <SolidColorBrush x:Key="WarningBrush" Color="#FBBF24"/>
+    <SolidColorBrush x:Key="ErrorBrush" Color="#F87171"/>
+    <SolidColorBrush x:Key="InfoBrush" Color="#38BDF8"/>
+    <SolidColorBrush x:Key="IconTileBrush" Color="#22264A"/>
     <SolidColorBrush x:Key="CyanBrush" Color="#38BDF8"/>
     <SolidColorBrush x:Key="PurpleBrush" Color="#A78BFA"/>
-    <SolidColorBrush x:Key="GreenSoftBrush" Color="#242ED9A0"/>
-    <SolidColorBrush x:Key="OrangeSoftBrush" Color="#26F5A524"/>
-    <!-- Soft tints the reference uses for status chips; they were missing here. -->
-    <SolidColorBrush x:Key="CyanSoftBrush" Color="#2638BDF8"/>
-    <SolidColorBrush x:Key="RedSoftBrush" Color="#26F4525F"/>
-    <SolidColorBrush x:Key="PurpleSoftBrush" Color="#26A78BFA"/>
-    <SolidColorBrush x:Key="InsetStrongBrush" Color="#0EFFFFFF"/>
-    <SolidColorBrush x:Key="TrackBrush" Color="#14FFFFFF"/>
-    <SolidColorBrush x:Key="CardBaseBrush" Color="#0B1220"/>
+    <SolidColorBrush x:Key="GreenSoftBrush" Color="#12291F"/>
+    <SolidColorBrush x:Key="OrangeSoftBrush" Color="#2D2410"/>
+    <SolidColorBrush x:Key="CyanSoftBrush" Color="#0F2433"/>
+    <SolidColorBrush x:Key="RedSoftBrush" Color="#301719"/>
+    <SolidColorBrush x:Key="PurpleSoftBrush" Color="#221B38"/>
+    <SolidColorBrush x:Key="InsetStrongBrush" Color="#161B25"/>
+    <SolidColorBrush x:Key="TrackBrush" Color="#222835"/>
+    <SolidColorBrush x:Key="CardBaseBrush" Color="#151A23"/>
+    <SolidColorBrush x:Key="CardBrush" Color="#151A23"/>
+    <SolidColorBrush x:Key="PrimaryBrush" Color="#6366F1"/>
+    <SolidColorBrush x:Key="PrimaryHoverBrush" Color="#7477F4"/>
     <SolidColorBrush x:Key="PrimaryTextBrush" Color="White"/>
-    <LinearGradientBrush x:Key="CardBrush" StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#181F2C" Offset="0"/><GradientStop Color="#0E1523" Offset="1"/></LinearGradientBrush>
-    <LinearGradientBrush x:Key="PrimaryBrush" StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#3B7CF6" Offset="0"/><GradientStop Color="#6D5CF6" Offset=".55"/><GradientStop Color="#8B5CF6" Offset="1"/></LinearGradientBrush>
-    <!-- The three page glows of the reference background, in its own order and strength. -->
-    <RadialGradientBrush x:Key="GlowBrush"><GradientStop Color="#333B7CF6" Offset="0"/><GradientStop Color="#003B7CF6" Offset="1"/></RadialGradientBrush>
-    <RadialGradientBrush x:Key="GlowPurpleBrush"><GradientStop Color="#297A5CF5" Offset="0"/><GradientStop Color="#007A5CF5" Offset="1"/></RadialGradientBrush>
-    <RadialGradientBrush x:Key="GlowGreenBrush"><GradientStop Color="#0F2ED9A0" Offset="0"/><GradientStop Color="#002ED9A0" Offset="1"/></RadialGradientBrush>
-    <!-- Reference: 0 22px 60px rgba(0,0,0,.45) and 0 8px 24px rgba(0,0,0,.3). -->
-    <DropShadowEffect x:Key="CardShadow" Color="#000000" Opacity="0.45" BlurRadius="22" ShadowDepth="8" Direction="270"/>
-    <DropShadowEffect x:Key="SmallShadow" Color="#000000" Opacity="0.3" BlurRadius="14" ShadowDepth="4" Direction="270"/>
-    <DropShadowEffect x:Key="PrimaryGlow" Color="#3B7CF6" Opacity="0.35" BlurRadius="12" ShadowDepth="0"/>
+    <SolidColorBrush x:Key="GlowBrush" Color="Transparent"/>
+    <SolidColorBrush x:Key="GlowPurpleBrush" Color="Transparent"/>
+    <SolidColorBrush x:Key="GlowGreenBrush" Color="Transparent"/>
+    <DropShadowEffect x:Key="CardShadow" Color="#000000" Opacity="0.28" BlurRadius="14" ShadowDepth="2" Direction="270"/>
+    <DropShadowEffect x:Key="SmallShadow" Color="#000000" Opacity="0.25" BlurRadius="8" ShadowDepth="1" Direction="270"/>
+    <DropShadowEffect x:Key="PrimaryGlow" Color="#6366F1" Opacity="0" BlurRadius="0" ShadowDepth="0"/>
     <Thickness x:Key="SidebarMargin">0</Thickness>
     <CornerRadius x:Key="SidebarCorner">0</CornerRadius>
-    <!-- Each design carries its own typeface so the four are distinct, not only recoloured. -->
-    <FontFamily x:Key="AppFont">Segoe UI Variable Display, Segoe UI</FontFamily>
-    <FontFamily x:Key="AppMono">Cascadia Code, Consolas</FontFamily>
-    <GridLength x:Key="SidebarWidth">264</GridLength>
+    <FontFamily x:Key="AppFont">Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="AppMono">Cascadia Mono, Consolas</FontFamily>
+    <GridLength x:Key="SidebarWidth">240</GridLength>
 </ResourceDictionary>

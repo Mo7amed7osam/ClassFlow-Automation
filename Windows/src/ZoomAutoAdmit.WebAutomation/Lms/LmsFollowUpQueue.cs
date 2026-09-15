@@ -10,6 +10,17 @@ public enum LmsFollowUpStep
     TakeAttendance,
     /// <summary>Move whoever turned up late from Not-joined to Joined, three hours in.</summary>
     CorrectAttendance,
+    /// <summary>Mark the LMS session complete after the late-attendance correction.</summary>
+    CompleteSession,
+    /// <summary>
+    /// Put the Zoom recording's share link on the finished session (read from My Recordings, even
+    /// while Zoom is still processing it). The Drive link n8n reports later replaces it.
+    /// </summary>
+    AttachZoomRecording,
+    /// <summary>Run Session when the meeting went live. Never queued: kept in the history only.</summary>
+    RunSession,
+    /// <summary>The Drive link found in the recordings sheet, put on the session. History only.</summary>
+    AttachDriveLink,
 }
 
 /// <summary>
@@ -77,6 +88,45 @@ public sealed class LmsFollowUpQueue
 
     public string FilePath => _path;
 
+    /// <summary>What was done (or last failed) for each step, kept after the step leaves the queue.</summary>
+    public sealed record Outcome(string Id, string Group, DateOnly SessionDate, TimeOnly SessionStart, LmsFollowUpStep Step,
+        bool Succeeded, string Message, DateTimeOffset At, int Attempts);
+
+    /// <summary>follow-up.json -> follow-up-history.json, beside it.</summary>
+    private string HistoryPath => Path.Combine(Path.GetDirectoryName(_path)!, Path.GetFileNameWithoutExtension(_path) + "-history.json");
+
+    public async Task RecordAsync(LmsFollowUp item, bool succeeded, string message, CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var all = LoadHistory();
+            all.RemoveAll(o => o.Id == item.Id);
+            all.Add(new Outcome(item.Id, item.Group, item.SessionDate, item.SessionStart, item.Step, succeeded, message,
+                DateTimeOffset.Now, item.Attempts + 1));
+            // A few months is plenty for the Sessions page.
+            all = [.. all.Where(o => o.At > DateTimeOffset.Now.AddDays(-120))];
+            Directory.CreateDirectory(Path.GetDirectoryName(HistoryPath)!);
+            string temporary = HistoryPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(all, Json));
+            File.Move(temporary, HistoryPath, overwrite: true);
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task<IReadOnlyList<Outcome>> ReadHistoryAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try { return LoadHistory(); }
+        finally { _gate.Release(); }
+    }
+
+    private List<Outcome> LoadHistory()
+    {
+        try { return File.Exists(HistoryPath) ? JsonSerializer.Deserialize<List<Outcome>>(File.ReadAllText(HistoryPath), Json) ?? [] : []; }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return []; }
+    }
+
     /// <summary>
     /// Writes down both steps for a class that has just started. Called again for the same class -
     /// a meeting reopened, the app restarted - it changes nothing, so a class cannot end up with
@@ -91,6 +141,8 @@ public sealed class LmsFollowUpQueue
         {
             Build(group, date, start, LmsFollowUpStep.TakeAttendance, startedAt + TakeAttendanceAfter),
             Build(group, date, start, LmsFollowUpStep.CorrectAttendance, startedAt + CorrectAttendanceAfter),
+            Build(group, date, start, LmsFollowUpStep.CompleteSession, startedAt + CorrectAttendanceAfter),
+            Build(group, date, start, LmsFollowUpStep.AttachZoomRecording, startedAt + CorrectAttendanceAfter),
         };
         return await UpdateAsync(items =>
         {

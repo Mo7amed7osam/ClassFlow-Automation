@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -88,6 +89,10 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Set only for jobs the dashboard creates from a recording; jobs from /api/v1/jobs leave it empty.
+    recording_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("recordings.id", ondelete="SET NULL"), index=True
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -145,7 +150,301 @@ class Recording(Base):
     )
 
 
+USER_ROLES = ("admin", "coordinator")
+USER_STATUSES = ("pending", "active", "rejected", "disabled")
+
+
+class User(Base):
+    """A person who signs in to the dashboard: the one admin, or a coordinator. Only a scrypt hash of
+    the password is kept. At most one admin can exist (a partial unique index)."""
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    username: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)   # stored lower-case
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(200), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("role IN ('admin', 'coordinator')", name="ck_users_role"),
+        CheckConstraint("status IN ('pending', 'active', 'rejected', 'disabled')", name="ck_users_status"),
+        Index("uq_users_single_admin", "role", unique=True, postgresql_where=text("role = 'admin'")),
+    )
+
+
+class Group(Base):
+    """A class group, named by its LMS code (e.g. CAI5_AIS4_S7). The name never changes - the
+    recordings sheet keeps sending it - so a friendlier label goes in display_name. Recordings are
+    matched to a group by that name."""
+
+    __tablename__ = "groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    display_name: Mapped[str | None] = mapped_column(String(100))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class UserGroup(Base):
+    """Which groups a coordinator may see."""
+
+    __tablename__ = "user_groups"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    assigned_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (Index("ix_user_groups_group", "group_id"),)
+
+
+class AdminSession(Base):
+    """A dashboard login (admin or coordinator). Only the session token's SHA-256 is kept; the token
+    is in the browser's cookie. The user's role and status are read from users on every request."""
+
+    __tablename__ = "admin_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    username: Mapped[str] = mapped_column(String(50), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class AdminAuditLog(Base):
+    """What a dashboard user did: who, to which recording (or account), what, when. Never a
+    password, token or full link."""
+
+    __tablename__ = "admin_audit_log"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(50), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    recording_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (Index("ix_admin_audit_log_recording", "recording_id", "id"),)
+
+
+STUDENT_ALIAS_STATUSES = ("accepted", "rejected")
+ATTENDANCE_SESSION_STATUSES = ("open", "closed", "finalized")
+ATTENDANCE_RECORD_STATUSES = ("present", "absent", "needs_review")
+
+
+class Student(Base):
+    """One student on a group's roster. The roster order, e-mail and an external id (the LMS's or
+    the Windows roster's) are optional. Removing a student only deactivates them, so past attendance
+    keeps its names."""
+
+    __tablename__ = "students"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    group_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    full_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(320))
+    external_id: Mapped[str | None] = mapped_column(String(128))
+    order_index: Mapped[int | None] = mapped_column(Integer)
+    aliases: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("uq_students_group_email", "group_name", text("lower(email)"), unique=True, postgresql_where=text("email IS NOT NULL")),
+        Index("uq_students_group_external", "group_name", "external_id", unique=True, postgresql_where=text("external_id IS NOT NULL")),
+    )
+
+
+class StudentAlias(Base):
+    """Name memory: a Zoom display name that is (accepted) or is not (rejected) a given student.
+    Written by manual corrections, and by confident automatic matches; a manual decision always
+    wins over an automatic one. Shared by every coordinator of the group, across sessions."""
+
+    __tablename__ = "student_aliases"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    student_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    alias: Mapped[str] = mapped_column(String(300), nullable=False)
+    alias_key: Mapped[str] = mapped_column(String(300), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('accepted', 'rejected')", name="ck_student_aliases_status"),
+        Index("uq_student_aliases_pair", "student_id", "alias_key", unique=True),
+    )
+
+
+class AttendanceSession(Base):
+    """One class meeting of a group whose attendance is taken: from the Windows agent's snapshots,
+    or created by hand. external_ref is the capturing client's own id for the meeting (the Windows
+    app's session GUID), so re-sent snapshots land in the same session."""
+
+    __tablename__ = "attendance_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    group_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    start_time: Mapped[str | None] = mapped_column(String(5))
+    title: Mapped[str | None] = mapped_column(String(200))
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_ref: Mapped[str | None] = mapped_column(String(200))
+    meeting_url: Mapped[str | None] = mapped_column(Text)
+    device_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id", ondelete="SET NULL"))
+    recording_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("recordings.id", ondelete="SET NULL"))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="open")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    matched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finalized_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('open', 'closed', 'finalized')", name="ck_attendance_sessions_status"),
+        Index("ix_attendance_sessions_group_date", "group_name", "session_date"),
+        Index("uq_attendance_sessions_external", "external_ref", unique=True, postgresql_where=text("external_ref IS NOT NULL")),
+    )
+
+
+class AttendanceSnapshot(Base):
+    """Raw evidence: the participant names one read of the Zoom list returned. Kept as sent; the
+    participants and records are worked out from these. client_snapshot_id makes re-sending safe."""
+
+    __tablename__ = "attendance_snapshots"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("attendance_sessions.id", ondelete="CASCADE"), nullable=False)
+    client_snapshot_id: Mapped[str | None] = mapped_column(String(200), unique=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    trigger: Mapped[str] = mapped_column(String(24), nullable=False)
+    is_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    names: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (Index("ix_attendance_snapshots_session", "session_id", "captured_at"),)
+
+
+class AttendanceParticipant(Base):
+    """A name seen in a session's Zoom list, with when it was first and last seen, the time it was
+    present (from the snapshots) and its presence intervals. ignored marks a host or staff member."""
+
+    __tablename__ = "attendance_participants"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("attendance_sessions.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(300), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sightings: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    present_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    intervals: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    ignored: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (Index("uq_attendance_participants_name", "session_id", "name_key", unique=True),)
+
+
+class AttendanceRecord(Base):
+    """A student's attendance in one session: present / absent / needs review, the Zoom name it
+    was matched to (one name per student, one student per name), how sure and by what, and join /
+    leave / duration from that name's presence. manual = set by a person, kept by re-matching."""
+
+    __tablename__ = "attendance_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("attendance_sessions.id", ondelete="CASCADE"), nullable=False)
+    student_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    participant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("attendance_participants.id", ondelete="SET NULL"))
+    extra_participant_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    match_source: Mapped[str] = mapped_column(String(16), nullable=False, server_default="none")
+    reason: Mapped[str | None] = mapped_column(String(300))
+    join_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    leave_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    manual: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('present', 'absent', 'needs_review')", name="ck_attendance_records_status"),
+        Index("uq_attendance_records_student", "session_id", "student_id", unique=True),
+    )
+
+
+class LmsAccount(Base):
+    """An LMS sign-in a dashboard user works with (their coordinator or admin account on the LMS).
+    The password is AES-GCM encrypted with CENTRAL_SECRETS_KEY (never stored here); one account per
+    user is the active one, which that user's app signs in with."""
+
+    __tablename__ = "lms_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    password_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("role IN ('admin', 'coordinator')", name="ck_lms_accounts_role"),
+        Index("uq_lms_accounts_user_email", "user_id", text("lower(email)"), unique=True),
+        Index("uq_lms_accounts_one_active", "user_id", unique=True, postgresql_where=text("active")),
+    )
+
+
+class AppSetting(Base):
+    """A setting shared by every copy of the app (e.g. the recordings sheet's link). Never a secret."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 __all__ = [
+    "AppSetting",
+    "LmsAccount",
+    "ATTENDANCE_RECORD_STATUSES",
+    "ATTENDANCE_SESSION_STATUSES",
+    "STUDENT_ALIAS_STATUSES",
+    "AttendanceParticipant",
+    "AttendanceRecord",
+    "AttendanceSession",
+    "AttendanceSnapshot",
+    "Student",
+    "StudentAlias",
+    "AdminAuditLog",
+    "AdminSession",
+    "Group",
+    "User",
+    "UserGroup",
+    "USER_ROLES",
+    "USER_STATUSES",
     "ACTIVE_JOB_STATUSES",
     "FINAL_JOB_STATUSES",
     "JOB_STATUSES",

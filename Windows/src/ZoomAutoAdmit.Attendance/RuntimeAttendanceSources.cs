@@ -154,6 +154,77 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
             return (matched, visible);
         }
 
+        /// <summary>
+        /// Every row label of a virtualized list, in order: scrolled to the top, then a page at a
+        /// time to the bottom, then back where it was. Without a scroll pattern, the rows on show.
+        /// </summary>
+        private static (List<string> Labels, bool ReachedEnd) ReadWholeList(FlaUI.Core.AutomationElements.AutomationElement list, CancellationToken token)
+        {
+            var labels = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            int Take()
+            {
+                int added = 0;
+                foreach (var row in list.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem)))
+                {
+                    string label = SafeName(row);
+                    if (label.Length > 0 && seen.Add(label)) { labels.Add(label); added++; }
+                }
+                return added;
+            }
+            FlaUI.Core.Patterns.IScrollPattern? scroll = null;
+            try { if (list.Patterns.Scroll.IsSupported) scroll = list.Patterns.Scroll.Pattern; } catch { }
+            if (scroll == null || !scroll.VerticallyScrollable.ValueOrDefault) { Take(); return (labels, true); }
+
+            double original = scroll.VerticalScrollPercent.ValueOrDefault;
+            bool end = false;
+            try
+            {
+                scroll.SetScrollPercent(-1, 0);
+                Thread.Sleep(150);
+                Take();
+                for (int page = 0; page < 80 && !token.IsCancellationRequested; page++)
+                {
+                    if (scroll.VerticalScrollPercent.ValueOrDefault >= 99.5) { end = true; break; }
+                    scroll.Scroll(ScrollAmount.NoAmount, ScrollAmount.LargeIncrement);
+                    Thread.Sleep(150);
+                    Take();
+                }
+                if (!end) end = scroll.VerticalScrollPercent.ValueOrDefault >= 99.5;
+            }
+            catch { }
+            finally { try { scroll.SetScrollPercent(-1, original); } catch { } }
+            return (labels, end);
+        }
+
+        private static DateTime _lastAltU = DateTime.MinValue;
+        private static readonly TimeSpan AltUEvery = TimeSpan.FromMinutes(3);
+
+        /// <summary>
+        /// The toolbar hides itself when the mouse is still, and a hidden toolbar exposes no
+        /// Participants button to UI Automation - the case of a class nobody is watching. The
+        /// fallback is Zoom's own Alt+U, sent to the meeting window with the window that was in front
+        /// put back straight after (as the admission path does). At most every few minutes, so a
+        /// panel someone keeps closing is not fought over.
+        /// </summary>
+        private static bool TryAltUOpen()
+        {
+            if (DateTime.UtcNow - _lastAltU < AltUEvery) return false;
+            _lastAltU = DateTime.UtcNow;
+            IntPtr meeting = ZoomWindowManager.FindMainZoomMeetingWindow();
+            if (meeting == IntPtr.Zero) return false;
+            try
+            {
+                using var preserver = new ForegroundWindowPreserver(meeting);
+                if (!preserver.ActivateZoomTemporarily()) return false;
+                NativeMethods.SendAltKey(0x55);        // Alt+U: Participants
+                Thread.Sleep(500);
+                // A docked panel is part of the meeting window, so the lists are simply read again.
+                return true;
+            }
+            catch { return false; }
+        }
+
         /// <summary>Invokes Zoom's own "Participants, open panel" toolbar button when the panel is closed.</summary>
         private static bool TryOpenParticipantsPanel(UIA3Automation automation, ZoomProcessCandidate process)
         {
@@ -195,27 +266,47 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
                     Thread.Sleep(700);
                     (lists, visibleLists) = FindJoinedLists(automation, process);
                 }
+                if (lists.Length == 0 && mayOpenPanel && TryAltUOpen())
+                {
+                    Thread.Sleep(700);
+                    (lists, visibleLists) = FindJoinedLists(automation, process);
+                }
                 // The failure names what was actually on screen, so one live run is enough to adapt the binding.
                 if (lists.Length != 1)
                     throw new InvalidOperationException(
                         $"Attendance requires one exposed Joined UIA list; matched {lists.Length} of {visibleLists.Length} lists. " +
                         $"Open the participants panel. Lists seen: {Describe(visibleLists)}");
-                var rows = lists[0].FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem));
+                // The whole list, like the extension reads it: Zoom only exposes the rows on screen,
+                // so the list is scrolled top to bottom and every page is read, then put back.
+                var (labels, reachedEnd) = ReadWholeList(lists[0], token);
                 var names = new List<ParticipantPresence>();
                 // Rows arrive in visual order; a section header switches which list the rows below belong to.
-                // With no header at all (no waiting room) every row is a joined participant.
-                bool inJoinedSection = true;
-                foreach (var row in rows)
+                // With no header at all (no waiting room) every row is a joined participant. When the
+                // "Waiting room (n)" header is out of view, the people above "Joined (n)" are still
+                // waiting: rows before a Joined header are never attendance.
+                bool hasJoinedHeader = labels.Any(l => SectionHeader.IsMatch(l) && !WaitingHeader.IsMatch(l));
+                bool inJoinedSection = !hasJoinedHeader;
+                int? joinedCount = null;
+                foreach (var label in labels)
                 {
                     token.ThrowIfCancellationRequested();
-                    var label = SafeName(row);
-                    if (string.IsNullOrWhiteSpace(label)) throw new InvalidOperationException("Attendance UIA row name unavailable.");
-                    if (SectionHeader.IsMatch(label)) { inJoinedSection = !WaitingHeader.IsMatch(label); continue; }
+                    if (SectionHeader.IsMatch(label))
+                    {
+                        inJoinedSection = !WaitingHeader.IsMatch(label);
+                        if (inJoinedSection && System.Text.RegularExpressions.Regex.Match(label, @"\((\d+)\)") is { Success: true } m)
+                            joinedCount = int.Parse(m.Groups[1].Value);
+                        continue;
+                    }
                     if (!inJoinedSection) continue;   // Waiting room is never attendance.
                     names.Add(new(CleanParticipantName(label)));
                 }
                 if (names.Count == 0) throw new InvalidOperationException("Attendance UIA rows unavailable; not proof of empty attendance.");
-                result = new(names, false, "Joined-section rows from the Windows participant list; virtualized rows may not be exposed.");
+                // Complete when the list was read to its end and holds as many people as Zoom counts.
+                // Without a waiting room Zoom shows no section headers at all: the whole list is joined.
+                bool complete = reachedEnd && (joinedCount is not { } n || names.Count >= n);
+                result = new(names, complete, complete
+                    ? $"The whole Joined list ({names.Count} of {joinedCount}), read page by page."
+                    : $"Joined rows read: {names.Count}{(joinedCount is { } c ? $" of {c}" : "")}; the list may not have been fully exposed.");
             }, uint.MaxValue);
             return result ?? throw new InvalidOperationException("Attendance UIA read did not complete.");
         }, token);

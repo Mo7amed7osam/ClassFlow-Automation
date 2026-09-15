@@ -22,7 +22,8 @@ public static class AdmissionControl
     private static bool _showWebBrowser = true;
     private static DateTimeOffset _preferencesReadAt = DateTimeOffset.MinValue;
 
-    private static string Folder => Path.Combine(
+    /// <summary>Where the switch and today's count are kept; tests point it at a folder of their own.</summary>
+    public static string Folder { get; set; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZoomAutoAdmit");
 
     private static string SwitchPath => Path.Combine(Folder, "admission-switch.json");

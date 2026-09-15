@@ -5,11 +5,14 @@ description = "Central backend for Zoom Auto Admit Windows agents: devices, jobs
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
+    "starlette>=0.46",          # imported directly (middleware types, test client); also a FastAPI dependency
+    "pydantic>=2.9",            # imported directly (request bodies); also a FastAPI dependency
     "uvicorn>=0.30",
     "websockets>=13",
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
     "alembic>=1.14",
+    "cryptography>=44",        # AES-GCM for the LMS passwords users keep on the server
 ]
 
 [project.optional-dependencies]

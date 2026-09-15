@@ -1,23 +1,45 @@
 using System.Windows;
-using System.Windows.Controls;
 using ZoomAutoAdmit.WindowsUI.Services;
 
 namespace ZoomAutoAdmit.WindowsUI;
 
 public partial class MainWindow : Window
 {
-    public MainWindow() => InitializeComponent();
+    /// <summary>Below this width the sidebar keeps only its icons.</summary>
+    public const double CompactBelow = 1080;
 
-    /// <summary>
-    /// Puts on the look this machine last chose. The window is born as Midnight dark so its
-    /// default never depends on a file, and the app calls this once at startup.
-    /// </summary>
+    public static readonly DependencyProperty IsCompactProperty = DependencyProperty.Register(
+        nameof(IsCompact), typeof(bool), typeof(MainWindow), new PropertyMetadata(false, (o, e) => ((MainWindow)o).OnCompactChanged((bool)e.NewValue)));
+
+    /// <summary>Raised after night/day changes, so pages drawn outside WPF (the attendance page) can follow.</summary>
+    public static event Action<bool>? ThemeChanged;
+    public static bool CurrentIsDark { get; private set; }
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        SizeChanged += (_, _) => IsCompact = ActualWidth < CompactBelow;
+        // The log lists are shown here, so lines written on other threads come through this window's thread.
+        DataContextChanged += (_, e) => { if (e.NewValue is ViewModels.MainViewModel main) main.Logs.ShowOn(Dispatcher); };
+        ShowGlyph();
+    }
+
+    public bool IsCompact { get => (bool)GetValue(IsCompactProperty); set => SetValue(IsCompactProperty, value); }
+
+    private void OnCompactChanged(bool compact)
+    {
+        if (compact) SidebarColumn.Width = new GridLength(68);
+        else SidebarColumn.SetResourceReference(System.Windows.Controls.ColumnDefinition.WidthProperty, "SidebarWidth");
+        SidebarBody.Margin = compact ? new Thickness(10, 14, 10, 12) : new Thickness(12, 14, 12, 12);
+        PageArea.Margin = compact ? new Thickness(18, 0, 16, 14) : new Thickness(28, 0, 24, 18);
+    }
+
+    /// <summary>Puts on night or day as this machine last chose. The window is born in day mode.</summary>
     public void RestoreSavedDesign() => Apply(UiPreferences.Load());
 
     public bool IsDarkTheme => _preference.Dark;
-    public UiDesign Design => _preference.Design;
 
-    private UiPreference _preference = new(UiDesign.Midnight, true);
+    private UiPreference _preference = new(false);
 
     /// <summary>Swaps the palette dictionary. Only colours change; no layout or behaviour does.</summary>
     private void Apply(UiPreference preference)
@@ -28,41 +50,19 @@ public partial class MainWindow : Window
         };
         _preference = preference;
         UiPreferences.Save(preference);
-        if (DesignName != null) DesignName.Text = DescribeDesign(preference.Design);
+        ShowGlyph();
+        CurrentIsDark = preference.Dark;
+        ThemeChanged?.Invoke(preference.Dark);
     }
 
-    public void ApplyTheme(bool dark) => Apply(_preference with { Dark = dark });
+    // The button shows what it switches to: a moon by day, a sun by night.
+    private void ShowGlyph() { if (ThemeGlyph != null) ThemeGlyph.Text = _preference.Dark ? "\uE706" : "\uE708"; }
 
-    private static string DescribeDesign(UiDesign design) => design switch
-    {
-        UiDesign.Ice => "Ice",
-        UiDesign.Teal => "Deep teal",
-        UiDesign.Slate => "Warm slate",
-        _ => "Midnight"
-    };
+    public void ApplyTheme(bool dark) => Apply(_preference with { Dark = dark });
 
     private void ToggleTheme(object sender, RoutedEventArgs e) => ApplyTheme(!IsDarkTheme);
     private void UseDarkTheme(object sender, RoutedEventArgs e) => ApplyTheme(true);
     private void UseLightTheme(object sender, RoutedEventArgs e) => ApplyTheme(false);
-
-    private void PickDesign(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement source) return;
-        if (source.ContextMenu is not { } menu) return;
-        menu.PlacementTarget = source;
-        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-        menu.IsOpen = true;
-    }
-
-    private void ChooseDesign(object sender, RoutedEventArgs e)
-    {
-        if (sender is not MenuItem { Tag: string tag }) return;
-        if (!Enum.TryParse<UiDesign>(tag, out var design)) return;
-        // Ice is a light design and Midnight a dark one; picking either starts in the mode it was
-        // drawn for. The sun button still switches modes afterwards.
-        bool dark = design switch { UiDesign.Ice => false, UiDesign.Midnight => true, _ => _preference.Dark };
-        Apply(new UiPreference(design, dark));
-    }
 
     private void MinimizeWindow(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     private void MaximizeWindow(object sender, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;

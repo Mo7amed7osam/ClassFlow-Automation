@@ -1,0 +1,89 @@
+/* Groups & Students: the Sessions palette; a rail of groups beside the open group's roster. */
+.roster-hero { --hue: 160; }
+.roster-hero .hero-copy p { max-width: 640px; }
+.hero-tools .btn.small { height: 30px; }
+
+.roster-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 14px; align-items: start; }
+
+/* ------------------------------------------------------------ the rail of groups */
+.group-rail { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.rail-item { --hue: 250; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 10px; border-radius: 12px; border: 1px solid transparent;
+  background: none; text-align: left; cursor: pointer; transition: background .12s, border-color .12s; }
+button.rail-item:hover { background: var(--hover); }
+.rail-item.on { background: hsl(var(--hue) 60% var(--tile-bg-l)); border-color: hsl(var(--hue) 55% 50% / .35); }
+.rail-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: hsl(var(--hue) var(--group-s) var(--group-l)); box-shadow: 0 0 0 3px hsl(var(--hue) 60% 50% / .15); }
+.rail-names { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.rail-names b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-names span { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-count { font-size: 12px; font-weight: 700; min-width: 30px; text-align: center; padding: 2px 8px; border-radius: 99px; background: var(--card-2); border: 1px solid var(--line); color: var(--muted); }
+.rail-item.on .rail-count { color: hsl(var(--hue) var(--group-s) var(--group-l)); border-color: hsl(var(--hue) 55% 50% / .35); background: var(--card); }
+.rail-item.ghost { border: 1px dashed var(--line-2); cursor: default; }
+.rail-item.ghost .rail-dot { background: transparent; border: 2px solid hsl(var(--hue) var(--group-s) var(--group-l)); box-shadow: none; }
+.rail-title { margin: 10px 4px 2px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--subtle); font-weight: 700; }
+.rail-more { align-self: center; margin-top: 2px; color: var(--accent); }
+.rail-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 8px; color: var(--muted); text-align: center; }
+.rail-empty p { margin: 0; }
+
+/* ------------------------------------------------------------ the open group */
+.students-panel { margin-bottom: 0; padding: 18px 20px 12px; }
+.students-head { --hue: 250; display: flex; align-items: center; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.students-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.students-title h2 { margin: 0; font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.students-title .muted { font-size: 12px; }
+.group-badge { flex: none; display: grid; place-items: center; min-width: 46px; height: 46px; padding: 0 8px; border-radius: 13px; font: 700 15px/1 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
+  color: hsl(var(--hue) var(--group-s) var(--group-l)); background: hsl(var(--hue) 60% var(--tile-bg-l)); border: 1px solid hsl(var(--hue) 50% 50% / .22); }
+.students-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.more-wrap { position: relative; }
+.more-wrap .menu { min-width: 180px; top: 40px; }
+.menu button.danger { color: var(--red); }
+
+.reading { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 12px; border-radius: 12px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); color: var(--text); }
+.reading .spinner { color: var(--accent); width: 18px; height: 18px; flex: none; }
+.reading div { display: flex; flex-direction: column; }
+.reading span { font-size: 12.5px; color: var(--muted); }
+
+.roster-search { margin: 0 0 10px; min-width: 0; width: 100%; }
+.clear-x { border: 0; background: none; color: var(--subtle); cursor: pointer; padding: 2px; display: grid; place-items: center; }
+
+.student-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.st-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 8px 8px; border-radius: 10px; border-bottom: 1px solid var(--line); }
+.st-row:last-child { border-bottom: 0; }
+.st-row:hover { background: var(--card-2); }
+.st-order { display: grid; place-items: center; height: 28px; border-radius: 8px; font-size: 12px; font-weight: 700; color: var(--muted); background: var(--card-2); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.st-main { min-width: 0; display: flex; flex-direction: column; }
+.st-main b { font-weight: 600; overflow-wrap: anywhere; }
+.st-extra { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 2px; }
+.alias { font-style: normal; font-size: 11.5px; padding: 0 7px; border-radius: 99px; background: var(--violet-soft); color: var(--violet); }
+.st-email { font-size: 12px; color: var(--muted); }
+.st-actions { display: flex; gap: 2px; opacity: .35; transition: opacity .12s; }
+.st-row:hover .st-actions, .st-row:focus-within .st-actions { opacity: 1; }
+.btn.icon.small { width: 30px; height: 30px; padding: 0; }
+.none { padding: 18px 4px; }
+
+.empty-big { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 34px 16px 30px; color: var(--muted); }
+.empty-big h2 { margin: 6px 0 0; color: var(--text); font-size: 17px; }
+.empty-big p { max-width: 480px; margin: 2px 0 12px; }
+.empty-big > svg { color: var(--accent); }
+.row-actions.center { justify-content: center; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------ dialogs */
+.field textarea { padding: 8px 11px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--card-2); outline: 0; resize: vertical; font: inherit; color: inherit; }
+.field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pick-groups { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+.dialog .check.small { margin-top: 4px; }
+.btn.danger-fill { background: linear-gradient(135deg, #dc2626, #b91c1c); box-shadow: 0 4px 14px rgba(220, 38, 38, .3); }
+
+@media (max-width: 900px) {
+  .roster-layout { grid-template-columns: 1fr; }
+  .group-rail { position: static; flex-direction: row; overflow-x: auto; padding: 8px; gap: 6px; scrollbar-width: thin; }
+  .rail-item { width: auto; flex: none; min-height: 40px; }
+  .rail-title { display: none; }
+  .rail-names span { display: none; }
+  .st-actions { opacity: 1; }
+}
+@media (max-width: 560px) {
+  .students-actions { width: 100%; }
+  .students-actions .btn:not(.icon) { flex: 1; }
+  .st-row { grid-template-columns: 34px minmax(0, 1fr); }
+  .st-actions { grid-column: 2; justify-content: flex-start; }
+}

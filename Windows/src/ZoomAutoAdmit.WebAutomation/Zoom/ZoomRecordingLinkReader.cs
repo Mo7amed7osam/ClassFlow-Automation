@@ -136,26 +136,34 @@ public sealed class ZoomRecordingLinkReader(
                 $"{(picked.RecordedAt is { } at ? at.ToString("yyyy-MM-dd HH:mm") : "an unknown time")}" +
                 $"{(picked.Duration is { } length ? $", {length:hh\\:mm\\:ss} long" : string.Empty)}.");
 
-            step = "opening the recording";
-            await page.GotoAsync(picked.DetailUrl, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
-            await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-
-            step = "copying the shareable link";
-            var copy = page.Locator("[aria-label^='Copy shareable link']").First;
-            try { await copy.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 20000 }); }
-            catch (TimeoutException)
-            {
-                return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.Failed,
-                    $"The recording page for {group} does not offer a shareable link.");
-            }
-            // Zoom answers this button on the clipboard, not on the page, so the clipboard has to
-            // be readable before it is pressed.
+            // Zoom answers both copy buttons on the clipboard, not on the page, so the clipboard has
+            // to be readable before either is pressed.
             await session.Context.GrantPermissionsAsync(["clipboard-read", "clipboard-write"],
                 new() { Origin = new Uri(page.Url).GetLeftPart(UriPartial.Authority) });
-            await page.EvaluateAsync("() => navigator.clipboard.writeText('')");
-            await copy.EvaluateAsync("element => element.click()");
 
-            string link = await WaitForClipboardLinkAsync(page, cancellationToken);
+            // A recording Zoom is still processing has no copy button on its own page, but the
+            // list's Share dialog hands out its link all the same - so that is read first, and the
+            // recording page is only the fallback.
+            step = "copying the link from the list's Share dialog";
+            string link = await CopyFromShareDialogAsync(page, picked, cancellationToken);
+            if (link.Length == 0)
+            {
+                step = "opening the recording";
+                await page.GotoAsync(picked.DetailUrl, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
+                await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+
+                step = "copying the shareable link";
+                var copy = page.Locator("[aria-label^='Copy shareable link']").First;
+                try { await copy.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 20000 }); }
+                catch (TimeoutException)
+                {
+                    return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.Failed,
+                        $"Neither the Share dialog nor the recording page for {group} handed over a link.");
+                }
+                await page.EvaluateAsync("() => navigator.clipboard.writeText('')");
+                await copy.EvaluateAsync("element => element.click()");
+                link = await WaitForClipboardLinkAsync(page, cancellationToken);
+            }
             if (link.Length == 0)
                 return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.Failed,
                     $"The shareable link for {group} was pressed but nothing was copied.");
@@ -176,6 +184,45 @@ public sealed class ZoomRecordingLinkReader(
         {
             ConsoleLogger.Warn($"[RECORDING] Failed while {step}: {ex.GetType().Name}.");
             return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.Failed, $"Zoom did not respond while {step}.");
+        }
+    }
+
+    /// <summary>
+    /// The picked recording's row in the list, its "Share recording" button, and the dialog's
+    /// "Copy link". Works while Zoom is still processing the recording ("Users you shared with can
+    /// watch the recording when it is ready"). Empty when any part of it is not there.
+    /// </summary>
+    private static async Task<string> CopyFromShareDialogAsync(IPage page, ZoomRecordingEntry picked, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // The row is found by the recording's own meeting id in its link, never by position.
+            string meetingId = new Uri(picked.DetailUrl).Query.Split('&', '?')
+                .FirstOrDefault(p => p.StartsWith("meeting_id=", StringComparison.Ordinal))?["meeting_id=".Length..] ?? "";
+            if (meetingId.Length == 0) return string.Empty;
+            string decoded = Uri.UnescapeDataString(meetingId);
+            var anchor = page.Locator($"a[href*='{meetingId}'], a[href*='{decoded}']").First;
+            if (await anchor.CountAsync() == 0) return string.Empty;
+            var row = anchor.Locator("xpath=ancestor::*[.//*[starts-with(@aria-label,'Share recording')]][1]");
+            var share = row.Locator("[aria-label^='Share recording']").First;
+            await share.ClickAsync(new() { Timeout = 10000 });
+            var dialog = page.Locator("[role=dialog]").Filter(new() { HasText = "Copy link" }).Last;
+            var copy = dialog.GetByText("Copy link", new() { Exact = true }).First;
+            await copy.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+            await page.EvaluateAsync("() => navigator.clipboard.writeText('')");
+            await copy.ClickAsync();
+            string link = await WaitForClipboardLinkAsync(page, cancellationToken);
+            try { await page.Keyboard.PressAsync("Escape"); } catch { }
+            ConsoleLogger.Info(link.Length > 0
+                ? "[RECORDING] The link was copied from the list's Share dialog."
+                : "[RECORDING] The list's Share dialog was opened but nothing was copied.");
+            return link;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Info($"[RECORDING] The list's Share dialog could not be used ({ex.GetType().Name}); trying the recording page.");
+            return string.Empty;
         }
     }
 

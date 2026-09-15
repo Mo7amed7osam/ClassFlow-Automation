@@ -14,6 +14,7 @@ public static class MeetingStartCommand
         CancellationToken cancellationToken = default)
     {
         await using var bootstrapper = new WindowsRuntimeBootstrapper();
+        MeetingSchedule? loadedSchedule = null;
 
         if (options.ScheduleId.HasValue && options.ScheduleId.Value != Guid.Empty)
         {
@@ -23,6 +24,7 @@ public static class MeetingStartCommand
                 var schedule = schedules.FirstOrDefault(s => s.Id == options.ScheduleId.Value);
                 if (schedule != null)
                 {
+                    loadedSchedule = schedule;
                     // Same early start the in-app scheduler uses, so both paths open a meeting
                     // at the same moment.
                     if (schedule.OccurrenceDate.HasValue &&
@@ -90,7 +92,11 @@ public static class MeetingStartCommand
                 new ScheduledMeeting(
                     meetingUrl,
                     options.AccountId,
-                    DateTimeOffset.UtcNow),
+                    DateTimeOffset.UtcNow,
+                    GroupId: loadedSchedule?.GroupName ?? loadedSchedule?.AccountId ?? options.AccountId,
+                    ScheduledStartTime: loadedSchedule?.OccurrenceDate is { } scheduledDay
+                        ? new DateTimeOffset(scheduledDay.ToDateTime(loadedSchedule.Time), DateTimeOffset.Now.Offset)
+                        : null),
                 linkedCancellation.Token);
             if (session.State == MeetingState.Failed)
             {

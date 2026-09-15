@@ -23,10 +23,20 @@ public sealed class AttendanceLifecycleBridge : IAsyncDisposable
     private readonly Action<string> _log;
     private bool _disposed;
 
+    /// <summary>
+    /// How often the participant list is read during a meeting. Every minute, like the Chrome
+    /// extension's frequent reads (it read every 15 s): join, leave and time in the meeting are only
+    /// as exact as the reads are close together, and a 15-minute gap made them guesses.
+    /// </summary>
+    public static readonly TimeSpan DefaultCaptureInterval = TimeSpan.FromMinutes(1);
+    private readonly TimeSpan _captureInterval;
+
     public AttendanceLifecycleBridge(MeetingLifecycleEvents events,
         Func<MeetingLaunchContext, IAttendanceParticipantSource> sources,
-        IAttendanceSnapshotStore? store = null, TimeProvider? timeProvider = null, Action<string>? log = null)
+        IAttendanceSnapshotStore? store = null, TimeProvider? timeProvider = null, Action<string>? log = null,
+        TimeSpan? captureInterval = null)
     {
+        _captureInterval = captureInterval ?? DefaultCaptureInterval;
         _events = events;
         _sources = sources;
         _store = store ?? new JsonAttendanceSnapshotStore();
@@ -45,11 +55,11 @@ public sealed class AttendanceLifecycleBridge : IAsyncDisposable
             if (_disposed || _ended.Contains(id)) return Task.CompletedTask;
             if (message.Kind == MeetingLifecycleEventKind.Ending) return EndLocked(id);
             if (_entries.TryGetValue(id, out var existing)) return existing.Pending;
-            var metadata = new AttendanceMeetingMetadata(context.Account.AccountId, context.Account.DisplayName,
+            var metadata = new AttendanceMeetingMetadata(context.Session.GroupId, context.Account.DisplayName,
                 context.Session.MeetingUrl.GetLeftPart(UriPartial.Path), context.Session.StartTime,
                 context.EngineType.ToString());
             var collector = new AttendanceCollector(id, _sources(context), _store, _time,
-                log: _log, metadata: metadata);
+                interval: _captureInterval, log: _log, metadata: metadata);
             var entry = new Entry(collector);
             _entries.Add(id, entry);
             return QueueLocked(entry, () => collector.StartAsync());

@@ -18,6 +18,9 @@
   </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
+    <!-- The Chrome extension's attendance page, shown in the app's Attendance tab. -->
+    <None Update="WebAttendance\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="WebSessions\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ZoomAutoAdmit.AttendanceMatching\ZoomAutoAdmit.AttendanceMatching.csproj" />
@@ -26,5 +29,9 @@
     <ProjectReference Include="..\ZoomAutoAdmit.Core\ZoomAutoAdmit.Core.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.Inspector\ZoomAutoAdmit.Inspector.csproj" />
     <ProjectReference Include="..\ZoomAutoAdmit.WindowsRuntime\ZoomAutoAdmit.WindowsRuntime.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
 </Project>

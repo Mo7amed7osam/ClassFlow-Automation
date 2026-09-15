@@ -1,14 +1,14 @@
-<UserControl x:Class="ZoomAutoAdmit.WindowsUI.Views.SessionRolesView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+<UserControl xmlns:infra="clr-namespace:ZoomAutoAdmit.WindowsUI.Infrastructure" x:Class="ZoomAutoAdmit.WindowsUI.Views.SessionRolesView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel DataContext="{Binding SessionRoles}">
 <Border Style="{DynamicResource Card}" Margin="0,0,0,16"><StackPanel>
-<StackPanel Margin="0,0,0,14"><Border Style="{DynamicResource Badge}" Margin="0,0,0,10"><StackPanel Orientation="Horizontal"><Ellipse Width="6" Height="6" Fill="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/><TextBlock Text="ROLES" Style="{DynamicResource BadgeText}"/></StackPanel></Border><TextBlock Text="Session roles" FontSize="19" FontWeight="Bold"/><TextBlock Text="Who may be made co-host in each kind of session." Style="{DynamicResource PageLead}" FontSize="12" Margin="0,5,0,0"/></StackPanel>
+<StackPanel Margin="0,0,0,14"><Border Style="{DynamicResource Badge}" Margin="0,0,0,10"><StackPanel Orientation="Horizontal"><Ellipse Width="6" Height="6" Fill="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/><TextBlock Text="ROLES" Style="{DynamicResource BadgeText}"/></StackPanel></Border><TextBlock Text="Session roles" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="The instructor names that should be made co-host in each kind of session." Style="{DynamicResource PageLead}" FontSize="12" Margin="0,5,0,0"/></StackPanel>
 <TextBlock Text="Set this once per session type. You never pick people meeting by meeting." Style="{DynamicResource Muted}" Margin="0,8,0,0"/>
 <TextBlock Text="Names do not have to be exact: when a Zoom display name does not match, the AI is asked to confirm which of these people it is. It can only choose from the people you listed here — it can never add someone new — and a low-confidence answer is logged as a suggestion instead of being assigned." Style="{DynamicResource Muted}" Margin="0,4,0,0"/>
 <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,10" AutomationProperties.LiveSetting="Polite"/>
 </StackPanel></Border>
 
 <Border Style="{DynamicResource Card}" Margin="0,0,0,16">
-<Grid Margin="4" MinHeight="420">
+<Grid infra:Responsive.StackBelow="820" Margin="4" MinHeight="420">
 <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
 <StackPanel Margin="0,0,16,0">
   <TextBlock Text="Session types" Style="{DynamicResource CardTitle}"/>
@@ -44,7 +44,7 @@
   <ComboBox IsEditable="True" ItemsSource="{Binding AvailableAccounts}"
             Text="{Binding Accounts, UpdateSourceTrigger=PropertyChanged}"
             AutomationProperties.Name="Profile accounts"/>
-  <TextBlock Text="Who may be made co-host — one per line" Style="{DynamicResource FieldLabel}"/>
+  <TextBlock Text="Instructor / co-host names — one per line" Style="{DynamicResource FieldLabel}"/>
   <TextBox Text="{Binding CoHosts, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" MinHeight="130" MaxHeight="240" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Co-host candidates"/>
   <TextBlock Text="Example:&#x0a;Ahmed Mohamed | Ahmed M, A. Mohamed&#x0a;Assistant One" Style="{DynamicResource Muted}" Margin="4,4,0,0"/>
   <WrapPanel Margin="0,10,0,0">

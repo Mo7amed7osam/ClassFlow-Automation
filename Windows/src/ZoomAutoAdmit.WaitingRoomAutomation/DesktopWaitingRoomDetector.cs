@@ -67,8 +67,10 @@ public sealed class DesktopWaitingRoomDetector : IDesktopWaitingRoomDetector
     /// co-host watcher, so the Desktop engine reports an admission exactly the way Web does;
     /// without it, a whole class admitted from the Zoom app was never counted at all.
     /// </summary>
-    private static void CountAdmission(int people = 1)
+    private static void CountAdmission(int people = 1, string? name = null)
     {
+        // By name, for the Waiting Room and Attendance pages - whichever process admitted.
+        ZoomAutoAdmit.Core.Meetings.AdmissionLedger.Record(name, "desktop", people);
         for (int i = 0; i < Math.Max(1, people); i++)
             ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
     }
@@ -83,7 +85,7 @@ public sealed class DesktopWaitingRoomDetector : IDesktopWaitingRoomDetector
                 if (!_handledCache.IsParticipantSuppressed(result.Participant, DateTimeOffset.UtcNow))
                     TesterLogger.Action($"Admitted participant from the notification without the mouse: '{result.Participant}'");
                 _handledCache.MarkParticipantHandled(result.Participant, DateTimeOffset.UtcNow);
-                CountAdmission();
+                CountAdmission(name: result.Participant);
                 return true;
 
             case ToastUiaAdmitter.ToastOutcome.OpenedParticipants:
@@ -103,7 +105,7 @@ public sealed class DesktopWaitingRoomDetector : IDesktopWaitingRoomDetector
         {
             if (!_uiaAdmitter.TryAdmit(cancellationToken)) return false;
             TesterLogger.Action("Admitted from the Participants panel without the mouse");
-            CountAdmission();
+            CountAdmission(name: _uiaAdmitter.LastAdmittedName);
             return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -265,7 +267,7 @@ public sealed class DesktopWaitingRoomDetector : IDesktopWaitingRoomDetector
             if (TryClick(clickX, clickY))
             {
                 TesterLogger.Action($"Admitted participant from toast: '{toastCandidate.ParticipantName}'");
-                CountAdmission();
+                CountAdmission(name: toastCandidate.ParticipantName);
                 return;
             }
         }

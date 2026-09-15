@@ -33,6 +33,9 @@ public sealed class GroupRosterViewModel : ObservableObject
         ImportCommand = new AsyncRelayCommand(_ => PickImportAsync());
     }
 
+    /// <summary>The store itself, for the Groups & Students page (React) that edits it directly.</summary>
+    public IGroupRosterService Service => _service;
+    public IGroupRosterDialogs Dialogs => _dialogs;
     public ObservableCollection<RosterGroup> Groups { get; } = [];
     public ObservableCollection<GroupStudent> Students { get; } = [];
     public RosterGroup? SelectedGroup

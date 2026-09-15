@@ -32,6 +32,13 @@ public static class DesktopThread
 
     private delegate uint ThreadProc(IntPtr lpParameter);
 
+    /// <summary>
+    /// Delegates of threads still running after their caller stopped waiting. The native thread
+    /// calls back into the delegate's thunk; if the delegate were collected meanwhile, the thread
+    /// would return into freed memory and take the whole app down (0xc0000005, seen during a class).
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<ThreadProc, byte> StillRunning = new();
+
     public static void RunOnInteractiveDesktop(Action action, uint timeoutMs = 60000)
     {
         Exception? caughtException = null;
@@ -42,7 +49,8 @@ public static class DesktopThread
             hDesk = NativeMethods.OpenInputDesktop(0, false, NativeMethods.DESKTOP_ACCESS_ALL);
         }
 
-        ThreadProc proc = (param) =>
+        ThreadProc? proc = null;
+        proc = (param) =>
         {
             if (hDesk != IntPtr.Zero)
             {
@@ -62,13 +70,17 @@ public static class DesktopThread
             finally
             {
                 CoUninitialize();
+                StillRunning.TryRemove(proc!, out _);
             }
             return 0;
         };
 
+        // Rooted for as long as the native thread may run it, not just while this method waits.
+        StillRunning[proc] = 0;
         var hThread = CreateThread(IntPtr.Zero, 0, proc, IntPtr.Zero, 0, out _);
         if (hThread == IntPtr.Zero)
         {
+            StillRunning.TryRemove(proc, out _);
             // Fallback to running directly
             action();
             return;
@@ -81,6 +93,7 @@ public static class DesktopThread
         finally
         {
             CloseHandle(hThread);
+            GC.KeepAlive(proc);
         }
 
         if (caughtException != null)

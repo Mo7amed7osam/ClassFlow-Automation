@@ -1,0 +1,6 @@
+<UserControl x:Class="ZoomAutoAdmit.WindowsUI.Views.RosterWebView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf">
+<Grid>
+<TextBlock x:Name="Placeholder" Text="Opening Groups &amp; Students…" Style="{DynamicResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+<wv2:WebView2 x:Name="Browser"/>
+</Grid>
+</UserControl>

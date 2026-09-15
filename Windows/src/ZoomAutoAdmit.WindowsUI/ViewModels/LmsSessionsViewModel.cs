@@ -1,0 +1,744 @@
+﻿using System.Collections.ObjectModel;
+using System.Windows.Input;
+using ZoomAutoAdmit.Core.Formatting;
+using ZoomAutoAdmit.WebAutomation.Lms;
+using ZoomAutoAdmit.WebAutomation.Recordings;
+using ZoomAutoAdmit.WindowsRuntime.Scheduling;
+using ZoomAutoAdmit.WindowsUI.Infrastructure;
+
+namespace ZoomAutoAdmit.WindowsUI.ViewModels;
+
+/// <summary>One class (group, day, time) and where each part of its cycle stands.</summary>
+public sealed record ClassRow(
+    DateOnly Date, TimeOnly Start, string Group, string Title,
+    string Zoom, string Lms, string RunSession, string Attendance, string Correction, string Complete, string Link,
+    string NextStep, string Tone, string Details)
+{
+    public string When => $"{Date:ddd dd MMM} · {Start:HH\\:mm}";
+    public string Key => $"{Group}|{Date:yyyy-MM-dd}|{Start:HH\\:mm}";
+    /// <summary>The cycle as states the Sessions page draws: zoom, run, attendance, correct, complete, record.</summary>
+    public IReadOnlyList<StepState> Steps { get; init; } = [];
+    public string LmsStatus { get; init; } = "";
+    public string? LmsReadAt { get; init; }
+    public string? LmsUrl { get; init; }
+    public string LinkKind { get; init; } = "";
+    public string? RecordLink { get; init; }
+    /// <summary>The class's material and assignment, as the Sessions page shows and asks about them.</summary>
+    public MaterialInfo? Material { get; init; }
+}
+
+/// <summary>
+/// A class's material for the page: its track and number, the files that go up, and its assignment
+/// (title and deadline, "yyyy-MM-ddTHH:mm" local).
+/// </summary>
+public sealed record MaterialInfo(
+    string Track, int? Number, string? Folder, IReadOnlyList<string> Files, IReadOnlyList<string> Skipped,
+    bool Technical, bool Fixed, string Note, string? AssignmentTitle, string? Deadline, bool NoAssignment, bool Done)
+{
+    public string? Description { get; init; }
+    /// <summary>The assignment's own file, when one was chosen for it.</summary>
+    public string? AssignmentFile { get; init; }
+}
+
+/// <summary>
+/// One part of a class's cycle. State is done, lms (seen done on the LMS), due, retry, failed,
+/// future or none; Text is what the step shows, Detail the last message about it.
+/// </summary>
+public sealed record StepState(string Key, string Label, string State, string Text, string? Detail = null);
+
+/// <summary>
+/// The Sessions page: every class of the last two weeks and the next week, with the whole cycle on
+/// one line - opened on Zoom, running on the LMS, attendance, the late-joiner pass, Complete, the
+/// record link (Zoom, then Drive) - and what is still owed. Read from the schedules, the follow-up
+/// queue and its history on this PC, and from the LMS itself (Check LMS). Also where the LMS
+/// account the app signs in with is chosen.
+/// </summary>
+public sealed class LmsSessionsViewModel : ObservableObject
+{
+    private readonly WindowsMeetingScheduleStore _schedules;
+    private readonly LmsFollowUpQueue _queue;
+    private readonly LmsSessionCache _cache;
+    private readonly LmsAccountDirectory _accounts;
+    private readonly Func<LmsSessionRunner> _runner;
+    private string _status = "";
+    private bool _isBusy;
+    private LmsAccountEntry? _selectedAccount;
+    private string _newLabel = "", _newEmail = "", _newRole = "coordinator";
+    private DateTimeOffset _lastAutoCheck = DateTimeOffset.MinValue;
+
+    public LmsSessionsViewModel(WindowsMeetingScheduleStore? schedules = null, LmsFollowUpQueue? queue = null,
+        LmsSessionCache? cache = null, LmsAccountDirectory? accounts = null, Func<LmsSessionRunner>? runner = null)
+    {
+        _schedules = schedules ?? new WindowsMeetingScheduleStore();
+        _queue = queue ?? new LmsFollowUpQueue();
+        _cache = cache ?? new LmsSessionCache();
+        _accounts = accounts ?? new LmsAccountDirectory();
+        _runner = runner ?? (() => new LmsSessionRunner(new LmsCredentialStore()));
+        RefreshCommand = new AsyncRelayCommand(_ => ReloadAsync());
+        CheckLmsCommand = new AsyncRelayCommand(_ => CheckLmsAsync(full: false));
+        FullCheckCommand = new AsyncRelayCommand(_ => CheckLmsAsync(full: true));
+        UseAccountCommand = new RelayCommand(_ => UseAccount());
+        RemoveAccountCommand = new RelayCommand(_ => RemoveAccount());
+        LoadAccounts();
+    }
+
+    public ObservableCollection<ClassRow> Rows { get; } = [];
+    public ObservableCollection<LmsAccountEntry> Accounts { get; } = [];
+    public IReadOnlyList<string> Roles { get; } = ["coordinator", "admin"];
+
+    public int RunningNow { get; private set; }
+    public int Today { get; private set; }
+    public int NeedsAttention { get; private set; }
+    public int WaitingForDrive { get; private set; }
+    public string LastLmsCheck { get; private set; } = "never";
+    public string ActiveAccount => _accounts.Active() is { Email.Length: > 0 } a ? $"{a.Label} — {a.Email} ({a.Role})" : "No LMS account saved";
+
+    public string Status { get => _status; private set => SetProperty(ref _status, value); }
+    public bool IsBusy { get => _isBusy; private set => SetProperty(ref _isBusy, value); }
+    public LmsAccountEntry? SelectedAccount { get => _selectedAccount; set => SetProperty(ref _selectedAccount, value); }
+    public string NewLabel { get => _newLabel; set => SetProperty(ref _newLabel, value); }
+    public string NewEmail { get => _newEmail; set => SetProperty(ref _newEmail, value); }
+    public string NewRole { get => _newRole; set => SetProperty(ref _newRole, value); }
+
+    public ICommand RefreshCommand { get; }
+    public ICommand CheckLmsCommand { get; }
+    public ICommand FullCheckCommand { get; }
+    public ICommand UseAccountCommand { get; }
+    public ICommand RemoveAccountCommand { get; }
+
+    // ------------------------------------------------------------------ accounts
+
+    /// <summary>After this PC's LMS sign-in changed elsewhere (the server's accounts were copied here).</summary>
+    public void ReloadAccounts() => LoadAccounts();
+
+    private void LoadAccounts()
+    {
+        Accounts.Clear();
+        foreach (var a in _accounts.List()) Accounts.Add(a);
+        var active = _accounts.Active();
+        SelectedAccount = Accounts.FirstOrDefault(a => a.Id == active.Id);
+        OnPropertyChanged(nameof(ActiveAccount));
+    }
+
+    private void UseAccount()
+    {
+        if (SelectedAccount == null) return;
+        try
+        {
+            _accounts.SetActive(SelectedAccount.Id);
+            Status = $"The app now signs in to the LMS as {SelectedAccount.Label} ({SelectedAccount.Email}).";
+            ConsoleLogger.Info($"[LMS] Active account: {SelectedAccount.Label} ({SelectedAccount.Role}).");
+        }
+        catch (Exception ex) { Status = ex.Message; }
+        LoadAccounts();
+    }
+
+    /// <summary>The password arrives from the PasswordBox (code-behind) and is not kept here.</summary>
+    public void SaveAccount(string? password, bool makeActive)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(NewEmail) || string.IsNullOrWhiteSpace(password)) { Status = "Email and password are required."; return; }
+            var entry = _accounts.Upsert(NewLabel, NewEmail, password, NewRole, makeActive);
+            Status = $"Saved {entry.Label} ({entry.Email}).{(makeActive ? " The app uses it from now on." : "")}";
+            NewLabel = NewEmail = "";
+        }
+        catch (Exception ex) { Status = ex.Message; }
+        LoadAccounts();
+    }
+
+    private void RemoveAccount()
+    {
+        if (SelectedAccount == null) return;
+        try { _accounts.Remove(SelectedAccount.Id); Status = $"Removed {SelectedAccount.Label}."; }
+        catch (Exception ex) { Status = ex.Message; }
+        LoadAccounts();
+    }
+
+    // ------------------------------------------------------------------ the LMS
+
+    /// <summary>Called every 30 s by the window: reload local state; a quick LMS look every 15 minutes.</summary>
+    public async Task TickAsync()
+    {
+        await ReloadAsync();
+        if (!IsBusy && DateTimeOffset.Now - _lastAutoCheck > TimeSpan.FromMinutes(15) && _accounts.List().Count > 0)
+            await CheckLmsAsync(full: false);
+        await SweepSheetAsync();
+        await SweepMaterialsAsync();
+    }
+
+    public Task CheckAsync(bool full) => CheckLmsAsync(full);
+    public Task CheckAsync(bool full, DateOnly from, DateOnly to) => CheckLmsAsync(full, from, to);
+
+    private Task CheckLmsAsync(bool full)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        return CheckLmsAsync(full, full ? today.AddDays(-30) : today.AddDays(-3), full ? today.AddDays(1) : today.AddDays(3));
+    }
+
+    /// <summary>Reads the LMS for these days only: full opens every session (status, link, attendance).</summary>
+    private async Task CheckLmsAsync(bool full, DateOnly from, DateOnly to)
+    {
+        if (IsBusy) return;
+        IsBusy = true;
+        _lastAutoCheck = DateTimeOffset.Now;
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        Status = full ? $"Reading every session from {from:dd MMM} to {to:dd MMM} on the LMS (status, link, attendance)…" : "Reading the LMS session list…";
+        try
+        {
+            var groups = (await _schedules.ListAsync()).Select(s => s.GroupName ?? s.AccountId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var list = await Task.Run(() => _runner().SurveyAsync(from, to, groups, openEach: full));
+            _cache.Merge(list, from, to, _accounts.Active().Email, listOnly: !full);
+            Status = $"LMS read at {DateTime.Now:HH:mm}: {list.Count} session(s) from {from:dd MMM} to {to:dd MMM}.";
+        }
+        catch (Exception ex)
+        {
+            Status = $"The LMS could not be read: {ex.Message}";
+            ConsoleLogger.Warn($"[LMS] Sessions page: {ex.GetType().Name}.");
+        }
+        finally { IsBusy = false; }
+        await ReloadAsync();
+    }
+
+    // ------------------------------------------------------------------ the rows
+
+    public async Task ReloadAsync()
+    {
+        try
+        {
+            var now = DateTime.Now;
+            var today = DateOnly.FromDateTime(now);
+            var from = today.AddDays(-14);
+            var to = today.AddDays(7);
+            var schedules = await _schedules.ListAsync();
+            var pending = await _queue.ReadAsync();
+            var history = await _queue.ReadHistoryAsync();
+            var cache = _cache.Read();
+            var timetable = Timetable(schedules);
+            var materials = MaterialSettings.Load();
+
+            static string Key(string g, DateOnly d, TimeOnly t) => $"{g.ToUpperInvariant()}|{d:yyyy-MM-dd}|{t:HH\\:mm}";
+            var keys = new Dictionary<string, (string Group, DateOnly Date, TimeOnly Start)>();
+            void Add(string g, DateOnly d, TimeOnly t) { if (d >= from && d <= to) keys.TryAdd(Key(g, d, t), (g, d, t)); }
+            foreach (var s in schedules.Where(s => s.OccurrenceDate.HasValue))
+                Add(s.GroupName ?? s.AccountId, s.OccurrenceDate!.Value, new TimeOnly(s.Time.Hour, s.Time.Minute));
+            // An LMS session belongs to the class of its group that day, whatever time each side shows.
+            foreach (var c in cache.Where(c => c.Session.Date.HasValue && c.Session.Start.HasValue))
+                if (!keys.Values.Any(k => k.Group.Equals(c.Session.Group, StringComparison.OrdinalIgnoreCase) && k.Date == c.Session.Date))
+                    Add(c.Session.Group, c.Session.Date!.Value, c.Session.Start!.Value);
+            foreach (var h in history) Add(h.Group, h.SessionDate, h.SessionStart);
+            foreach (var p in pending) Add(p.Group, p.SessionDate, p.SessionStart);
+
+            var rows = new List<ClassRow>();
+            foreach (var (group, date, start) in keys.Values)
+            {
+                var schedule = schedules.FirstOrDefault(s => s.OccurrenceDate == date && new TimeOnly(s.Time.Hour, s.Time.Minute) == start &&
+                                                             (s.GroupName ?? s.AccountId).Equals(group, StringComparison.OrdinalIgnoreCase));
+                var lms = cache.Where(c => c.Session.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && c.Session.Date == date)
+                               .OrderBy(c => c.Session.Start is { } t ? Math.Abs((t.ToTimeSpan() - start.ToTimeSpan()).TotalMinutes) : 9999)
+                               .ThenByDescending(c => c.ReadAt).FirstOrDefault();
+                LmsFollowUpQueue.Outcome? Done(LmsFollowUpStep step) => history.FirstOrDefault(h =>
+                    h.Step == step && h.SessionDate == date && h.SessionStart == start && h.Group.Equals(group, StringComparison.OrdinalIgnoreCase));
+                LmsFollowUp? Owed(LmsFollowUpStep step) => pending.FirstOrDefault(p =>
+                    p.Step == step && p.SessionDate == date && p.SessionStart == start && p.Group.Equals(group, StringComparison.OrdinalIgnoreCase));
+
+                var classStart = date.ToDateTime(start);
+                string lmsStatus = lms is null ? "" : (lms.Session.PageStatus.Length > 0 && !lms.Session.PageStatus.StartsWith('(') ? lms.Session.PageStatus : lms.Session.ListStatus);
+                bool finished = lmsStatus is "finished" or "completed";
+                bool running = lmsStatus == "running";
+
+                string zoom = schedule == null ? "—"
+                    : schedule.LastTriggeredDate == date ? "Opened"
+                    : !schedule.Enabled ? "Disabled"
+                    : classStart - ScheduleTiming.StartLead > now ? $"Opens {classStart - ScheduleTiming.StartLead:HH:mm}"
+                    : "Not opened";
+                string lmsText = lms is null ? "Not checked" : $"{(lmsStatus.Length > 0 ? lmsStatus : "?")} · {lms.ReadAt:HH:mm}";
+                string Step(LmsFollowUpStep step, bool doneOnLms)
+                {
+                    var owed = Owed(step);
+                    var done = Done(step);
+                    if (done is { Succeeded: true }) return $"✓ {done.At:HH:mm}";
+                    if (owed != null)
+                        return owed.LastError != null ? $"Retry {owed.DueAt.LocalDateTime:HH:mm} ({owed.Attempts})" : $"Due {owed.DueAt.LocalDateTime:HH:mm}";
+                    if (done is { Succeeded: false }) return "✗ failed";
+                    return doneOnLms ? "✓ (LMS)" : "—";
+                }
+                string run = Done(LmsFollowUpStep.RunSession) is { } r ? (r.Succeeded ? $"✓ {r.At:HH:mm}" : "✗ failed") : (running || finished ? "✓ (LMS)" : "—");
+                string attendance = Step(LmsFollowUpStep.TakeAttendance, lms?.Session.AttendanceTaken == true);
+                string correction = Step(LmsFollowUpStep.CorrectAttendance, false);
+                string complete = Step(LmsFollowUpStep.CompleteSession, finished);
+                string link = lms?.Session.LinkKind switch
+                {
+                    "drive" => "Drive ✓",
+                    "zoom" => "Zoom (Drive pending)",
+                    "none" => "No link",
+                    "other" => "Other link",
+                    _ => "—",
+                };
+
+                string next; string tone;
+                bool past = classStart.AddHours(3.5) < now;
+                if (classStart > now.AddMinutes(20)) { next = zoom.StartsWith("Opens") ? zoom : "Scheduled"; tone = "future"; }
+                else if (zoom == "Not opened" && !running && !finished) { next = "Meeting did not open"; tone = "bad"; }
+                else if (!running && !finished) { next = run.StartsWith('✗') ? "Run Session failed — press it on the LMS" : "Run Session"; tone = run.StartsWith('✗') || past ? "bad" : "live"; }
+                else if (!attendance.StartsWith('✓')) { next = attendance == "—" ? (past ? "Attendance not taken" : "Attendance at 1.5 h") : $"Attendance {attendance}"; tone = attendance.Contains("Retry") || (past && attendance == "—") ? "bad" : "live"; }
+                else if (!finished && !complete.StartsWith('✓')) { next = complete == "—" ? "Correction + Complete at 3 h" : $"Complete {complete}"; tone = complete.Contains("Retry") ? "bad" : "live"; }
+                else if (link is "No link" or "—") { next = finished ? "Add the record link" : "Record link"; tone = lms?.Session.LinkKind == "none" ? "warn" : "live"; }
+                else if (link.StartsWith("Zoom")) { next = "Waiting for the Drive link"; tone = "warn"; }
+                else { next = "Done"; tone = "done"; }
+
+                string details = string.Join("\n", new[]
+                {
+                    lms?.Session.Title, lms?.Session.RecordLink is { Length: > 0 } l ? $"Link: {l}" : null,
+                    Done(LmsFollowUpStep.RunSession)?.Message, Done(LmsFollowUpStep.TakeAttendance)?.Message,
+                    Owed(LmsFollowUpStep.TakeAttendance)?.LastError, Done(LmsFollowUpStep.CorrectAttendance)?.Message,
+                    Done(LmsFollowUpStep.CompleteSession)?.Message,
+                }.Where(x => !string.IsNullOrWhiteSpace(x)));
+                StepState State(string key, string label, LmsFollowUpStep step, bool doneOnLms, bool dueLater)
+                {
+                    var owed = Owed(step);
+                    var done = Done(step);
+                    if (done is { Succeeded: true }) return new(key, label, "done", $"Done {done.At.LocalDateTime:HH:mm}", done.Message);
+                    if (owed != null)
+                        return owed.LastError != null
+                            ? new(key, label, "retry", $"Retry {owed.DueAt.LocalDateTime:HH:mm} · {owed.Attempts}×", owed.LastError)
+                            : new(key, label, "due", $"Due {owed.DueAt.LocalDateTime:HH:mm}");
+                    if (done is { Succeeded: false }) return new(key, label, "failed", "Failed", done.Message);
+                    if (doneOnLms) return new(key, label, "lms", "On the LMS");
+                    return new(key, label, dueLater ? "future" : "none", dueLater ? "Later" : "Not done");
+                }
+                bool upcoming = classStart > now;
+                var steps = new List<StepState>
+                {
+                    zoom switch
+                    {
+                        "Opened" => new StepState("zoom", "Zoom", "done", "Opened"),
+                        "—" => new StepState("zoom", "Zoom", "none", "No schedule"),
+                        "Disabled" => new StepState("zoom", "Zoom", "none", "Disabled"),
+                        "Not opened" => new StepState("zoom", "Zoom", running || finished ? "lms" : "failed", running || finished ? "Opened elsewhere" : "Did not open"),
+                        _ => new StepState("zoom", "Zoom", "future", zoom),
+                    },
+                    Done(LmsFollowUpStep.RunSession) is { } ran
+                        ? new StepState("run", "Run", ran.Succeeded ? "done" : (running || finished ? "lms" : "failed"), ran.Succeeded ? $"Done {ran.At.LocalDateTime:HH:mm}" : (running || finished ? "On the LMS" : "Failed"), ran.Message)
+                        : new StepState("run", "Run", running || finished ? "lms" : upcoming ? "future" : "none", running || finished ? "On the LMS" : upcoming ? "At start" : "Not run"),
+                    State("attendance", "Attendance", LmsFollowUpStep.TakeAttendance, lms?.Session.AttendanceTaken == true, classStart + LmsFollowUpQueue.TakeAttendanceAfter > now),
+                    State("correct", "Late joiners", LmsFollowUpStep.CorrectAttendance, false, classStart + LmsFollowUpQueue.CorrectAttendanceAfter > now),
+                    State("complete", "Complete", LmsFollowUpStep.CompleteSession, finished, classStart + LmsFollowUpQueue.CorrectAttendanceAfter > now),
+                };
+                // The record link, in two steps: the Zoom recording soon after class, then the Drive
+                // copy that replaces it. A link the app wrote counts even when the last LMS read was a
+                // quick list read, which does not look at links.
+                bool linkDue = classStart + LmsFollowUpQueue.CorrectAttendanceAfter <= now || finished;
+                var recordStep = State("record", "Zoom recording", LmsFollowUpStep.AttachZoomRecording, false, !linkDue);
+                var drive = Done(LmsFollowUpStep.AttachDriveLink);
+                string lmsKind = lms?.Session.LinkKind ?? "";
+                bool driveOnLms = lmsKind == "drive" || drive is { Succeeded: true };
+                bool zoomOnLms = recordStep.State == "done" || lmsKind == "zoom";
+                string linkKind = driveOnLms ? "drive" : zoomOnLms ? "zoom" : lmsKind;
+                link = driveOnLms ? "Drive ✓" : zoomOnLms ? "Zoom (Drive pending)" : link;
+                steps.Add(
+                    recordStep.State == "done" ? recordStep
+                    : lmsKind == "zoom" ? recordStep with { State = "lms", Text = "On the LMS" }
+                    : driveOnLms ? recordStep with { State = "lms", Text = "Drive instead" }
+                    : lmsKind == "other" ? recordStep with { State = "lms", Text = "Other link" }
+                    : recordStep.State is "none" && linkDue ? recordStep with { State = finished ? "failed" : "due", Text = finished ? "No link" : "After class" }
+                    : recordStep);
+                steps.Add(
+                    drive is { Succeeded: true } ? new StepState("drive", "Drive", "done", $"Done {drive.At.LocalDateTime:HH:mm}", drive.Message)
+                    : lmsKind == "drive" ? new StepState("drive", "Drive", "lms", "On the LMS")
+                    : !linkDue ? new StepState("drive", "Drive", "future", "After class")
+                    : drive is { Succeeded: false } ? new StepState("drive", "Drive", "due", "Not in sheet yet", drive.Message)
+                    : new StepState("drive", "Drive", "due", "Waiting for Drive"));
+                // The material and the assignment: fixed material goes up by itself at class time; a
+                // technical class waits for the folder chosen for it.
+                // Freelancing and Soft Skills are numbered by the LMS week in the session's title.
+                var plan = MaterialPlanner.Plan(timetable, group, date, start, materials, lms?.Session.Title);
+                string materialKey = MaterialSettings.KeyOf(group, date, start);
+                materials.Done.TryGetValue(materialKey, out var materialDone);
+                materials.Errors.TryGetValue(materialKey, out var materialError);
+                materials.Assignments.TryGetValue(materialKey, out var choice);
+                var files = MaterialPlanner.FilesFor(plan, choice);
+                string fileList = string.Join("\n", files.Select(f => f.Title));
+                steps.Add(
+                    materialDone != null ? new StepState("material", "Material", "done", $"Done {materialDone.At.LocalDateTime:HH:mm}", $"{plan.Label}\n{string.Join("\n", materialDone.Files)}")
+                    : files.Count == 0 ? new StepState("material", "Material", "none", plan.IsTechnical ? "Choose folder" : plan.Track.Length == 0 ? "None" : "No files", plan.Note)
+                    : materialError != null ? new StepState("material", "Material", "retry", "Retry", materialError)
+                    : plan.IsFixed && classStart > now ? new StepState("material", "Material", "future", $"{plan.Label} · {files.Count} files at {start:HH\\:mm}", $"{plan.Note}\n{fileList}")
+                    : new StepState("material", "Material", "due", $"{(plan.Label.Length > 0 ? plan.Label + " · " : "")}{files.Count} files", $"{plan.Note}\n{fileList}"));
+                var assignment = MaterialPlanner.AssignmentFor(plan, choice, date, start);
+                string? assignmentTitle = assignment?.Title ?? choice?.Title ?? plan.AssignmentFile?.Title;
+                DateTime? deadline = assignment?.Deadline ?? choice?.Deadline;
+                steps.Add(
+                    choice?.None == true ? new StepState("assignment", "Assignment", "none", "None", "Marked as having no assignment.")
+                    : materialDone?.Assignment != null ? new StepState("assignment", "Assignment", "done", $"Due {materialDone.Deadline:dd MMM HH\\:mm}", materialDone.Assignment)
+                    : assignmentTitle == null ? new StepState("assignment", "Assignment", "none", plan.IsTechnical ? "Add" : "None", plan.IsTechnical ? "Add one if this session has an assignment: title, deadline and its file." : "No assignment file in its folder.")
+                    : deadline == null ? new StepState("assignment", "Assignment", "due", "Set deadline", assignmentTitle)
+                    : new StepState("assignment", "Assignment", classStart > now ? "future" : "due", $"Due {deadline:dd MMM HH\\:mm}", $"{assignmentTitle}\n{assignment?.Description}"));
+                var material = new MaterialInfo(plan.Track, plan.Number, plan.Folder, [.. files.Select(f => f.Title)], plan.Skipped,
+                    plan.IsTechnical, plan.IsFixed, plan.Note, assignmentTitle, deadline?.ToString("yyyy-MM-dd'T'HH:mm"), choice?.None == true, materialDone != null)
+                {
+                    Description = choice?.Description ?? assignment?.Description,
+                    AssignmentFile = choice?.File,
+                };
+
+                bool linkNext = next is "Waiting for the Drive link" or "Add the record link" or "Record link";
+                if (driveOnLms && linkNext) { next = "Done"; tone = "done"; }
+                else if (zoomOnLms && !driveOnLms && linkNext) { next = "Waiting for the Drive link"; tone = "warn"; }
+                // A class whose day has passed is over (Completed): nothing is owed on the LMS any more
+                // except its recording - the Drive link when there is one, else the Zoom recording.
+                if (date < today)
+                {
+                    for (int i = 0; i < steps.Count; i++)
+                        if (steps[i].Key is "zoom" or "run" or "attendance" or "correct" or "complete" && steps[i].State is not ("done" or "lms"))
+                            steps[i] = steps[i] with { State = "lms", Text = "Past" };
+                    (next, tone) = driveOnLms ? ("Done", "done") : zoomOnLms ? ("Waiting for the Drive link", "warn") : ("Add the recording", "warn");
+                }
+                rows.Add(new ClassRow(date, start, group, lms?.Session.Title ?? schedule?.Name ?? "", zoom, lmsText, run, attendance,
+                    correction, complete, link, next, tone, details)
+                {
+                    Steps = steps,
+                    LmsStatus = lmsStatus,
+                    LmsReadAt = lms is null ? null : $"{lms.ReadAt.LocalDateTime:ddd HH:mm}",
+                    LmsUrl = lms?.Session.PageUrl,
+                    LinkKind = linkKind,
+                    RecordLink = lms?.Session.RecordLink is { Length: > 0 } rl ? rl : null,
+                    Material = material,
+                });
+            }
+
+            var ordered = rows.OrderBy(r => Math.Abs((r.Date.ToDateTime(r.Start) - now).TotalHours) > 12 ? 1 : 0)
+                .ThenByDescending(r => r.Date).ThenBy(r => r.Start).ToList();
+            Rows.Clear();
+            foreach (var row in ordered) Rows.Add(row);
+            RunningNow = rows.Count(r => r.Lms.StartsWith("running"));
+            Today = rows.Count(r => r.Date == today);
+            NeedsAttention = rows.Count(r => r.Tone == "bad");
+            WaitingForDrive = rows.Count(r => r.Link.StartsWith("Zoom"));
+            var newest = cache.Count > 0 ? cache.Max(c => c.ReadAt) : (DateTimeOffset?)null;
+            LastLmsCheck = newest is { } n ? $"{n.LocalDateTime:ddd HH:mm}" : "never";
+            foreach (var name in new[] { nameof(RunningNow), nameof(Today), nameof(NeedsAttention), nameof(WaitingForDrive), nameof(LastLmsCheck), nameof(ActiveAccount) })
+                OnPropertyChanged(name);
+        }
+        catch (Exception ex) { Status = $"The sessions could not be loaded: {ex.Message}"; }
+        Changed?.Invoke();
+    }
+
+    // ------------------------------------------------------------------ by hand (Sessions page buttons)
+
+    /// <summary>Raised whenever what the page shows may have changed.</summary>
+    public event Action? Changed;
+
+    /// <summary>The app's one follow-up processor (set by the window), so buttons never run beside the queue.</summary>
+    public ZoomAutoAdmit.WindowsUI.Services.LmsFollowUpProcessor? Processor { get; set; }
+
+    private readonly HashSet<string> _working = new(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyCollection<string> Working { get { lock (_working) return [.. _working]; } }
+    private readonly Dictionary<string, DateTimeOffset> _sheetTried = new(StringComparer.OrdinalIgnoreCase);
+    private DateTimeOffset _lastSheetSweep = DateTimeOffset.MinValue;
+
+    public RecordingSheetSettings SheetSettings => RecordingSheetSettings.Load();
+
+    public void SaveSheetSettings(string? url, IDictionary<string, string>? tabs)
+    {
+        var settings = new RecordingSheetSettings { Url = string.IsNullOrWhiteSpace(url) ? null : url.Trim() };
+        foreach (var (group, tab) in tabs ?? new Dictionary<string, string>())
+            if (!string.IsNullOrWhiteSpace(tab)) settings.Tabs[group] = tab.Trim();
+        if (settings.Url != null && RecordingSheetReader.SpreadsheetIdOf(settings.Url) == null)
+            throw new InvalidOperationException("That is not a Google Sheets link.");
+        settings.Save();
+        Status = settings.Url == null ? "The recordings sheet link was removed." : "The recordings sheet link is saved.";
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// One step of one class, now. step: run, attendance, correct, complete, zoomRecording, sheet, link.
+    /// These are real: they press the LMS's own buttons, exactly as the automatic cycle does.
+    /// </summary>
+    public async Task<(bool Ok, string Message)> RunStepAsync(string group, DateOnly date, TimeOnly start, string step, string? link = null)
+    {
+        string key = $"{group}|{date:yyyy-MM-dd}|{start:HH\\:mm}|{step}";
+        lock (_working) if (!_working.Add(key)) return (false, "That step is already running.");
+        Changed?.Invoke();
+        (bool Ok, string Message) result;
+        try
+        {
+            var processor = Processor ?? throw new InvalidOperationException("The LMS is not ready yet.");
+            result = step switch
+            {
+                "run" => await processor.ExclusiveAsync(async () =>
+                {
+                    var run = await Task.Run(() => _runner().RunAsync(group, start, date, dryRun: false));
+                    await processor.RecordManualAsync(group, date, start, LmsFollowUpStep.RunSession, run.IsSuccess, run.Message);
+                    return (run.IsSuccess, run.Message);
+                }),
+                "attendance" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.TakeAttendance),
+                "correct" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.CorrectAttendance),
+                "complete" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.CompleteSession),
+                "zoomRecording" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.AttachZoomRecording),
+                "recording" => await RecordingAsync(processor, group, date, start),
+                "sheet" => await CheckSheetAsync(processor, group, date, start),
+                "link" => await AttachGivenLinkAsync(processor, group, date, start, link),
+                "material" or "assignment" => await MaterialAsync(processor, group, date, start),
+                _ => (false, $"Unknown step '{step}'."),
+            };
+        }
+        catch (Exception ex) { result = (false, ex.Message); }
+        finally { lock (_working) _working.Remove(key); }
+        Status = result.Message;
+        ConsoleLogger.Info($"[LMS] Sessions page, {step} for {group} {date:yyyy-MM-dd}: {result.Message}");
+        await ReloadAsync();
+        return result;
+    }
+
+    /// <summary>
+    /// The class's recording on the LMS, the best one there is: its Drive link (n8n / the sheet) when
+    /// there is one, and otherwise its Zoom recording - which the Drive link replaces later.
+    /// </summary>
+    private async Task<(bool Ok, string Message)> RecordingAsync(ZoomAutoAdmit.WindowsUI.Services.LmsFollowUpProcessor processor,
+        string group, DateOnly date, TimeOnly start)
+    {
+        var drive = await CheckSheetAsync(processor, group, date, start);
+        if (drive.Ok) return drive;
+        var row = Rows.FirstOrDefault(r => r.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && r.Date == date && r.Start == start);
+        if (row?.LinkKind == "zoom") return (false, $"{drive.Message} The Zoom recording is already on the LMS.");
+        var zoom = await processor.RunNowAsync(group, date, start, LmsFollowUpStep.AttachZoomRecording);
+        return (zoom.IsSuccess, zoom.IsSuccess ? $"No Drive link yet, so the Zoom recording was put on the LMS. {zoom.Message}" : $"{drive.Message} Zoom: {zoom.Message}");
+    }
+
+    /// <summary>The recordings sheet's Drive link for the class, put on its LMS session (replacing a Zoom link).</summary>
+    private async Task<(bool Ok, string Message)> CheckSheetAsync(ZoomAutoAdmit.WindowsUI.Services.LmsFollowUpProcessor processor,
+        string group, DateOnly date, TimeOnly start)
+    {
+        _sheetTried[$"{group}|{date:yyyy-MM-dd}"] = DateTimeOffset.Now;
+        SheetRecording? found = null;
+        var tried = new List<string>();
+        // The recordings sheet itself first (the Drive copies are listed there), then what the
+        // central server was sent from it.
+        var settings = RecordingSheetSettings.Load();
+        if (RecordingSheetReader.SpreadsheetIdOf(settings.Url) != null)
+        {
+            try
+            {
+                var rows = await new RecordingSheetReader().ReadGroupAsync(settings, group);
+                found = RecordingSheetReader.Pick(rows, date, start);
+                if (found == null) tried.Add("the recordings sheet has no row of that day yet");
+            }
+            catch (Exception ex) { tried.Add(ex.Message); }
+        }
+        if (found == null && CentralDriveLink != null)
+        {
+            try
+            {
+                var (centralLink, file) = await CentralDriveLink(group, date, start);
+                if (RecordingLinks.IsGoogleDriveFileLink(centralLink)) found = new SheetRecording(file ?? "the central server", date, null, centralLink!);
+            }
+            catch { }
+        }
+        if (found == null)
+        {
+            string none = $"No Drive link yet for {group} {date:ddd dd MMM}: {string.Join("; ", tried.DefaultIfEmpty("the recordings sheet's link is not set"))}.";
+            await processor.RecordManualAsync(group, date, start, LmsFollowUpStep.AttachDriveLink, false, none);
+            return (false, none);
+        }        var cached = _cache.Read().FirstOrDefault(c => c.Session.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && c.Session.Date == date);
+        if (cached != null && RecordingLinks.DriveFileIdOf(cached.Session.RecordLink) is { } onLms && onLms == RecordingLinks.DriveFileIdOf(found.Link))
+        {
+            string same = $"{group}: the sheet's Drive link is already the one on the LMS.";
+            await processor.RecordManualAsync(group, date, start, LmsFollowUpStep.AttachDriveLink, true, same);
+            return (true, same);
+        }
+        return await WriteLinkAsync(processor, group, date, start, found.Link, $"from {found.FileName}");
+    }
+
+    /// <summary>The Drive link n8n reported to the central server for a class (set by the window).</summary>
+    public Func<string, DateOnly, TimeOnly, Task<(string? Link, string? File)>>? CentralDriveLink { get; set; }
+
+    private bool HasDriveSource => CentralDriveLink != null || RecordingSheetReader.SpreadsheetIdOf(RecordingSheetSettings.Load().Url) != null;
+
+    private Task<(bool Ok, string Message)> AttachGivenLinkAsync(ZoomAutoAdmit.WindowsUI.Services.LmsFollowUpProcessor processor,
+        string group, DateOnly date, TimeOnly start, string? link)
+    {
+        link = link?.Trim();
+        if (!RecordingLinks.IsAttachable(link))
+            return Task.FromResult((false, "Paste a Google Drive file link or a Zoom recording link."));
+        return WriteLinkAsync(processor, group, date, start, link!, "pasted on the Sessions page");
+    }
+
+    private async Task<(bool Ok, string Message)> WriteLinkAsync(ZoomAutoAdmit.WindowsUI.Services.LmsFollowUpProcessor processor,
+        string group, DateOnly date, TimeOnly start, string link, string where)
+    {
+        var kind = RecordingLinks.Classify(link);
+        return await processor.ExclusiveAsync(async () =>
+        {
+            var outcome = await ZoomAutoAdmit.Inspector.Runtime.RecordingWorkflow.CreateForApi(ConsoleLogger.Info)
+                .AttachProvidedLinkAsync(new ProvidedRecordLinkRequest
+                {
+                    Group = group, RecordLink = link, Date = date, StartTime = start,
+                    // Drive always replaces what is there; a Zoom link never replaces a Drive one.
+                    ReplaceExisting = kind == RecordingLinkKind.GoogleDrive,
+                }, CancellationToken.None);
+            bool ok = outcome.Status is RecordingLinkStatus.Attached or RecordingLinkStatus.AlreadyExists;
+            string message = $"{group}: {(kind == RecordingLinkKind.GoogleDrive ? "Drive" : "Zoom")} link {where} - {outcome.Message}";
+            await processor.RecordManualAsync(group, date, start,
+                kind == RecordingLinkKind.GoogleDrive ? LmsFollowUpStep.AttachDriveLink : LmsFollowUpStep.AttachZoomRecording, ok, message);
+            return (ok, message);
+        });
+    }
+
+    /// <summary>
+    /// Every finished class of the last two weeks without its Drive link: looked up in the sheet and
+    /// put on the LMS. By the button, or by itself every 30 minutes (each class at most every 2 hours).
+    /// </summary>
+    public async Task<(bool Ok, string Message)> CheckSheetForAllAsync(bool automatic = false)
+    {
+        if (!HasDriveSource)
+            return (false, "Paste the recordings sheet's link first (Sessions page, settings).");
+        var now = DateTime.Now;
+        var wanting = Rows.Where(r => r.Date.ToDateTime(r.Start) < now.AddHours(-2) && r.Date >= DateOnly.FromDateTime(now).AddDays(-14))
+            .Where(r => r.LinkKind is not "drive" and not "other")
+            .Where(r => !automatic || !_sheetTried.TryGetValue($"{r.Group}|{r.Date:yyyy-MM-dd}", out var at) || DateTimeOffset.Now - at > TimeSpan.FromHours(2))
+            .ToList();
+        if (wanting.Count == 0) return (true, "Every finished class already has its Drive link.");
+        int attached = 0; var notes = new List<string>();
+        foreach (var row in wanting)
+        {
+            // Drive first; a class with no link at all also gets its Zoom recording when Drive has none yet.
+            var (ok, message) = await RunStepAsync(row.Group, row.Date, row.Start, row.LinkKind == "zoom" ? "sheet" : "recording");
+            if (ok) attached++; else notes.Add(message);
+        }
+        string summary = $"Sheet check: {attached} of {wanting.Count} class(es) now carry their Drive link." + (notes.Count > 0 ? " " + notes[0] : "");
+        Status = summary;
+        return (attached > 0 || notes.Count == 0, summary);
+    }
+
+    /// <summary>Called from TickAsync: the sheet, every 30 minutes, when its link is known.</summary>
+    private async Task SweepSheetAsync()
+    {
+        if (DateTimeOffset.Now - _lastSheetSweep < TimeSpan.FromMinutes(30) || Processor == null) return;
+        _lastSheetSweep = DateTimeOffset.Now;
+        if (!HasDriveSource) return;
+        try { var (_, message) = await CheckSheetForAllAsync(automatic: true); ConsoleLogger.Info($"[LMS] {message}"); }
+        catch (Exception ex) { ConsoleLogger.Warn($"[LMS] Sheet check failed: {ex.Message}"); }
+    }
+
+    // ------------------------------------------------------------------ material and assignments
+
+    private static List<TimetableEntry> Timetable(IEnumerable<MeetingSchedule> schedules) =>
+        [.. schedules.Where(s => s.OccurrenceDate.HasValue)
+            .Select(s => new TimetableEntry(s.GroupName ?? s.AccountId, s.OccurrenceDate!.Value, new TimeOnly(s.Time.Hour, s.Time.Minute), s.Name))];
+
+    /// <summary>
+    /// Puts the class's material on its session - each file as an attachment - and creates its
+    /// assignment when it has one with a deadline. What is already there is left alone, and what was
+    /// done is kept so it is never done twice.
+    /// </summary>
+    private async Task<(bool Ok, string Message)> MaterialAsync(ZoomAutoAdmit.WindowsUI.Services.LmsFollowUpProcessor processor,
+        string group, DateOnly date, TimeOnly start)
+    {
+        var timetable = Timetable(await _schedules.ListAsync());
+        var settings = MaterialSettings.Load();
+        // The session's LMS title carries its week, which numbers Freelancing and Soft Skills.
+        string? lmsTitle = _cache.Read().Where(c => c.Session.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && c.Session.Date == date)
+            .OrderByDescending(c => c.ReadAt).Select(c => c.Session.Title).FirstOrDefault(t => !string.IsNullOrWhiteSpace(t));
+        var plan = MaterialPlanner.Plan(timetable, group, date, start, settings, lmsTitle);
+        string key = MaterialSettings.KeyOf(group, date, start);
+        // Without the week the number would come from the timetable, which starts part-way through.
+        if (plan.IsFixed && plan.Track != MaterialPlanner.English && MaterialPlanner.WeekOf(lmsTitle) == null && !settings.Folders.ContainsKey(key))
+            return (false, $"{group}: the session's week is not known yet (Check LMS reads it), so its {plan.Track} number would be a guess. Nothing was uploaded.");
+        settings.Assignments.TryGetValue(key, out var choice);
+        var assignment = MaterialPlanner.AssignmentFor(plan, choice, date, start);
+        var files = MaterialPlanner.FilesFor(plan, choice);
+        if (files.Count == 0 && assignment == null) return (false, $"{group}: {plan.Note}");
+
+        var result = await processor.ExclusiveAsync(() => Task.Run(() => _runner().AddMaterialsAsync(group, date, start, files, assignment)));
+        settings = MaterialSettings.Load();                                    // read again: the page may have changed it meanwhile
+        if (result.IsSuccess)
+        {
+            settings.Done[key] = new MaterialRecord(DateTimeOffset.Now, [.. files.Select(f => f.Title)],
+                result.AssignmentCreated || result.AssignmentAlreadyThere ? assignment?.Title : null, assignment?.Deadline);
+            settings.Errors.Remove(key);
+        }
+        else settings.Errors[key] = result.Message;
+        settings.Save();
+        return (result.IsSuccess, result.Message);
+    }
+
+    /// <summary>The folder chosen for one class (a technical class's material), or none.</summary>
+    public void ChooseMaterialFolder(string group, DateOnly date, TimeOnly start, string? folder)
+    {
+        var settings = MaterialSettings.Load();
+        string key = MaterialSettings.KeyOf(group, date, start);
+        if (string.IsNullOrWhiteSpace(folder)) settings.Folders.Remove(key); else settings.Folders[key] = folder;
+        settings.Done.Remove(key);                     // a new folder is new material
+        settings.Errors.Remove(key);
+        settings.Save();
+    }
+
+    /// <summary>The assignment chosen for one class: title, description, deadline and its own file - or that it has none.</summary>
+    public void ChooseAssignment(string group, DateOnly date, TimeOnly start, string? title, DateTime? deadline, bool none,
+        string? description = null, string? file = null)
+    {
+        var settings = MaterialSettings.Load();
+        string key = MaterialSettings.KeyOf(group, date, start);
+        settings.Assignments[key] = new AssignmentChoice(string.IsNullOrWhiteSpace(title) ? null : title.Trim(), deadline, none,
+            string.IsNullOrWhiteSpace(description) ? null : description.Trim(), string.IsNullOrWhiteSpace(file) ? null : file);
+        if (settings.Done.TryGetValue(key, out var done) && done.Assignment == null) settings.Done.Remove(key);   // so the assignment still goes up
+        settings.Save();
+    }
+
+    /// <summary>A track's folder (Freelancing, Soft Skills, English).</summary>
+    public void ChooseTrackFolder(string track, string folder)
+    {
+        var settings = MaterialSettings.Load();
+        settings.Tracks[track] = folder;
+        settings.Save();
+    }
+
+    public MaterialSettings Materials => MaterialSettings.Load();
+
+    private readonly Dictionary<string, DateTimeOffset> _materialTried = new(StringComparer.OrdinalIgnoreCase);
+    private DateTimeOffset _lastMaterialSweep = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Called from TickAsync: today's Freelancing, Soft Skills and English classes get their material
+    /// once they have started (ten minutes in, clear of the Run Session at the start), each at most
+    /// every 30 minutes until it is up.
+    /// </summary>
+    private async Task SweepMaterialsAsync()
+    {
+        if (Processor == null || DateTimeOffset.Now - _lastMaterialSweep < TimeSpan.FromMinutes(5)) return;
+        _lastMaterialSweep = DateTimeOffset.Now;
+        var now = DateTime.Now;
+        var due = Rows.Where(r => r.Material is { Fixed: true, Done: false, Files.Count: > 0 } && r.Date == DateOnly.FromDateTime(now))
+            .Where(r => now >= r.Date.ToDateTime(r.Start).AddMinutes(10) && now <= r.Date.ToDateTime(r.Start).AddHours(8))
+            .Where(r => !_materialTried.TryGetValue(r.Key, out var at) || DateTimeOffset.Now - at > TimeSpan.FromMinutes(30))
+            .ToList();
+        foreach (var row in due)
+        {
+            _materialTried[row.Key] = DateTimeOffset.Now;
+            try
+            {
+                var (_, message) = await RunStepAsync(row.Group, row.Date, row.Start, "material");
+                ConsoleLogger.Info($"[LMS] Material for {row.Group} {row.Date:yyyy-MM-dd}: {message}");
+            }
+            catch (Exception ex) { ConsoleLogger.Warn($"[LMS] Material for {row.Group} failed: {ex.Message}"); }
+        }
+    }
+
+    public void UseAccount(string id)
+    {
+        SelectedAccount = Accounts.FirstOrDefault(a => a.Id == id);
+        UseAccount();
+    }
+
+    public void RemoveAccount(string id)
+    {
+        SelectedAccount = Accounts.FirstOrDefault(a => a.Id == id);
+        RemoveAccount();
+    }
+
+    public void SaveAccount(string label, string email, string role, string? password, bool makeActive)
+    {
+        NewLabel = label; NewEmail = email; NewRole = role is "admin" ? "admin" : "coordinator";
+        SaveAccount(password, makeActive);
+    }
+}

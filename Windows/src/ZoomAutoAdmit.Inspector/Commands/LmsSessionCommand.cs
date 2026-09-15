@@ -46,8 +46,8 @@ public static class LmsSessionCommand
 
         var result = await new LmsSessionRunner(store).RunAsync(
             options.LmsGroup!,
-            // No time on the command line: the run is for whatever is listed now.
-            startTime: TimeOnly.FromDateTime(DateTime.Now),
+            // An explicit timetable time identifies the right row when a group has two sessions.
+            startTime: options.LmsTime ?? TimeOnly.FromDateTime(DateTime.Now),
             day: options.LmsDay,
             headed: options.WebHeaded,
             dryRun: options.DryRun,

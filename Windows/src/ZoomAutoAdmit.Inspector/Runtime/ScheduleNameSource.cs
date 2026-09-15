@@ -19,7 +19,7 @@ public sealed class ScheduleNameSource(WindowsMeetingScheduleStore store) : ISes
             var local = startTime.ToLocalTime();
             var date = DateOnly.FromDateTime(local.DateTime);
             var candidates = schedules
-                .Where(schedule => schedule.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase))
+                .Where(schedule => (schedule.GroupName ?? schedule.AccountId).Equals(accountId, StringComparison.OrdinalIgnoreCase))
                 .Select(schedule => (schedule, when: Occurrence(schedule, date)))
                 .Where(pair => pair.when.HasValue)
                 .Select(pair => (pair.schedule, gap: (pair.when!.Value - local.DateTime).Duration()))

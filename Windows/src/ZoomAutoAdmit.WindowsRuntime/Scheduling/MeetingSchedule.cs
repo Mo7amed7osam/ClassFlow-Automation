@@ -36,7 +36,8 @@ public sealed record MeetingSchedule(
     ScheduleDays Days,
     bool Enabled,
     DateOnly? LastTriggeredDate = null,
-    DateOnly? OccurrenceDate = null);
+    DateOnly? OccurrenceDate = null,
+    string? GroupName = null);
 
 public static class ScheduleDaysExtensions
 {

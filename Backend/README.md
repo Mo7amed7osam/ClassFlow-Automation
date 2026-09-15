@@ -19,13 +19,23 @@ n8n ──HTTPS, X-API-Key──▶ backend ◀──WSS, device token── Win
 
 ## Run it locally
 
-Requires Python 3.11+ (tested with 3.13) and PostgreSQL 14+ (tested with 18).
+Requires Python 3.11+ (tested with 3.13 and 3.14) and PostgreSQL 14+ (tested with 18).
 
 ```powershell
 cd Backend
 py -3.13 -m venv .venv
-.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m pip install -r requirements-dev.txt    # the server only: requirements.txt
 ```
+
+Run every backend command from `Backend\` with the virtual environment's Python,
+`.venv\Scripts\python`, as all the commands below do. Alternatively, activate it first with
+`.venv\Scripts\Activate.ps1`, so that `python` means the venv. A bare `python` is the system
+interpreter, which has none of these packages. `ModuleNotFoundError: No module named 'sqlalchemy'`
+(or `fastapi`, `alembic`) means the command ran outside the venv. `No module named 'central_backend'`
+means it ran outside `Backend\`.
+
+`requirements.txt` pins the exact versions the tests pass with; `requirements-dev.txt` adds pytest and
+httpx. `pyproject.toml` holds the same dependencies as version ranges.
 
 ### PostgreSQL
 
@@ -54,6 +64,18 @@ $env:CENTRAL_ENVIRONMENT = 'development'                        # allows plain h
 ```
 
 `GET http://127.0.0.1:8080/health` → `{"status":"ok"}`. API docs are at `/docs`, in development only.
+
+### The dashboard's admin account (once)
+
+```powershell
+.venvScriptspython -m central_backend.cli create-admin --username admin --display-name "Your name"
+```
+
+The password is asked for twice and never shown. There is exactly one admin; coordinators register
+on the sign-in page (the admin approves them) or are created by the admin. An old `CENTRAL_ADMIN_USERS`
+entry can be moved into the database with `create-admin --from-env` (with several entries, pick one
+with `--username`); the variable is no longer read
+after that. See [Dashboard/README.md](../Dashboard/README.md).
 
 ### Register a Windows agent
 
@@ -90,6 +112,13 @@ emptied between tests. No LMS, Zoom or browser is used.
 | `CENTRAL_ASSIGNMENT_ACK_TIMEOUT_SECONDS` | `60` | An assignment not accepted in this time goes back to the queue. |
 | `CENTRAL_RUNNING_ORPHAN_TIMEOUT_SECONDS` | `1800` | A running job whose device is silent this long fails with `agentLost`. |
 | `CENTRAL_BUSY_RETRY_DELAY_SECONDS` | `60` | Default wait before retrying a retryable failure (such as `busy`). |
+| `CENTRAL_SESSION_HOURS` | `8` | How long a dashboard sign-in lasts (0.25-72). The old name `CENTRAL_ADMIN_SESSION_HOURS` still works. |
+| `CENTRAL_ALLOW_REGISTRATION` | `true` | `false` refuses coordinator self-registration (the sign-up page says so); the admin then creates every account. |
+| `CENTRAL_DASHBOARD_DIST` | `../Dashboard/dist` | Where the built dashboard is; without it the backend runs without the page. |
+| ~~`CENTRAL_ADMIN_USERS`~~ | — | Retired: accounts live in the `users` table. If still set, the backend logs a warning and ignores it. |
+| `CENTRAL_AI_API_KEY` | — | Optional. Turns on "Match with AI" for attendance (an OpenAI-compatible chat-completions API; OpenRouter by default). Without it that button is hidden and the step answers `409`. |
+| `CENTRAL_AI_MODEL` | `openai/gpt-4o-mini` | The model asked. |
+| `CENTRAL_AI_BASE_URL` | `https://openrouter.ai/api/v1` | The API's base address. |
 
 Behind a TLS-terminating reverse proxy, start uvicorn with
 `--proxy-headers --forwarded-allow-ips=<proxy address>`, so the scheme it sees is https/wss.
@@ -190,6 +219,7 @@ no jobs and do not touch the LMS. `lmsStatus` is `pending` until a later step mo
 | `GET /api/v1/recordings` | All recordings, newest date first. Optional `?group=`, `?date=yyyy-MM-dd`, `?status=` (the `lmsStatus`), `?limit=` (1–5000, default 1000), `?offset=`. Answers `{"recordings":[…],"count":n}`. |
 | `GET /api/v1/recordings/latest` | The most recently created or updated recordings, `updatedAt` newest first. `?limit=` 1–100, default 20; anything else is `400`. Each item has `id, group, date, startTime, fileName, type, driveLink, zoomLink, source, lmsStatus, updatedAt`. Answers `{"recordings":[…],"count":n}`. |
 | `GET /api/v1/recordings/{id}` | One recording, or `404`. |
+| `PATCH /api/v1/recordings/{id}` | Edit only the fields sent: `group`, `date`, `startTime`, `fileName`, `type`, `link`, `lmsStatus` (`pending`/`attached`/`failed`). `""` or `null` clears an optional field; `group`, `date` and `lmsStatus` cannot be emptied. A new `link` replaces the stored one (Drive → `driveLink`, Zoom → `zoomLink`, the other cleared), sets `source`, and puts `lmsStatus` back to `pending`; asking for another `lmsStatus` in the same request is `400`. Moving onto another recording's group + date + start time is `409`. Unknown fields `400`, unknown id `404`. Answers the recording (`id, group, date, startTime, fileName, type, driveLink, zoomLink, source, lmsStatus, updatedAt`). |
 | `GET /api/v1/groups` | `{"groups":[…],"count":n}`: the distinct group names that have recordings, sorted. |
 
 Sync body (unknown fields are refused):
@@ -216,6 +246,74 @@ Sync body (unknown fields are refused):
 * A changed link resets `lmsStatus` to `pending`, since the LMS would then hold an outdated link.
 * No start time is one slot for the day: two syncs of the same group and date without `startTime`
   update the same row.
+
+## Attendance (rosters, Zoom snapshots, matching)
+
+Who attended each class meeting, matched against the group's roster. It replaces the Chrome
+extension's attendance and the Windows app's local matching with one shared place: rosters, name
+memory and results live in PostgreSQL (migration `0006_attendance`, additive: six new tables), and the
+same access rules apply as for recordings (a coordinator only sees their groups).
+
+```
+Zoom meeting ─▶ Windows app (reads the participant list; files in %LOCALAPPDATA%\ZoomAutoAdmit\Attendance)
+             ─▶ agent (AttendanceUploader) ─ POST /api/v1/attendance/snapshots, device token
+             ─▶ backend: participants + presence intervals ─▶ matching ─▶ attendance records
+             ─▶ dashboard: Attendance / Students pages (review, correct, finalize, export CSV)
+```
+
+**Snapshots in.** `POST /api/v1/attendance/snapshots`, with a device token (`Authorization: Bearer
+zaad_…`, sent by the agent) or the n8n key:
+
+```json
+{ "clientSnapshotId": "win:<session>:<file>",
+  "session": { "ref": "win:<windows session id>", "group": "CAI5_AIS4_S7", "date": "2026-09-14",
+               "startTime": "18:02", "meetingUrl": "https://us06web.zoom.us/j/…" },
+  "capturedAt": "2026-09-14T15:17:00Z", "source": "desktop", "trigger": "scheduled",
+  "isComplete": false, "ended": false, "participants": ["Mohab Osama", "مريم عبدالرحمن"] }
+```
+
+* `ref` finds the session again (a new one is made the first time; a `ref` of another group is
+  `409`). Without `ref`, group + date + start time do. The group is registered if new.
+* A `clientSnapshotId` already stored answers `200 {"duplicate": true}` and changes nothing, so the
+  agent can safely send again. Otherwise `201 {sessionId, participants, status, summary}`.
+* Names are stored raw; Zoom's "(Host, me)", "(Co-host)", "(مضيف)" mark staff, who are set aside.
+  `isComplete: false` (the Zoom list may have been scrolled) never counts as someone leaving.
+  `ended: true` closes the session.
+* A meeting link loses its query (the passcode) before it is stored. At most 1000 names per read.
+
+**Matching** (`attendance_names.py`, `attendance_matching.py`): the Windows app's name rules
+(first/family names, spelling variants, Arabizi) and the extension's fuzzy similarity, with their
+known gaps fixed: Arabic letter forms, diacritics and tatweel, Arabic-Indic digits, honorifics, and
+compound names spelled together or apart (عبد الرحمن / Abdelrahman / Abd El Rahman, Nour El Din /
+Noureldin). A student is matched at most once and a Zoom name given to at most one student; a name
+two students fit almost equally is *Needs review* for both. One word alone ("Ahmed") never makes a
+student present by itself. What a person confirms or rules out is remembered for the group's next
+sessions, and their decisions always win over the automatic ones. With `CENTRAL_AI_API_KEY`, the
+remaining doubtful names can be put to an AI; only its confident answers are applied, the rest are
+shown as suggestions.
+
+Each record is `present`, `needs_review` or `absent`, with the Zoom name(s), a confidence 0-100,
+where it came from (`exact`, `alias`, `memory`, `rule`, `fuzzy`, `ai`, `manual`), and the join time,
+leave time and time in the meeting (from the reads, so no finer than their spacing).
+
+**Dashboard endpoints** (signed-in users; writes need `X-Dashboard-Request: 1`; a coordinator gets
+`404` outside their groups):
+
+| Endpoint | |
+|---|---|
+| `GET /api/v1/dashboard/students?group=&q=&includeInactive=` · `POST …/students` · `PATCH …/students/{id}` | The roster. Removing a student keeps their past attendance. |
+| `POST /api/v1/dashboard/students/import` | `{group, text, dryRun}`: pasted rows or a CSV (tab, `;` or `,`), with or without a header (Name/Email/ID/Order, English or Arabic). Adds and updates, never removes; `dryRun` previews. |
+| `GET …/students/{id}/aliases` · `DELETE /api/v1/dashboard/aliases/{id}` | The remembered Zoom names of a student; forget one. |
+| `GET /api/v1/dashboard/attendance/sessions?group=&date=&status=&page=` · `POST …/sessions` | Sessions with their counts; create one by hand. |
+| `GET …/sessions/{id}` | `{session, records, participants (with the best candidates), snapshots, summary, aiAvailable}`. |
+| `POST …/sessions/{id}/participants` | `{names}`: names pasted by hand, matched like a read. |
+| `POST …/sessions/{id}/match` | `{useAi}`: match again (and ask the AI). Answers the session plus `aiSuggestions`. |
+| `PUT …/sessions/{id}/records/{studentId}` | `{participantId}` gives the student that Zoom name; `{status: "present" \| "absent"}`; `{reset: true}` hands it back to matching. `remember` (default true) keeps it for next time. |
+| `POST …/sessions/{id}/participants/{pid}/ignore` | `{ignored}`: not a student (or is one after all). |
+| `POST …/sessions/{id}/finalize` · `/reopen` | A finalized session refuses changes (`409`) until reopened. |
+| `GET …/sessions/{id}/export.csv` | One row per student (UTF-8 with BOM; cells that could be formulas are neutralised). |
+
+Every change is written to `admin_audit_log` (`student.*`, `attendance.*`).
 
 ## Agent authentication and registration
 

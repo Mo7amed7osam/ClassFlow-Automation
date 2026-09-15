@@ -130,11 +130,11 @@ public sealed class SessionRoleBridge : IAsyncDisposable
         try
         {
             var document = _store.Load();
-            string? scheduleName = _names.Describe(session.AccountId, session.StartTime);
-            var profile = SessionTypeResolver.Resolve(scheduleName, session.AccountId, document.Profiles);
+            string? scheduleName = _names.Describe(session.GroupId, session.StartTime);
+            var profile = SessionTypeResolver.Resolve(scheduleName, session.GroupId, document.Profiles);
             if (profile == null)
             {
-                Log($"[ROLE] No profile applies to this meeting; account={session.AccountId}; name=\"{scheduleName ?? "(unknown)"}\". " +
+                Log($"[ROLE] No profile applies to this meeting; group={session.GroupId}; name=\"{scheduleName ?? "(unknown)"}\". " +
                     "Add a profile with no keywords and no accounts to cover every meeting.", session.SessionId);
                 return;
             }
@@ -160,8 +160,7 @@ public sealed class SessionRoleBridge : IAsyncDisposable
 
                 // Re-read the profile each pass so edits made during the meeting are picked up.
                 document = _store.Load();
-                profile = document.Profiles.FirstOrDefault(candidate =>
-                    string.Equals(candidate.SessionType, profile!.SessionType, StringComparison.OrdinalIgnoreCase)) ?? profile;
+                profile = SessionTypeResolver.Resolve(scheduleName, session.GroupId, document.Profiles) ?? profile;
 
                 foreach (var name in observed)
                 {

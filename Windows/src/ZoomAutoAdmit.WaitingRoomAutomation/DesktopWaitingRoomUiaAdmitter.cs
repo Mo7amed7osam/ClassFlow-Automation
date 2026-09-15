@@ -26,8 +26,12 @@ internal sealed class DesktopWaitingRoomUiaAdmitter
         ActionExecutor = new ActionExecutor(logger, sessionId, SessionEngineType.Desktop);
     }
 
+    /// <summary>Who the last successful Admit was for (null after "Admit all").</summary>
+    public string? LastAdmittedName { get; private set; }
+
     public bool TryAdmit(CancellationToken cancellationToken)
     {
+        LastAdmittedName = null;
         bool admitted = false;
         DesktopThread.RunOnInteractiveDesktop(() =>
         {
@@ -70,10 +74,12 @@ internal sealed class DesktopWaitingRoomUiaAdmitter
             }
         }
 
+        bool sawWaitingHeader = false;
         foreach (var header in DescendantsAndSelf(root)
                      .Where(element => NameOf(element).Contains("Waiting room", StringComparison.OrdinalIgnoreCase)))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            sawWaitingHeader = true;
             var scope = header.Parent ?? root;
 
             // Also check within the header scope for Admit all
@@ -175,6 +181,46 @@ internal sealed class DesktopWaitingRoomUiaAdmitter
                 TesterLogger.Error($"[WAITING_ROOM] Admit not found after hover: {participant}");
             }
         }
+        return !sawWaitingHeader && TryAdmitAboveJoined(root, cancellationToken);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex JoinedHeader =
+        new(@"^\s*(joined|in[- ]meeting)\s*\(\d+\)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The list scrolls: the "Waiting room (n)" header can be out of view (and out of the UIA tree)
+    /// while the people waiting still show above "Joined (n)". Everyone above the Joined header is
+    /// then in the waiting room, and is admitted like any other waiting row.
+    /// </summary>
+    private bool TryAdmitAboveJoined(AutomationElement root, CancellationToken cancellationToken)
+    {
+        foreach (var joined in DescendantsAndSelf(root).Where(element => JoinedHeader.IsMatch(NameOf(element))))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var scope = joined.Parent ?? root;
+            double joinedY = RectOf(joined).Y;
+            AutomationElement[] RowsAbove() => [.. Descendants(scope).Where(element =>
+            {
+                var rect = RectOf(element);
+                if (rect.Height <= 0 || rect.Y >= joinedY) return false;
+                var type = element.Properties.ControlType.ValueOrDefault;
+                bool rowType = type == ControlType.ListItem || type == ControlType.DataItem || type == ControlType.TreeItem;
+                return rowType || Descendants(element).Any(IsSupportedRowAction);
+            }).OrderBy(element => RectOf(element).Y)];
+
+            foreach (var row in RowsAbove())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string participant = ParticipantNameOf(row);
+                if (string.IsNullOrWhiteSpace(participant) || JoinedHeader.IsMatch(participant)) continue;
+                TesterLogger.Desktop($"[WAITING_ROOM] Waiting above Joined (header scrolled away): {participant}");
+                if (TryInvokeRowAction(row, "Admit", participant)) return true;
+                RevealRow(row);
+                Thread.Sleep(400);
+                var again = RowsAbove().FirstOrDefault(r => ParticipantNameOf(r).Equals(participant, StringComparison.OrdinalIgnoreCase));
+                if (again != null && TryInvokeRowAction(again, "Admit", participant)) return true;
+            }
+        }
         return false;
     }
 
@@ -249,10 +295,9 @@ internal sealed class DesktopWaitingRoomUiaAdmitter
         {
             if (row.Patterns.ScrollItem.IsSupported)
                 row.Patterns.ScrollItem.Pattern.ScrollIntoView();
+            // Never Focus(): it brings Zoom to the front and takes the keyboard from the user.
             if (row.Patterns.SelectionItem.IsSupported)
                 row.Patterns.SelectionItem.Pattern.Select();
-            else
-                row.Focus();
         }
         catch (Exception ex)
         {
@@ -270,6 +315,7 @@ internal sealed class DesktopWaitingRoomUiaAdmitter
         if (!invoked) return false;
         if (actionName.Equals("Admit", StringComparison.OrdinalIgnoreCase))
         {
+            LastAdmittedName = participant;
             TesterLogger.Desktop($"[WAITING_ROOM] Admit button found: {participant}");
             TesterLogger.Action($"[WAITING_ROOM] Admit invoked successfully: {participant}");
         }

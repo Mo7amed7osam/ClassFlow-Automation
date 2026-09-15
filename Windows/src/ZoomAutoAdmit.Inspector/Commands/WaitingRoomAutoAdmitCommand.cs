@@ -68,6 +68,7 @@ public static class WaitingRoomAutoAdmitCommand
         DateTimeOffset lastInMeetingDebugAt = DateTimeOffset.MinValue;
         DateTimeOffset lastBackgroundProbeAt = DateTimeOffset.MinValue;
         DateTimeOffset lastParticipantsOpenAttemptAt = DateTimeOffset.MinValue;
+        DateTimeOffset lastUiaAttemptAt = DateTimeOffset.MinValue;
         IntPtr lastObservedForegroundHwnd = NativeMethods.GetForegroundWindow();
 
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -100,6 +101,16 @@ public static class WaitingRoomAutoAdmitCommand
                 {
                     ConsoleLogger.Info("ADMITTING_RESUMED");
                     pausedLogged = false;
+                }
+
+                // UI Automation first, every pass: it reads Zoom's own participant rows and presses
+                // their Admit, so it needs no screenshot, no mouse and no focus - it works with Zoom
+                // on another screen or behind the user's work. The screenshot paths below are the
+                // fallback, and they only ever click when the person is away from the mouse.
+                if (DateTimeOffset.UtcNow - lastUiaAttemptAt >= UiaAttemptInterval)
+                {
+                    lastUiaAttemptAt = DateTimeOffset.UtcNow;
+                    if (TryAdmitThroughUia(cancellation.Token)) continue;
                 }
 
                 AutoAdmitScan scan;
@@ -301,11 +312,14 @@ public static class WaitingRoomAutoAdmitCommand
                     if (backgroundActionHandled) continue;
                 }
 
+                // A docked Participants panel has no window of its own, so "no Participants window"
+                // is not "panel closed": ask UI Automation. Only a panel that is really closed is
+                // opened - by Zoom's toolbar button, never by taking the screen from the user.
                 if (ZoomWindowManager.FindParticipantsWindow() == IntPtr.Zero &&
-                    DateTimeOffset.UtcNow - lastParticipantsOpenAttemptAt >= TimeSpan.FromSeconds(5))
+                    DateTimeOffset.UtcNow - lastParticipantsOpenAttemptAt >= TimeSpan.FromSeconds(30))
                 {
                     lastParticipantsOpenAttemptAt = DateTimeOffset.UtcNow;
-                    if (TryOpenParticipantsPanelForMonitoring()) continue;
+                    if (!ZoomParticipantsPanel.IsOpen() && TryOpenParticipantsPanelForMonitoring()) continue;
                 }
 
                 // Level 1 Passive Watch - zero foreground switching
@@ -713,7 +727,7 @@ public static class WaitingRoomAutoAdmitCommand
                 current.Rows.All(row => !row.ParticipantName.Equals(participantName, StringComparison.OrdinalIgnoreCase));
             if (countDecreased || participantDisappeared || !current.HasActiveWaitingParticipants)
             {
-                MeetingAdmissionScope.NotifyVerified();
+                MeetingAdmissionScope.NotifyVerified(participantName, string.IsNullOrWhiteSpace(participantName) ? Math.Max(1, initialCount - count) : 1);
                 ConsoleLogger.Success("[AUTO_ADMIT] ADMISSION_CONFIRMED");
                 return true;
             }
@@ -876,22 +890,55 @@ public static class WaitingRoomAutoAdmitCommand
             .ToArray();
     }
 
+    private static DateTimeOffset _lastAltU = DateTimeOffset.MinValue;
+    private static readonly TimeSpan UiaAttemptInterval = TimeSpan.FromSeconds(1.5);
+
+    /// <summary>Admits whoever is waiting through Zoom's accessibility tree, in every Zoom window.</summary>
+    private static bool TryAdmitThroughUia(CancellationToken token)
+    {
+        // One pass reads the meeting window and every Participants window (the session adds those).
+        IntPtr meeting = ZoomWindowManager.FindMainZoomMeetingWindow();
+        if (meeting == IntPtr.Zero) meeting = ZoomWindowManager.FindActiveZoomWindow();
+        if (meeting == IntPtr.Zero && ZoomWindowManager.FindParticipantsWindow() == IntPtr.Zero) return false;
+        if (!new FlaUiWaitingRoomAdmitExecutor().TryAdmit(meeting, token)) return false;
+        ConsoleLogger.Success("[AUTO_ADMIT] Admitted through UI Automation (no mouse, no focus)");
+        return true;
+    }
+
     private static bool TryOpenParticipantsPanelForMonitoring()
     {
         IntPtr meetingHwnd = ZoomWindowManager.FindMainZoomMeetingWindow();
         if (meetingHwnd == IntPtr.Zero) return false;
+
+        // Zoom's own toolbar button first: no focus, no keys.
+        if (ZoomParticipantsPanel.TryOpenWithoutFocus())
+        {
+            Thread.Sleep(500);
+            if (ZoomParticipantsPanel.IsOpen())
+            {
+                ConsoleLogger.Success("[AUTO_ADMIT] Participants panel opened through UI Automation");
+                return true;
+            }
+        }
+        // Alt+U only rarely, and only while the person is away (the preserver refuses otherwise):
+        // it needs Zoom in front, and it toggles, so it is not repeated against a docked panel.
+        if (DateTimeOffset.UtcNow - _lastAltU < TimeSpan.FromMinutes(3)) return false;
+        _lastAltU = DateTimeOffset.UtcNow;
 
         try
         {
             using var preserver = new ForegroundWindowPreserver(meetingHwnd);
             if (!preserver.ActivateZoomTemporarily()) return false;
             NativeMethods.SendAltKey(0x55); // Zoom's standard Alt+U Participants shortcut.
+            ZoomAutoAdmit.UIAutomation.Input.UserActivity.MarkInjected();
             Thread.Sleep(500);
             IntPtr participants = ZoomWindowManager.FindParticipantsWindow();
             if (participants == IntPtr.Zero)
             {
-                ConsoleLogger.Warn("[AUTO_ADMIT] Alt+U sent but Participants panel was not detected");
-                return false;
+                bool docked = ZoomParticipantsPanel.IsOpen();
+                if (docked) ConsoleLogger.Success("[AUTO_ADMIT] Participants panel opened (docked)");
+                else ConsoleLogger.Warn("[AUTO_ADMIT] Alt+U sent but Participants panel was not detected");
+                return docked;
             }
 
             ConsoleLogger.Success(
@@ -1180,7 +1227,10 @@ public static class WaitingRoomAutoAdmitCommand
                 {
                     handledBatchCache.Forget(current);
                     Console.WriteLine("PANEL_ADMIT_ALL_VERIFIED");
-                    ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
+                    // Admit all let in everyone the panel listed: each is written down by name.
+                    var admittedNames = current.OriginalParticipants.Where(n => !string.IsNullOrWhiteSpace(n)).ToArray();
+                    if (admittedNames.Length == 0) ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified(null, Math.Max(1, current.WaitingCount ?? 1));
+                    foreach (var admitted in admittedNames) ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified(admitted);
                     return;
                 }
             }
@@ -1397,7 +1447,7 @@ public static class WaitingRoomAutoAdmitCommand
         if (result.Verified)
         {
             Console.WriteLine("PANEL_ADMIT_VERIFIED");
-            ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
+            ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified(originalRow.ParticipantName);
             Console.WriteLine($"Participant: {originalRow.ParticipantName}");
             Console.WriteLine("Path: ParticipantsPanel");
             return;
@@ -1540,7 +1590,7 @@ public static class WaitingRoomAutoAdmitCommand
                 if (consecutiveMissing >= 2)
                 {
                     Console.WriteLine("ADMIT_VERIFIED");
-                    ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified();
+                    ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified(finalCandidate.ParticipantName ?? finalCandidate.ParticipantNormalizedName);
                     Console.WriteLine($"Participant: {finalCandidate.ParticipantNormalizedName}");
                     return;
                 }

@@ -25,7 +25,8 @@ public sealed class ScheduleTaskRepair(
     Func<CancellationToken, Task<IReadOnlyList<MeetingSchedule>>> listSchedules,
     Func<Guid, CancellationToken, Task<string?>> readTaskTarget,
     Func<MeetingSchedule, CancellationToken, Task> register,
-    Func<string, bool>? programExists = null)
+    Func<string, bool>? programExists = null,
+    Func<Guid, CancellationToken, Task<DateTime?>>? readTaskLaunch = null)
 {
     private readonly Func<string, bool> _exists = programExists ?? File.Exists;
 
@@ -33,7 +34,8 @@ public sealed class ScheduleTaskRepair(
     public static ScheduleTaskRepair For(WindowsMeetingScheduleStore store, WindowsTaskSchedulerService scheduler) =>
         new((token) => store.ListAsync(token),
             (id, token) => scheduler.ReadTaskTargetAsync(id, token),
-            (schedule, token) => scheduler.RegisterTaskAsync(schedule, token));
+            (schedule, token) => scheduler.RegisterTaskAsync(schedule, token),
+            readTaskLaunch: (id, token) => scheduler.ReadTaskLaunchAsync(id, token));
 
     /// <summary>
     /// Whether a schedule's task has to be registered again. Disabled schedules and dated ones
@@ -65,12 +67,16 @@ public sealed class ScheduleTaskRepair(
             checkedCount++;
 
             string? target = await readTaskTarget(schedule.Id, cancellationToken);
-            if (!NeedsRepair(schedule, today, target, _exists)) continue;
+            DateTime? currentLaunch = readTaskLaunch == null ? null : await readTaskLaunch(schedule.Id, cancellationToken);
+            bool wrongTime = currentLaunch.HasValue && HasWrongLaunch(schedule, currentLaunch.Value);
+            if (!NeedsRepair(schedule, today, target, _exists) && !wrongTime) continue;
 
             string when = schedule.OccurrenceDate is { } date
                 ? $"{date:yyyy-MM-dd} {schedule.Time:HH\\:mm}"
                 : $"{schedule.Days} {schedule.Time:HH\\:mm}";
-            string was = string.IsNullOrWhiteSpace(target) ? "no task" : target;
+            string was = wrongTime
+                ? $"at {currentLaunch:yyyy-MM-dd HH:mm} instead of 15 minutes before the scheduled time"
+                : string.IsNullOrWhiteSpace(target) ? "no task" : target;
             if (dryRun)
             {
                 repaired++;
@@ -83,7 +89,9 @@ public sealed class ScheduleTaskRepair(
                 await register(schedule, cancellationToken);
                 // Registered is not the same as fixed: read it back and check the program is there.
                 string? after = await readTaskTarget(schedule.Id, cancellationToken);
-                if (NeedsRepair(schedule, today, after, _exists))
+                DateTime? afterLaunch = readTaskLaunch == null ? null : await readTaskLaunch(schedule.Id, cancellationToken);
+                bool stillWrongTime = afterLaunch.HasValue && HasWrongLaunch(schedule, afterLaunch.Value);
+                if (NeedsRepair(schedule, today, after, _exists) || stillWrongTime)
                 {
                     failed++;
                     details.Add($"still broken after re-registering '{schedule.Name}' ({when}) - it runs {after ?? "no task"}");
@@ -101,5 +109,14 @@ public sealed class ScheduleTaskRepair(
             }
         }
         return new ScheduleRepairResult(checkedCount, repaired, failed, details);
+    }
+
+    private static bool HasWrongLaunch(MeetingSchedule schedule, DateTime launch)
+    {
+        if (schedule.OccurrenceDate is { } occurrence)
+            return launch != schedule.LaunchMoment(occurrence);
+        long ticks = (schedule.Time.ToTimeSpan() - ScheduleTiming.StartLead + TimeSpan.FromDays(1)).Ticks
+            % TimeSpan.TicksPerDay;
+        return TimeOnly.FromDateTime(launch) != TimeOnly.FromTimeSpan(TimeSpan.FromTicks(ticks));
     }
 }

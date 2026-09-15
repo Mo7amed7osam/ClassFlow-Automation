@@ -51,7 +51,7 @@ public class AttendanceLifecycleIntegrationTests
         events.PublishAdmission(context.Session.SessionId);
         await bridge.DrainAsync(context.Session.SessionId);
         await bridge.CaptureManualAsync(context.Session.SessionId);
-        clock.Advance(TimeSpan.FromMinutes(15));
+        clock.Advance(AttendanceLifecycleBridge.DefaultCaptureInterval);     // one scheduled read
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (store.Snapshots.Count < 4) await Task.Delay(10, timeout.Token);
         await events.PublishAsync(context, MeetingLifecycleEventKind.Ending);
@@ -83,11 +83,16 @@ public class AttendanceLifecycleIntegrationTests
             events.PublishAsync(web, MeetingLifecycleEventKind.Active));
         Task desktopTask, webTask;
         using (MeetingAdmissionScope.Begin(desktop.Session.SessionId, events))
-            desktopTask = Task.Run(MeetingAdmissionScope.NotifyVerified);
+            desktopTask = Task.Run(() => MeetingAdmissionScope.NotifyVerified());
         using (MeetingAdmissionScope.Begin(web.Session.SessionId, events))
-            webTask = Task.Run(MeetingAdmissionScope.NotifyVerified);
+            webTask = Task.Run(() => MeetingAdmissionScope.NotifyVerified());
         await Task.WhenAll(desktopTask, webTask);
-        MeetingAdmissionScope.NotifyVerified(); // Outside a session: must not publish.
+        // Outside a session: must not publish (it counts and writes the ledger - kept out of the real ones).
+        string countFolder = AdmissionControl.Folder, ledgerFolder = AdmissionLedger.Folder;
+        string scratch = Path.Combine(Path.GetTempPath(), "zaa-test-" + Guid.NewGuid().ToString("N"));
+        AdmissionControl.Folder = scratch; AdmissionLedger.Folder = Path.Combine(scratch, "Admissions");
+        try { MeetingAdmissionScope.NotifyVerified(); }
+        finally { AdmissionControl.Folder = countFolder; AdmissionLedger.Folder = ledgerFolder; try { Directory.Delete(scratch, true); } catch { } }
         events.PublishAdmission(Guid.NewGuid()); // Unknown session: ignored.
         await Task.WhenAll(bridge.DrainAsync(desktop.Session.SessionId), bridge.DrainAsync(web.Session.SessionId));
         Assert.Equal(4, store.Snapshots.Count);

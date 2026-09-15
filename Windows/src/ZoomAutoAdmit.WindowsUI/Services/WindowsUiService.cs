@@ -42,7 +42,7 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
     {
         if (message.Kind != MeetingLifecycleEventKind.Active) return Task.CompletedTask;
         var session = message.Context.Session;
-        try { MeetingBecameLive?.Invoke(new LiveMeeting(session.AccountId, session.StartTime)); }
+        try { MeetingBecameLive?.Invoke(new LiveMeeting(session.GroupId, session.StartTime)); }
         catch (Exception ex) { WindowsUiRuntimeLog.Write("LMS", $"Meeting-live observer failed: {ex.Message}"); }
         return Task.CompletedTask;
     }
@@ -139,6 +139,9 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
         MeetingSession session;
         try
         {
+            var configured = (await GetAccountsAsync(cancellationToken)).FirstOrDefault(account =>
+                account.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase));
+            string groupId = configured?.GroupName ?? accountId;
             // The orchestration contains synchronous UI Automation and keyboard work (account
             // switch, join checks, mic/camera) that can take tens of seconds. Awaiting it directly
             // resumes every step on the WPF dispatcher thread and freezes the window ("not
@@ -150,7 +153,8 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
                         accountId,
                         DateTimeOffset.UtcNow,
                         SessionId: sessionId,
-                        PreferredEngine: engine),
+                        PreferredEngine: engine,
+                        GroupId: groupId),
                     startCancellation.Token),
                 startCancellation.Token);
         }

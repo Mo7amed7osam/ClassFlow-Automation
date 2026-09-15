@@ -22,13 +22,30 @@ public sealed class ScheduleTaskRepairTests
         public readonly Dictionary<Guid, string?> Tasks = [];
         public readonly HashSet<string> Programs = new(StringComparer.OrdinalIgnoreCase) { NewExe };
         public readonly List<Guid> Registered = [];
+        public readonly Dictionary<Guid, DateTime?> Launches = [];
         public string RegisterWith = NewExe;
 
         public ScheduleTaskRepair Repair(IReadOnlyList<MeetingSchedule> schedules) => new(
             _ => Task.FromResult(schedules),
             (id, _) => Task.FromResult(Tasks.TryGetValue(id, out var target) ? target : null),
             (schedule, _) => { Registered.Add(schedule.Id); Tasks[schedule.Id] = RegisterWith; return Task.CompletedTask; },
-            Programs.Contains);
+            Programs.Contains,
+            (id, _) => Task.FromResult(Launches.TryGetValue(id, out var launch) ? launch : null));
+    }
+
+    [Fact]
+    public async Task AWorkingTaskSavedAtClassTimeIsMovedFifteenMinutesEarlier()
+    {
+        var windows = new FakeWindows();
+        var meeting = Dated("early opening", Today.AddDays(1));
+        windows.Tasks[meeting.Id] = NewExe;
+        windows.Launches[meeting.Id] = meeting.OccurrenceDate!.Value.ToDateTime(meeting.Time);
+
+        var result = await windows.Repair([meeting]).RepairAsync(Today, dryRun: true);
+
+        Assert.Equal(1, result.Repaired);
+        Assert.Empty(windows.Registered);
+        Assert.Contains("instead of", Assert.Single(result.Details));
     }
 
     [Fact]

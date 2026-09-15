@@ -24,6 +24,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ZoomAutoAdmit.CentralAgent\ZoomAutoAdmit.CentralAgent.csproj" />
+    <!-- The attendance files are written by the real collector store, so the uploader is tested
+         against the format it will actually read. -->
+    <ProjectReference Include="..\..\src\ZoomAutoAdmit.Attendance\ZoomAutoAdmit.Attendance.csproj" />
   </ItemGroup>
 
 </Project>

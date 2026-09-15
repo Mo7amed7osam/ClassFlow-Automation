@@ -127,49 +127,52 @@ public class GroupRosterViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task CompiledRosterPageBindsAndDisallowsAlphabeticalGridSorting()
+    public async Task LmsRosterCreatesTheGroupInTheLmsOrder()
     {
-        await Store.CreateAsync("G", "Group");
+        var result = await new LmsRosterImport(Store).SaveAsync("CAI5_AIS4_S9", ["Zulu Omar", "Alpha Ali", "Mona Samir"]);
+        Assert.True(result.Ok);
+        Assert.Equal(3, result.Added);
         var group = Assert.Single(await Store.ListAsync());
-        await Store.AddStudentAsync(group, new("S1", "G", 4, "Zulu", []));
-        var model = Model();
-        await model.RefreshAsync();
-        model.SelectedGroup = model.Groups.Single();
-        model.SelectedStudent = model.Students.Single();
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                var view = new GroupRosterView { DataContext = model, Width = 1000, Height = 600 };
-                view.Measure(new Size(1000, 600));
-                view.Arrange(new Rect(0, 0, 1000, 600));
-                view.UpdateLayout();
-                var children = Descendants(view).ToArray();
-                var grids = children.OfType<DataGrid>().ToArray();
-                Assert.Equal(2, grids.Length);
-                Assert.All(grids, grid => Assert.False(grid.CanUserSortColumns));
-                var name = children.OfType<TextBox>().Single(t => AutomationProperties.GetName(t) == "Group student full name");
-                Assert.Equal("Zulu", name.Text);
-                Assert.False(name.GetBindingExpression(TextBox.TextProperty)!.HasError);
-                Assert.Same(model.MoveUpCommand, children.OfType<Button>().Single(b => Equals(b.Content, "Move up")).Command);
-                completion.TrySetResult();
-            }
-            catch (Exception ex) { completion.TrySetException(ex); }
-        }) { IsBackground = true };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        await completion.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal("CAI5_AIS4_S9", group.GroupId);
+        Assert.Equal(new[] { "Zulu Omar", "Alpha Ali", "Mona Samir" }, group.Students.OrderBy(s => s.Order).Select(s => s.FullName));
     }
 
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    [Fact]
+    public async Task LmsRosterAddsOnlyNewNamesAndKeepsEveryoneElse()
     {
-        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            yield return child;
-            foreach (var nested in Descendants(child)) yield return nested;
-        }
+        await Store.CreateAsync("G", "Group");
+        await Store.AddStudentsAsync(Assert.Single(await Store.ListAsync()),
+        [
+            new("S1", "G", 4, "Mona Samir Adel", []),
+            new("S2", "G", 7, "Kept Here Only", []),
+            new("S3", "G", 9, "Ahmed Alaa ElDin Jaber", []),
+            new("S4", "G", 11, "Omar Tarek Fathy", []),
+        ]);
+
+        // Other case and spacing, a small typo in one word, a longer LMS name: none is added twice.
+        var result = await new LmsRosterImport(Store).SaveAsync("g",
+            ["mona  samir adel", "Ahmed Alaa IeDin Jaber", "Omar Tarek Fathy Hassan", "New Person Name"]);
+
+        Assert.True(result.Ok);
+        Assert.Equal(1, result.Added);
+        Assert.Contains("2 spelled differently", result.Message);
+        Assert.Contains("1 on the roster are not on the LMS list", result.Message);
+        var students = Assert.Single(await Store.ListAsync()).Students.OrderBy(s => s.Order).ToArray();
+        Assert.Equal(new[] { "Mona Samir Adel", "Kept Here Only", "Ahmed Alaa ElDin Jaber", "Omar Tarek Fathy", "New Person Name" }, students.Select(s => s.FullName));
+        Assert.Equal(new[] { 4, 7, 9, 11, 12 }, students.Select(s => s.Order));
+        Assert.Contains("Ahmed Alaa IeDin Jaber", students[2].Aliases);
+        Assert.Empty(students[0].Aliases);
     }
+
+    [Theory]
+    [InlineData("Ahmed Ali Hassan Mahmoud", "Ahmed Ali Hassan Mostafa", false)]   // brothers: the last name differs entirely
+    [InlineData("Ahmed Ali Hassan", "Ahmed Ali", false)]                          // two names are not enough
+    [InlineData("Sara Adel Kamel", "Sarah Adel Kamel", true)]
+    [InlineData("Mohammed Adel Kamel", "Mohamed Adel Kamel", true)]
+    public void SameStudentIsDecidedCarefully(string roster, string lms, bool same)
+    {
+        Assert.Equal(same, LmsRosterImport.IsSameStudent(new("S", "G", 1, roster, []), lms));
+    }
+
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
 }

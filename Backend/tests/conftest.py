@@ -105,7 +105,12 @@ def database_url() -> Iterator[str]:
 async def _truncate(url: str) -> None:
     conn = await asyncpg.connect(url.replace("postgresql+asyncpg://", "postgresql://"))
     try:
-        await conn.execute("TRUNCATE recordings, job_events, jobs, enrollment_tokens, devices RESTART IDENTITY CASCADE")
+        await conn.execute(
+            "TRUNCATE attendance_records, attendance_participants, attendance_snapshots, attendance_sessions, "
+            "student_aliases, students, admin_audit_log, admin_sessions, user_groups, users, groups, recordings, job_events, jobs, "
+            "enrollment_tokens, devices "
+            "RESTART IDENTITY CASCADE"
+        )
     finally:
         await conn.close()
 

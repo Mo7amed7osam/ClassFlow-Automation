@@ -20,11 +20,13 @@ public sealed class LmsFollowUpQueueTests : IDisposable
     {
         var scheduled = await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start);
 
-        Assert.Equal(2, scheduled.Count);
+        Assert.Equal(4, scheduled.Count);
         var upload = scheduled.Single(item => item.Step == LmsFollowUpStep.TakeAttendance);
         var correct = scheduled.Single(item => item.Step == LmsFollowUpStep.CorrectAttendance);
+        var complete = scheduled.Single(item => item.Step == LmsFollowUpStep.CompleteSession);
         Assert.Equal(At(19, 30), upload.DueAt);
         Assert.Equal(At(21, 0), correct.DueAt);
+        Assert.Equal(At(21, 0), complete.DueAt);
     }
 
     [Fact]
@@ -36,7 +38,7 @@ public sealed class LmsFollowUpQueueTests : IDisposable
         var atNineThirty = await Queue.DueAsync(At(19, 45));
         Assert.Equal(LmsFollowUpStep.TakeAttendance, Assert.Single(atNineThirty).Step);
         var later = await Queue.DueAsync(At(21, 30));
-        Assert.Equal(2, later.Count);
+        Assert.Equal(4, later.Count);
         Assert.Equal(LmsFollowUpStep.TakeAttendance, later[0].Step);   // oldest first
     }
 
@@ -47,7 +49,7 @@ public sealed class LmsFollowUpQueueTests : IDisposable
         var again = await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start);
 
         // A meeting reopened, or the app restarted, must not take attendance twice.
-        Assert.Equal(2, again.Count);
+        Assert.Equal(4, again.Count);
     }
 
     [Fact]
@@ -58,7 +60,7 @@ public sealed class LmsFollowUpQueueTests : IDisposable
         // A new queue over the same file is what the app sees after it is restarted.
         var afterRestart = new LmsFollowUpQueue(_path);
         var due = await afterRestart.DueAsync(At(22, 0));
-        Assert.Equal(2, due.Count);
+        Assert.Equal(4, due.Count);
         Assert.All(due, item => Assert.Equal("CAI5_AIS4_S8", item.Group));
     }
 
@@ -103,7 +105,7 @@ public sealed class LmsFollowUpQueueTests : IDisposable
         await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start);
         // Two days later nobody knows what happened in that class any more.
         Assert.Empty(await Queue.DueAsync(At(19, 30).AddDays(2)));
-        Assert.Equal(2, (await Queue.ReadAsync()).Count);
+        Assert.Equal(4, (await Queue.ReadAsync()).Count);
     }
 
     [Fact]
@@ -112,6 +114,6 @@ public sealed class LmsFollowUpQueueTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         File.WriteAllText(_path, "{ this is not json");
         Assert.Empty(await Queue.ReadAsync());
-        Assert.Equal(2, (await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start)).Count);
+        Assert.Equal(4, (await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start)).Count);
     }
 }

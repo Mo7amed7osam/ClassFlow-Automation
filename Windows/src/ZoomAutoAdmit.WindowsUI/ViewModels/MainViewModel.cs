@@ -1,4 +1,4 @@
-using ZoomAutoAdmit.WindowsUI.Infrastructure;
+﻿using ZoomAutoAdmit.WindowsUI.Infrastructure;
 using ZoomAutoAdmit.WindowsUI.Services;
 using ZoomAutoAdmit.Roster;
 using ZoomAutoAdmit.Core.Formatting;
@@ -17,15 +17,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private IReadOnlyList<NavigationItem> _filteredNavigation;
     private DispatcherTimer? _refreshTimer;
     private bool _refreshing, _disposed;
+    private DateTimeOffset _lastLmsFollowUpCheck = DateTimeOffset.MinValue;
 
     /// <summary>Pages in MainWindow's TabControl. A page added there must be reachable from the sidebar.</summary>
-    public const int TabCount = 14;
+    public const int TabCount = 18;
+    public const int DashboardPage = 17;
+    public const int SessionsPage = 15;
+    public const int CentralRecordingsPage = 16;
+    public const int CoordinatorsPage = 5;
 
     /// <summary>Subtitle is what this page is for, in one line, shown under its title.</summary>
     public sealed record NavigationItem(int Index, string Title, string Icon, string Section, string Subtitle = "");
     public IReadOnlyList<NavigationItem> Navigation { get; } = new NavigationItem[]
     {
+        new(17, "Dashboard", "\uE80A", "MAIN", "Who is signed in (admin or coordinator), their LMS account, every session and the coordinators."),
         new(0, "Overview", "\uE80F", "MAIN", "What this workspace is doing right now."),
+        new(15, "Sessions", "\uE8F9", "MAIN", "Every class and where it stands: Zoom, the LMS, attendance, Complete and its record link."),
         new(7, "Meetings", "\uE714", "MAIN", "Sessions running now, and what each one is using."),
         new(12, "AI Engine", "\uE950", "MAIN", "The model behind name matching, and whether it can be reached."),
         new(3, "Schedules", "\uE787", "AUTOMATION", "Meetings that open by themselves at a set date and time."),
@@ -34,10 +41,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         new(13, "Session Roles", "\uE77B", "AUTOMATION", "Who is made co-host when a session of each type starts."),
         new(6, "Groups & Students", "\uE902", "RECORDS", "Your groups, and the students in each one, in roster order."),
         new(8, "Attendance", "\uE9D5", "RECORDS", "Who was seen in a session, checked against your roster."),
+        new(16, "Recordings", "\uE8B2", "RECORDS", "Each class's recording link (Drive, Zoom or missing) and where it stands on the LMS."),
+        new(5, "Coordinators & groups", "\uE7EF", "RECORDS", "Accounts, approvals and which groups each coordinator sees (admin)."),
+        new(14, "Server", "\uE968", "SYSTEM", "The central server this PC runs (or connects to): its port and database."),
         new(2, "Accounts", "\uE77B", "SYSTEM", "The Zoom accounts this computer can host with."),
         new(4, "Logs", "\uE9D9", "SYSTEM", "What the app recorded while it worked, newest first."),
-        new(11, "Settings", "\uE713", "SYSTEM", "Preferences for this window. Nothing here changes a meeting."),
-        new(5, "Legacy students", "\uE8F1", "SYSTEM", "The older single student list, kept so nothing is lost.")
+        new(11, "Settings", "\uE713", "SYSTEM", "Night or day, and where this PC keeps its data. Nothing here changes a meeting.")
     };
 
     private readonly IWindowsUiService _service;
@@ -45,12 +54,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public MainViewModel(IWindowsUiService service, IStudentRosterService? roster = null, IStudentDialogs? studentDialogs = null,
         IGroupRosterService? groups = null, IGroupRosterDialogs? groupDialogs = null,
         IAiCredentialStore? aiCredentials = null, IAiMatchingService? aiService = null,
-        IAttendanceHistoryReader? attendanceHistory = null, IAttendanceDialogs? attendanceDialogs = null)
+        IAttendanceHistoryReader? attendanceHistory = null, IAttendanceDialogs? attendanceDialogs = null,
+        RecordingsDashboardViewModel? recordingsDashboard = null, LmsSessionsViewModel? lmsSessions = null)
     {
         _service = service;
         _filteredNavigation = Navigation;
-        _selectedNavigation = Navigation[0];
+        _selectedNavigation = Navigation.First(n => n.Index == 0);
         Dashboard = new DashboardViewModel(service);
+        RecordingsDashboard = recordingsDashboard ?? new RecordingsDashboardViewModel();
+        LmsSessions = lmsSessions ?? new LmsSessionsViewModel();
+        LmsSessions.Processor = Lms.FollowUpProcessor;
+        Central = new CentralViewModel();
+        // "Check sheet" looks first at what n8n sent the central server from the recordings sheet.
+        LmsSessions.CentralDriveLink = async (group, date, start) =>
+        {
+            if (await Central.Api.EnsureSignedInAsync() == null) throw new InvalidOperationException("not signed in to the dashboard");
+            var page = await Central.Api.RecordingsAsync(group, null, "drive");
+            var match = page.Items
+                .Where(r => r.Date == date.ToString("yyyy-MM-dd") && !string.IsNullOrWhiteSpace(r.DriveLink))
+                .OrderBy(r => TimeOnly.TryParse(r.StartTime, out var at) ? Math.Abs((at - start).TotalMinutes) : 9999)
+                .FirstOrDefault();
+            return (match?.DriveLink, match?.FileName);
+        };
         StartMeeting = new StartMeetingViewModel(service);
         Accounts = new AccountsViewModel(service);
         Schedules = new SchedulesViewModel(service);
@@ -87,6 +112,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public SessionRolesViewModel SessionRoles { get; }
     public DashboardViewModel Dashboard { get; }
+    /// <summary>The central backend's dashboard (recordings, groups, users), and the server this PC may run for it.</summary>
+    public RecordingsDashboardViewModel RecordingsDashboard { get; }
+    /// <summary>Every class and where its Zoom / LMS cycle stands; also the LMS account in use.</summary>
+    public LmsSessionsViewModel LmsSessions { get; }
+    /// <summary>The central server's recordings, accounts and groups, as pages of the app.</summary>
+    public CentralViewModel Central { get; }
     public StartMeetingViewModel StartMeeting { get; }
     public AccountsViewModel Accounts { get; }
     public SchedulesViewModel Schedules { get; }
@@ -243,36 +274,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private async void OnMeetingStarted() => await Dashboard.RefreshAsync();
 
     /// <summary>
-    /// A class is two things: the Zoom meeting, and the session marked as running on the dashboard.
-    /// This runs the second half for every meeting that goes live - the button and the scheduled
-    /// ones that open by themselves - using the meeting's own account and its scheduled time.
+    /// The LMS half of a class (Run Session, and writing down its attendance steps) is done by the
+    /// runtime's LmsMeetingBridge, so a meeting opened by a Windows task gets it too. The window only
+    /// works through the follow-up queue (below) and shows what happened.
     /// </summary>
-    private async void OnMeetingBecameLive(LiveMeeting meeting)
-    {
-        if (!Lms.RunOnMeetingStart || !Lms.HasSavedLogin) return;
-        try
-        {
-            // Through ConsoleLogger, not only the file: the Logs page shows that feed, and a step
-            // that wrote only to a file looked from the window like it had never run at all.
-            ConsoleLogger.Info($"[LMS] Meeting live for {meeting.AccountId}; starting its dashboard session.");
-            await Lms.RunSessionAsync(
-                meeting.AccountId,
-                TimeOnly.FromDateTime(meeting.ScheduledStart.ToLocalTime().DateTime),
-                headed: true);
-            ConsoleLogger.Info($"[LMS] {Lms.Status}");
-        }
-        catch (Exception ex) { ConsoleLogger.Error($"[LMS] Run Session after the meeting started failed: {ex.Message}"); }
-
-        // Attendance is filled in an hour and a half from now and corrected at three hours, long
-        // after this window may have been closed. Writing it down here is what makes that survive.
-        try
-        {
-            var start = meeting.ScheduledStart.ToLocalTime();
-            await Lms.ScheduleFollowUpAsync(
-                meeting.AccountId, DateOnly.FromDateTime(start.Date), TimeOnly.FromDateTime(start.DateTime));
-        }
-        catch (Exception ex) { ConsoleLogger.Error($"[LMS] The attendance follow-up could not be written down: {ex.Message}"); }
-    }
+    private void OnMeetingBecameLive(LiveMeeting meeting) =>
+        ConsoleLogger.Info($"[LMS] Meeting live for {meeting.GroupId} ({meeting.ScheduledStart.ToLocalTime():HH:mm}).");
     private async void RefreshConnectedViews(object? sender, EventArgs e)
     {
         if (_refreshing || _disposed) return;
@@ -283,7 +290,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             await Dashboard.RefreshAsync();
             if (_disposed) return;
             WaitingRoom.Refresh();
-            if (SelectedTabIndex == 8 && AiMatching.IsIdle) await Attendance.RefreshAsync();
+            if (SelectedTabIndex == 9 && AiMatching.IsIdle) await Attendance.RefreshAsync();
+            if (DateTimeOffset.Now - _lastLmsFollowUpCheck >= TimeSpan.FromSeconds(30))
+            {
+                _lastLmsFollowUpCheck = DateTimeOffset.Now;
+                await Lms.ProcessDueFollowUpAsync();
+                if (_disposed) return;
+                await LmsSessions.TickAsync();
+            }
         }
         finally { _refreshing = false; }
     }
@@ -295,7 +309,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     private void PublishAccountsToRoles() =>
-        SessionRoles.SetAvailableAccounts(Accounts.Items.Select(account => account.AccountId));
+        SessionRoles.SetAvailableAccounts(Accounts.Items.Select(account =>
+            string.IsNullOrWhiteSpace(account.GroupName) ? account.AccountId : account.GroupName));
 
     // An account added from Start Meeting is already selected there; the other pages just reload it.
     private async void OnStartMeetingAccountsChanged()
@@ -318,5 +333,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Schedules.Dispose();
         AiMatching.Dispose();
         Attendance.Dispose();
+        RecordingsDashboard.Dispose();
     }
 }

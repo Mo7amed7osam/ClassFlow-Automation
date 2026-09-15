@@ -2,6 +2,7 @@ using System.Windows.Input;
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.WebAutomation.Lms;
 using ZoomAutoAdmit.WindowsUI.Infrastructure;
+using ZoomAutoAdmit.WindowsUI.Services;
 
 namespace ZoomAutoAdmit.WindowsUI.ViewModels;
 
@@ -16,17 +17,19 @@ public sealed class LmsViewModel : ObservableObject
     private readonly ILmsCredentialStore _store;
     private readonly Func<LmsSessionRunner> _runner;
     private readonly LmsFollowUpQueue _followUp;
+    private readonly LmsFollowUpProcessor _followUpProcessor;
     private string _email = string.Empty;
     private string _status = string.Empty;
     private bool _isBusy;
     private bool _runOnStart = true;
 
     public LmsViewModel(ILmsCredentialStore? store = null, Func<LmsSessionRunner>? runner = null,
-        LmsFollowUpQueue? followUp = null)
+        LmsFollowUpQueue? followUp = null, LmsFollowUpProcessor? followUpProcessor = null)
     {
         _store = store ?? new LmsCredentialStore();
         _runner = runner ?? (() => new LmsSessionRunner(_store));
         _followUp = followUp ?? new LmsFollowUpQueue();
+        _followUpProcessor = followUpProcessor ?? new LmsFollowUpProcessor(_followUp, runner: _runner);
         SaveLoginCommand = new RelayCommand(parameter => SaveLogin(parameter as string));
         ForgetLoginCommand = new RelayCommand(_ => ForgetLogin());
         Reload();
@@ -37,11 +40,18 @@ public sealed class LmsViewModel : ObservableObject
     /// Press Run Session on the dashboard whenever a meeting is started from this app. The group
     /// is the meeting's own account, so there is nothing to type and nothing to keep in step.
     /// </summary>
-    public bool RunOnMeetingStart { get => _runOnStart; set => SetProperty(ref _runOnStart, value); }
+    public bool RunOnMeetingStart
+    {
+        get => _runOnStart;
+        set { if (SetProperty(ref _runOnStart, value)) ZoomAutoAdmit.Inspector.Runtime.LmsMeetingBridge.RunOnMeetingStart = value; }
+    }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public bool IsBusy { get => _isBusy; private set => SetProperty(ref _isBusy, value); }
     /// <summary>True once a sign-in is stored; the password itself is never read back into the app.</summary>
     public bool HasSavedLogin { get; private set; }
+
+    /// <summary>The one processor: the Sessions page's buttons go through it, so they never run beside the queue.</summary>
+    public LmsFollowUpProcessor FollowUpProcessor => _followUpProcessor;
 
     public ICommand SaveLoginCommand { get; }
     public ICommand ForgetLoginCommand { get; }
@@ -101,6 +111,15 @@ public sealed class LmsViewModel : ObservableObject
 
     /// <summary>Everything owed and not yet done, for the window to show.</summary>
     public Task<IReadOnlyList<LmsFollowUp>> ReadFollowUpAsync() => _followUp.ReadAsync();
+
+    /// <summary>Runs any durable attendance/completion work that has become due.</summary>
+    public async Task ProcessDueFollowUpAsync(bool dryRun = false, CancellationToken token = default)
+    {
+        if (!HasSavedLogin) return;
+        var messages = await _followUpProcessor.ProcessDueAsync(dryRun: dryRun, token: token);
+        foreach (var message in messages) ConsoleLogger.Info($"[LMS] {message}");
+        if (messages.Count > 0) Status = messages[^1];
+    }
 
     /// <summary>
     /// Presses Run Session for one group, picked out of today's list by the time the class starts.

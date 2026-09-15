@@ -75,22 +75,29 @@ public sealed class ZoomCoHostAssigner : ICoHostAssigner
             var more = row.FindAllDescendants(cf => cf.ByControlType(ControlType.SplitButton))
                 .Concat(row.FindAllDescendants(cf => cf.ByControlType(ControlType.Button)))
                 .FirstOrDefault(element => RowMoreButton.IsMatch(SafeName(element)));
-            if (more == null || !more.Patterns.Invoke.IsSupported)
+            if (more == null)
             { outcome = new(false, "That participant's More menu is not exposed."); return; }
 
+            // "More options for …" is a split button: its main half is the participant's mic
+            // (Mute / Ask to unmute) and only its arrow opens the menu. Invoking it pressed the mic
+            // and muted the instructor, so the menu is only ever opened (Expand), never invoked.
             token.ThrowIfCancellationRequested();
-            more.Patterns.Invoke.Pattern.Invoke();
+            if (!OpenRowMenu(more, out var opened))
+            { outcome = new(false, "That participant's More menu could not be opened without pressing the mic, so nothing was pressed."); return; }
             Thread.Sleep(_menuWait);
 
             var makeCoHost = FindMakeCoHostItem(automation, process.ProcessId);
             if (makeCoHost == null)
             {
-                // Leave Zoom as it was found: invoking the same button again closes the menu.
-                try { more.Patterns.Invoke.Pattern.Invoke(); } catch { }
+                // Leave Zoom as it was found: close the menu that was opened (never press the mic).
+                CloseRowMenu(opened);
                 outcome = new(false, "The \"Make co-host\" item did not appear in the row menu.");
                 return;
             }
             makeCoHost.Patterns.Invoke.Pattern.Invoke();
+            Thread.Sleep(_menuWait);
+            // Zoom asks "Make <name> a co-host" with Confirm / Cancel; only Confirm is pressed.
+            PressCoHostConfirm(automation, process.ProcessId, observedDisplayName);
             Thread.Sleep(_verifyWait);
 
             // Verify from Zoom itself rather than assuming the click worked.
@@ -104,6 +111,56 @@ public sealed class ZoomCoHostAssigner : ICoHostAssigner
         }, uint.MaxValue);
         return outcome;
     }
+
+    /// <summary>
+    /// Opens a row's More menu without its main action. A split button is expanded (its arrow);
+    /// a split button that cannot be expanded is opened through its own arrow/"more" child; a plain
+    /// button (older Zoom) only opens a menu, so it may be invoked. Anything else is left alone.
+    /// </summary>
+    internal static bool OpenRowMenu(AutomationElement more, out AutomationElement opened)
+    {
+        opened = more;
+        try
+        {
+            if (more.Patterns.ExpandCollapse.IsSupported)
+            {
+                more.Patterns.ExpandCollapse.Pattern.Expand();
+                return true;
+            }
+            bool split = more.Properties.ControlType.ValueOrDefault == ControlType.SplitButton;
+            if (split)
+            {
+                var arrow = more.FindAllChildren().FirstOrDefault(child =>
+                {
+                    string name = SafeName(child);
+                    return child.Patterns.ExpandCollapse.IsSupported ||
+                           (name.Length > 0 && !MicAction.IsMatch(name) &&
+                            (name.Contains("more", StringComparison.OrdinalIgnoreCase) || name.Contains("open", StringComparison.OrdinalIgnoreCase)));
+                });
+                if (arrow == null) return false;
+                opened = arrow;
+                if (arrow.Patterns.ExpandCollapse.IsSupported) arrow.Patterns.ExpandCollapse.Pattern.Expand();
+                else if (arrow.Patterns.Invoke.IsSupported) arrow.Patterns.Invoke.Pattern.Invoke();
+                else return false;
+                return true;
+            }
+            if (MicAction.IsMatch(SafeName(more)) || !more.Patterns.Invoke.IsSupported) return false;
+            more.Patterns.Invoke.Pattern.Invoke();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private static void CloseRowMenu(AutomationElement opened)
+    {
+        try
+        {
+            if (opened.Patterns.ExpandCollapse.IsSupported) opened.Patterns.ExpandCollapse.Pattern.Collapse();
+        }
+        catch { }
+    }
+
+    private static readonly Regex MicAction = new(@"\b(mute|unmute|ask to unmute|audio|microphone|mic)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static ZoomProcessCandidate? ResolveMeetingProcess()
     {
@@ -137,8 +194,10 @@ public sealed class ZoomCoHostAssigner : ICoHostAssigner
     /// <summary>Only rows under the Joined header are eligible; a waiting-room row is never assigned a role.</summary>
     private static AutomationElement? FindJoinedRow(AutomationElement list, string displayName)
     {
-        bool joined = true;
-        foreach (var row in list.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem)))
+        var rows = list.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem));
+        // With the list scrolled, waiting people can show above "Joined (n)" without their own header.
+        bool joined = !rows.Any(r => SectionHeader.IsMatch(SafeName(r)) && !WaitingHeader.IsMatch(SafeName(r)));
+        foreach (var row in rows)
         {
             string label = SafeName(row);
             if (label.Length == 0) continue;
@@ -160,6 +219,42 @@ public sealed class ZoomCoHostAssigner : ICoHostAssigner
             .FirstOrDefault(element => MakeCoHostItem.IsMatch(SafeName(element)) &&
                                        element.Patterns.Invoke.IsSupported &&
                                        !element.Properties.IsOffscreen.ValueOrDefault);
+    }
+
+    private static readonly Regex ConfirmButton = new(@"^\s*(confirm|yes|make co-?host)\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// The confirmation Zoom shows after "Make co-host": a small window reading "Make … a co-host"
+    /// with Confirm and Cancel. It is a new window, so the process's windows are read again.
+    /// Waits up to two seconds for it; no dialog (older Zoom) is not a failure.
+    /// </summary>
+    public static bool PressCoHostConfirm(UIA3Automation automation, int processId, string displayName)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                var process = new ZoomProcessDiscovery().FindCandidates(logInfo: false).FirstOrDefault(c => c.ProcessId == processId);
+                if (process == null) return false;
+                foreach (var window in Windows(automation, process))
+                {
+                    var all = window.FindAllDescendants();
+                    bool isCoHostDialog = all.Any(e => SafeName(e).Contains("co-host", StringComparison.OrdinalIgnoreCase) &&
+                                                       SafeName(e).StartsWith("Make", StringComparison.OrdinalIgnoreCase)) ||
+                                          SafeName(window).Contains("co-host", StringComparison.OrdinalIgnoreCase);
+                    if (!isCoHostDialog) continue;
+                    var confirm = all.FirstOrDefault(e => e.Properties.ControlType.ValueOrDefault == ControlType.Button &&
+                                                          ConfirmButton.IsMatch(SafeName(e)) && e.Patterns.Invoke.IsSupported);
+                    if (confirm == null) continue;
+                    confirm.Patterns.Invoke.Pattern.Invoke();
+                    return true;
+                }
+            }
+            catch { }
+            Thread.Sleep(250);
+        }
+        return false;
     }
 
     private static bool AnnouncementConfirms(UIA3Automation automation, ZoomProcessCandidate process, string displayName)

@@ -57,12 +57,12 @@ public sealed class RedesignViewTests
         model.NavigateCommand.Execute("2");
         Assert.Equal("Accounts", model.PageTitle);
         Assert.Equal(2, model.SelectedNavigation!.Index);
-        model.NavigationSearch = "groups";
+        model.NavigationSearch = "groups & students";
         Assert.Equal(6, Assert.Single(model.FilteredNavigation).Index);
         model.SelectedNavigation = model.FilteredNavigation[0];
         Assert.Equal(6, model.SelectedTabIndex);
         model.NavigationSearch = "";
-        Assert.Equal(13, model.FilteredNavigation.Count);
+        Assert.Equal(model.Navigation.Count, model.FilteredNavigation.Count);
         model.NavigateCommand.Execute("99");
         Assert.Equal(6, model.SelectedTabIndex);
     }
@@ -97,11 +97,11 @@ public sealed class RedesignViewTests
                 window.Show();
                 Pump();
                 var tabs = Descendants(window).OfType<TabControl>().Single();
-                Assert.Equal(14, tabs.Items.Count);
+                Assert.Equal(MainViewModel.TabCount, tabs.Items.Count);
                 foreach (bool dark in new[] { true, false })
                 {
                     window.ApplyTheme(dark);
-                    Assert.Equal(dark ? "#FF05080F" : "#FFE6EFFB", ((SolidColorBrush)window.FindResource("CanvasBrush")).Color.ToString());
+                    Assert.Equal(dark ? "#FF0D1017" : "#FFF3F5F9", ((SolidColorBrush)window.FindResource("CanvasBrush")).Color.ToString());
                     for (int page = 0; page < tabs.Items.Count; page++)
                     {
                         model.SelectedTabIndex = page;
@@ -140,14 +140,8 @@ public sealed class RedesignViewTests
                             Pump();
                             Assert.Equal("gpt-5.4-mini", model.AiMatching.Model);
                         }
-                        if (page == 8)
-                        {
-                            Assert.Contains(buttons, b => ReferenceEquals(b.Command, model.Attendance.MatchCommand));
-                            // The page is about a session that was run, so it offers sessions - not
-                            // one row per reading, and no table of raw observed names.
-                            Assert.Contains(Descendants(window).OfType<ComboBox>(), c => ReferenceEquals(c.ItemsSource, model.Attendance.Sessions));
-                            Assert.DoesNotContain(Descendants(window).OfType<DataGrid>(), g => ReferenceEquals(g.ItemsSource, model.Attendance.Participants));
-                        }
+                        // Attendance is the extension's own page, hosted in a WebView2.
+                        if (page == 8) Assert.Single(Descendants(window).OfType<ExtensionAttendanceView>());
                         if (page == 12)
                         {
                             Assert.Contains(buttons, b => ReferenceEquals(b.Command, model.AiMatching.TestSavedCommand));
@@ -156,7 +150,8 @@ public sealed class RedesignViewTests
                             Assert.All(unavailable, b => Assert.False(b.IsEnabled));
                         }
                         if (page == 4) Assert.Contains(buttons, b => ReferenceEquals(b.Command, model.Logs.ClearCommand));
-                        if (page == 6) Assert.Contains(buttons, b => ReferenceEquals(b.Command, model.Roster.MoveUpCommand));
+                        // Groups & Students is a React page (WebSessions/roster.html) in a WebView2.
+                        if (page == 6) Assert.Single(Descendants(window).OfType<RosterWebView>());
                         Assert.False(BindingOperations.GetBindingExpression(tabs, Selector.SelectedIndexProperty)!.HasError);
                         foreach (var element in Descendants(window))
                         {
@@ -242,15 +237,10 @@ public sealed class RedesignViewTests
                 SavePreview(window, "ai-invalid-key.png");
                 Assert.Equal("replacement-ui-key", ai.LastKey);
                 ai.Failure = null;
-                model.SelectedTabIndex = 8;
                 var savedTest = model.AiMatching.TestAndSaveAsync(null);
                 Assert.True(savedTest.IsCompletedSuccessfully); // This test adapter completes synchronously.
                 model.AiMatching.AllowExternalMatching = true;
                 Pump();
-                Descendants(window).OfType<Button>().Single(b => ReferenceEquals(b.Command, model.Attendance.MatchCommand)).Command.Execute(null);
-                Pump();
-                Assert.Single(model.Attendance.Results);
-                SavePreview(window, "attendance-connected.png");
                 // Exercise provider switching through the actual WPF picker, not only the ViewModel.
                 window.Width = 1440; window.Height = 900;
                 model.SelectedTabIndex = 9;

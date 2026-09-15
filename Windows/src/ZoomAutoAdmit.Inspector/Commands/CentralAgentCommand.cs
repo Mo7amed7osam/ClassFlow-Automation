@@ -111,6 +111,11 @@ public static class CentralAgentCommand
             using var stop = new CancellationTokenSource();
             ConsoleCancelEventHandler onCancel = (_, e) => { e.Cancel = true; stop.Cancel(); };
             Console.CancelKeyPress += onCancel;
+            // The attendance this PC takes in meetings goes to the backend too, next to the jobs.
+            using var uploads = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
+            using var attendanceHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            var uploading = new AttendanceUploader(settings.BackendUrl, new CredentialManagerDeviceTokenStore(), attendanceHttp,
+                log: RecordingWorkflow.ToConsole).RunAsync(uploads.Token);
             try
             {
                 ConsoleLogger.Info($"[AGENT] Connecting to {settings.BackendUrl.Host} as {identity.Name}. Press Ctrl+C to stop.");
@@ -122,7 +127,12 @@ public static class CentralAgentCommand
                     _ => 3,
                 };
             }
-            finally { Console.CancelKeyPress -= onCancel; }
+            finally
+            {
+                Console.CancelKeyPress -= onCancel;
+                uploads.Cancel();
+                await uploading;     // ends at once when cancelled; a file half-sent is sent again next time
+            }
         }
         finally
         {

@@ -202,7 +202,8 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
                 days,
                 Enabled,
                 existing?.LastTriggeredDate,
-                OccurrenceDate.HasValue ? DateOnly.FromDateTime(OccurrenceDate.Value) : null));
+                OccurrenceDate.HasValue ? DateOnly.FromDateTime(OccurrenceDate.Value) : null,
+                SelectedAccount.GroupName ?? SelectedAccount.AccountId));
             _editingId = id;
             await RefreshAsync();
             StatusMessage = "Done — schedule saved.";
@@ -245,7 +246,8 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(ImportSelectionSummary));
             ImportStatus = $"{preview.GroupCode}: {ImportRows.Count} rows; {ImportRows.Count(r => r.CanImport)} online (all selected); {ImportRows.Count(r => !r.CanImport)} excluded. Untick anything you do not want, choose the account and meeting URL, then confirm. Past dates will be skipped.";
             // Exact ID only, never display-name or menu-position matching.
-            var mapped = Accounts.FirstOrDefault(a => a.AccountId.Equals(preview.GroupCode, StringComparison.OrdinalIgnoreCase));
+            var mapped = Accounts.FirstOrDefault(a =>
+                (a.GroupName ?? a.AccountId).Equals(preview.GroupCode, StringComparison.OrdinalIgnoreCase));
             if (mapped != null) ImportAccount = mapped;
         }
         catch (Exception ex) { ImportStatus = "Import preview failed: " + ex.Message; }
@@ -261,6 +263,9 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
         {
             if (ImportAccount == null) throw new InvalidOperationException("Select the target account first.");
             string accountId = ImportAccount.AccountId;
+            string accountGroup = ImportAccount.GroupName ?? ImportAccount.AccountId;
+            if (!accountGroup.Equals(_importGroup, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"The selected profile belongs to {accountGroup}, not {_importGroup}.");
             bool enableImported = EnableImported;
             string url = ZoomAutoAdmit.WebAutomation.ZoomWebMeetingController.ValidateMeetingUrl(ImportMeetingUrl.Trim()).AbsoluteUri;
             var now = localNow ?? DateTime.Now;
@@ -274,7 +279,7 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
                 { skipped++; continue; }
                 ImportStatus = $"Saving exact-date schedules… {saved} saved.";
                 var schedule = new MeetingSchedule(Guid.NewGuid(), $"{_importGroup} • {row.SessionNumber} • {row.Topic}", url,
-                    accountId, row.StartTime.Value, ScheduleDays.None, enableImported, OccurrenceDate: row.Date);
+                    accountId, row.StartTime.Value, ScheduleDays.None, enableImported, OccurrenceDate: row.Date, GroupName: _importGroup);
                 await _service.SaveScheduleAsync(schedule);
                 existing.Add(schedule); saved++;
             }

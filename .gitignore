@@ -25,3 +25,9 @@ TestResults/
 diagnostics/
 # A local copy kept while switching branches; not part of the project.
 _local-before-branch-restore/
+
+# Local secrets: API keys, key hashes and database URLs. Never committed.
+api.env
+api_key.env
+*.env
+.env

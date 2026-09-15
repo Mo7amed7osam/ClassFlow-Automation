@@ -64,7 +64,11 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
 
         try
         {
-            string timeString = schedule.Time.ToString("HH:mm");
+            bool launchesPreviousDay = schedule.Time.ToTimeSpan() < ScheduleTiming.StartLead;
+            long triggerTicks = (schedule.Time.ToTimeSpan() - ScheduleTiming.StartLead + TimeSpan.FromDays(1)).Ticks
+                % TimeSpan.TicksPerDay;
+            TimeOnly triggerTime = TimeOnly.FromTimeSpan(TimeSpan.FromTicks(triggerTicks));
+            string timeString = triggerTime.ToString("HH:mm");
             string exePath = ResolveInspectorExecutablePath();
             string launcherPath = LauncherScriptPath(schedule.Id);
             string launcherDir = Path.GetDirectoryName(launcherPath)!;
@@ -84,13 +88,14 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
             else
             {
                 var daysList = new List<string>();
-                if (schedule.Days.HasFlag(ScheduleDays.Monday)) daysList.Add("MON");
-                if (schedule.Days.HasFlag(ScheduleDays.Tuesday)) daysList.Add("TUE");
-                if (schedule.Days.HasFlag(ScheduleDays.Wednesday)) daysList.Add("WED");
-                if (schedule.Days.HasFlag(ScheduleDays.Thursday)) daysList.Add("THU");
-                if (schedule.Days.HasFlag(ScheduleDays.Friday)) daysList.Add("FRI");
-                if (schedule.Days.HasFlag(ScheduleDays.Saturday)) daysList.Add("SAT");
-                if (schedule.Days.HasFlag(ScheduleDays.Sunday)) daysList.Add("SUN");
+                var triggerDays = launchesPreviousDay ? PreviousDays(schedule.Days) : schedule.Days;
+                if (triggerDays.HasFlag(ScheduleDays.Monday)) daysList.Add("MON");
+                if (triggerDays.HasFlag(ScheduleDays.Tuesday)) daysList.Add("TUE");
+                if (triggerDays.HasFlag(ScheduleDays.Wednesday)) daysList.Add("WED");
+                if (triggerDays.HasFlag(ScheduleDays.Thursday)) daysList.Add("THU");
+                if (triggerDays.HasFlag(ScheduleDays.Friday)) daysList.Add("FRI");
+                if (triggerDays.HasFlag(ScheduleDays.Saturday)) daysList.Add("SAT");
+                if (triggerDays.HasFlag(ScheduleDays.Sunday)) daysList.Add("SUN");
 
                 if (daysList.Count == 0) daysList.Add("MON");
 
@@ -116,6 +121,20 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
         {
             WindowsSchedulerLog.Write("ERROR", $"Exception while registering task '{taskName}': {ex.Message}");
         }
+    }
+
+    /// <summary>Session weekdays shifted to the preceding trigger day for classes before 00:15.</summary>
+    internal static ScheduleDays PreviousDays(ScheduleDays days)
+    {
+        ScheduleDays result = ScheduleDays.None;
+        if (days.HasFlag(ScheduleDays.Monday)) result |= ScheduleDays.Sunday;
+        if (days.HasFlag(ScheduleDays.Tuesday)) result |= ScheduleDays.Monday;
+        if (days.HasFlag(ScheduleDays.Wednesday)) result |= ScheduleDays.Tuesday;
+        if (days.HasFlag(ScheduleDays.Thursday)) result |= ScheduleDays.Wednesday;
+        if (days.HasFlag(ScheduleDays.Friday)) result |= ScheduleDays.Thursday;
+        if (days.HasFlag(ScheduleDays.Saturday)) result |= ScheduleDays.Friday;
+        if (days.HasFlag(ScheduleDays.Sunday)) result |= ScheduleDays.Saturday;
+        return result;
     }
 
     public async Task DeleteTaskAsync(Guid scheduleId, CancellationToken cancellationToken = default)
@@ -155,6 +174,22 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
             $"/Query /TN \"{TaskName(scheduleId)}\" /XML", cancellationToken);
         if (exitCode != 0 || string.IsNullOrWhiteSpace(stdout)) return null;
         return ExtractTaskTarget(stdout, path => File.Exists(path) ? File.ReadAllText(path) : null);
+    }
+
+    /// <summary>The task trigger's local start boundary, used to repair old tasks saved at class time.</summary>
+    public async Task<DateTime?> ReadTaskLaunchAsync(Guid scheduleId, CancellationToken cancellationToken = default)
+    {
+        var (exitCode, stdout, _) = await RunSchtasksAsync(
+            $"/Query /TN \"{TaskName(scheduleId)}\" /XML", cancellationToken);
+        if (exitCode != 0 || string.IsNullOrWhiteSpace(stdout)) return null;
+        try
+        {
+            XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+            var value = XDocument.Parse(stdout.TrimStart('\uFEFF')).Descendants(ns + "StartBoundary").FirstOrDefault()?.Value;
+            return DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var launch)
+                ? launch : null;
+        }
+        catch (System.Xml.XmlException) { return null; }
     }
 
     /// <summary>
@@ -217,7 +252,7 @@ public sealed class WindowsTaskSchedulerService : IWindowsTaskScheduler
         var isDll = executablePath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
         var task = new XElement(ns + "Task", new XAttribute("version", "1.2"),
             new XElement(ns + "Triggers", new XElement(ns + "TimeTrigger",
-                new XElement(ns + "StartBoundary", schedule.OccurrenceDate.Value.ToDateTime(schedule.Time).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)),
+                new XElement(ns + "StartBoundary", schedule.LaunchMoment(schedule.OccurrenceDate.Value).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)),
                 new XElement(ns + "Enabled", "true"))),
             new XElement(ns + "Principals", new XElement(ns + "Principal", new XAttribute("id", "Author"),
                 new XElement(ns + "UserId", WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("Windows user identity is unavailable.")),

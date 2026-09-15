@@ -45,6 +45,7 @@ development).
 | Windows Credential Manager `ZoomAutoAdmit/Central/DeviceToken` | The device token, for this Windows account only, like the LMS sign-in. |
 | `%LOCALAPPDATA%\ZoomAutoAdmit\Central\jobs.json` | Job journal: ids and states of the last 500 jobs, the final result of each, and the job messages the backend has not yet acknowledged. Never a payload, link or token. |
 | `%LOCALAPPDATA%\ZoomAutoAdmit\Logs\central-agent.log` | The log (rolls over at 5 MB). |
+| `%LOCALAPPDATA%\ZoomAutoAdmit\Central\attendance-uploads.json` | Which attendance files were sent (or refused for good), by file name. No names, links or tokens. |
 
 To register again (for example after the device was revoked), get a new enrollment token and run
 `agent-register` again. The installation id, and so the device, stays the same.
@@ -80,9 +81,23 @@ To register again (for example after the device was revoked), get a new enrollme
   | Busy | `job.failed {code:"busy", retryable:true, retryAfterSeconds:60}` |
   | LMS failure | `job.failed {code:<reason>}` |
 
+* **Attendance:** `agent-run` also sends the attendance the app takes in meetings
+  (`AttendanceUploader`). It reads the files the attendance collector writes to
+  `%LOCALAPPDATA%\ZoomAutoAdmit\Attendance\<session>\` every 30 s and posts each, oldest first, to
+  `POST /api/v1/attendance/snapshots` with the device token:
+  * the session's reference is the Windows session id; the group is the meeting's account id (the
+    LMS group code); the date and start time are the meeting's start in Cairo time;
+  * a failed read at the end of a meeting (`.issue`) still tells the backend the meeting ended, with
+    no names, so nobody is taken to have left early;
+  * while the backend is away (or refuses the token, or predates attendance) the files wait and go
+    later, in order; a file the backend will never take (`400`/`409`/`422`, or no usable group) is
+    skipped and logged; files older than 30 days are left alone;
+  * the meeting never waits for any of this: the collector only writes files.
 * **Logs:** lines like `[AGENT] event=job_started jobId=… jobType=recording.process`. The events are
   `connecting`, `connected`, `welcome`, `heartbeat`, `job_received`, `job_started`, `job_succeeded`,
-  `job_failed`, `duplicate_job`, `disconnected`, `reconnect_scheduled` and `unauthorized`. The
+  `job_failed`, `duplicate_job`, `disconnected`, `reconnect_scheduled`, `unauthorized`, and for
+  attendance `attendance_uploaded`, `attendance_upload_waiting`, `attendance_upload_resumed` and
+  `attendance_refused` (never a participant's name). The
   recording step adds its usual `[RECORDINGS]`/`[LMS]` lines. There is never a token, key, cookie,
   password, profile path or full Drive link.
 

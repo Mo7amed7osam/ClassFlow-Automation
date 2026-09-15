@@ -18,10 +18,13 @@ public interface IWaitingRoomUiaSession
 public sealed class WaitingRoomUiaAdmitFlow
 {
     private readonly Action<TimeSpan> _wait;
+    private readonly Action<string> _admitted;
 
-    public WaitingRoomUiaAdmitFlow(Action<TimeSpan>? wait = null)
+    /// <param name="admitted">Told each name let in; by default it is counted and written down.</param>
+    public WaitingRoomUiaAdmitFlow(Action<TimeSpan>? wait = null, Action<string>? admitted = null)
     {
         _wait = wait ?? (delay => Thread.Sleep(delay));
+        _admitted = admitted ?? (wait == null ? name => ZoomAutoAdmit.Core.Meetings.MeetingAdmissionScope.NotifyVerified(name) : _ => { });
     }
 
     public bool TryAdmitWaitingParticipants(
@@ -73,13 +76,15 @@ public sealed class WaitingRoomUiaAdmitFlow
         return admittedAny;
     }
 
-    private static bool TryInvokeAdmit(
+    private bool TryInvokeAdmit(
         IWaitingRoomUiaSession session,
         WaitingRoomUiaParticipant participant)
     {
         if (!session.TryInvokeRowAction(participant, "Admit")) return false;
         ConsoleLogger.Info($"[WAITING_ROOM] Admit button found: {participant.DisplayName}");
         ConsoleLogger.Success($"[WAITING_ROOM] Admit invoked successfully: {participant.DisplayName}");
+        // Counted, and written down by name (the waiting room and attendance pages list it).
+        _admitted(participant.DisplayName);
         return true;
     }
 

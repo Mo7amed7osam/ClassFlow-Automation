@@ -30,7 +30,7 @@ public sealed record UiActionStatus(
     DateTimeOffset UpdatedAt);
 
 /// <summary>A meeting that has just gone live, however it was started.</summary>
-public sealed record LiveMeeting(string AccountId, DateTimeOffset ScheduledStart);
+public sealed record LiveMeeting(string GroupId, DateTimeOffset ScheduledStart);
 
 public interface IWindowsUiService
 {

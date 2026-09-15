@@ -80,7 +80,9 @@ public sealed class WindowsMeetingScheduler : IAsyncDisposable
                         new ScheduledMeeting(
                             new Uri(schedule.MeetingUrl),
                             schedule.AccountId,
-                            now),
+                            now,
+                            GroupId: string.IsNullOrWhiteSpace(schedule.GroupName) ? schedule.AccountId : schedule.GroupName,
+                            ScheduledStartTime: new DateTimeOffset(claimed.ToDateTime(schedule.Time), now.Offset)),
                         cancellationToken);
                     if (session.State != MeetingState.Failed)
                     {

@@ -49,10 +49,20 @@ public static class MeetingAdmissionScope
         return new Scope(() => Current.Value = previous);
     }
 
-    public static void NotifyVerified()
+    /// <param name="name">Who was let in, when the monitor read it.</param>
+    /// <param name="people">How many one action let in (Admit all).</param>
+    public static void NotifyVerified(string? name = null, int people = 1)
     {
         var binding = Current.Value;
-        binding?.Events.PublishAdmission(binding.SessionId);
+        // The standalone monitor admits outside any app session: today's count still goes up, and
+        // who was let in is written down by name (the app's own detector writes its own).
+        if (binding == null)
+        {
+            AdmissionControl.RecordAdmission();
+            AdmissionLedger.Record(name, "desktop", people);
+            return;
+        }
+        binding.Events.PublishAdmission(binding.SessionId);
     }
 
     public static Task NotifyMonitorStoppedAsync()

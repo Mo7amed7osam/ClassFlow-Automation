@@ -13,6 +13,8 @@ public interface IGroupRosterService
     Task RenameAsync(RosterGroup expected, string displayName, CancellationToken token = default);
     Task DeleteAsync(RosterGroup expected, CancellationToken token = default);
     Task AddStudentAsync(RosterGroup expected, GroupStudent student, CancellationToken token = default);
+    /// <summary>Several students in one save (a roster read from the LMS).</summary>
+    Task AddStudentsAsync(RosterGroup expected, IReadOnlyList<GroupStudent> students, CancellationToken token = default);
     Task UpdateStudentAsync(RosterGroup expected, GroupStudent student, CancellationToken token = default);
     Task DeleteStudentAsync(RosterGroup expected, string studentId, CancellationToken token = default);
     Task ReorderAsync(RosterGroup expected, IReadOnlyList<string> orderedStudentIds, CancellationToken token = default);

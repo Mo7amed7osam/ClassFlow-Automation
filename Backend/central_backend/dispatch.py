@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from .config import Settings
 from .connections import ConnectionRegistry
 from .jobs import add_event, requeue
+from .recording_jobs import record_job_outcome
 from .models import ACTIVE_JOB_STATUSES, Device, Job
 from .observability import emit
 from .validation import JOB_TYPES
@@ -217,6 +218,7 @@ class Sweeper:
                 }
                 add_event(session, job.id, "agent_lost", now, device.id)
                 emit("job.failed", level=logging.WARNING, jobId=str(job.id), deviceId=str(device.id), code="agentLost")
+                await record_job_outcome(session, job, now)
                 counts["lost"] += 1
 
         for device_id in silent:

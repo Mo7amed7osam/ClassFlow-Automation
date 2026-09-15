@@ -7,7 +7,9 @@ public sealed record ScheduledMeeting(
     string AccountId,
     DateTimeOffset StartTime,
     Guid? SessionId = null,
-    SessionEngineType? PreferredEngine = null);
+    SessionEngineType? PreferredEngine = null,
+    string? GroupId = null,
+    DateTimeOffset? ScheduledStartTime = null);
 
 public sealed class MeetingSession
 {
@@ -22,7 +24,8 @@ public sealed class MeetingSession
         SessionId = sessionId;
         MeetingUrl = meeting.MeetingUrl;
         AccountId = meeting.AccountId;
-        StartTime = meeting.StartTime;
+        GroupId = string.IsNullOrWhiteSpace(meeting.GroupId) ? meeting.AccountId : meeting.GroupId.Trim();
+        StartTime = meeting.ScheduledStartTime ?? meeting.StartTime;
         CreatedAt = createdAt;
         _state = MeetingState.Scheduled;
         _history = [new(MeetingState.Scheduled, createdAt, "Session created.")];
@@ -31,6 +34,7 @@ public sealed class MeetingSession
     public Guid SessionId { get; }
     public Uri MeetingUrl { get; }
     public string AccountId { get; }
+    public string GroupId { get; }
     public DateTimeOffset StartTime { get; }
     public DateTimeOffset CreatedAt { get; }
 

@@ -77,6 +77,33 @@ internal sealed class FlaUiWaitingRoomSession : IWaitingRoomUiaSession, IDisposa
             }
         }
 
+        // Scrolled, the list can show waiting people above "Joined (n)" with their own header out of
+        // view: rows before the Joined header are the waiting room. Only a row's own Admit is ever
+        // pressed, which a joined row does not have.
+        if (result.Count == 0)
+        {
+            foreach (var root in GetRoots())
+            {
+                foreach (var list in FindDescendants(root).Where(e => e.Properties.ControlType.ValueOrDefault == ControlType.List))
+                {
+                    AutomationElement[] items;
+                    try { items = list.FindAllChildren(); } catch { continue; }
+                    if (!items.Any(i => GetName(i).StartsWith("Joined", StringComparison.OrdinalIgnoreCase))) continue;
+                    foreach (var item in items)
+                    {
+                        string label = GetName(item);
+                        if (label.StartsWith("Joined", StringComparison.OrdinalIgnoreCase)) break;
+                        string name = ExtractParticipantName(item);
+                        if (string.IsNullOrWhiteSpace(name)) continue;
+                        string key = BuildKey(item, name, result.Count);
+                        if (_rows.ContainsKey(key)) continue;
+                        _rows[key] = item;
+                        result.Add(new WaitingRoomUiaParticipant(key, name));
+                    }
+                }
+            }
+        }
+
         return result;
     }
 
@@ -88,13 +115,11 @@ internal sealed class FlaUiWaitingRoomSession : IWaitingRoomUiaSession, IDisposa
             if (row.Patterns.ScrollItem.IsSupported)
                 row.Patterns.ScrollItem.Pattern.ScrollIntoView();
 
-            // UI Automation has no pointer-hover primitive. Focusing the row is the safe,
-            // coordinate-free accessibility equivalent Zoom exposes for revealing actions.
-            // It does not invoke/click the participant row and does not move the cursor.
+            // UI Automation has no pointer-hover primitive. Selecting the row is the coordinate-free
+            // equivalent Zoom exposes for revealing its actions. Keyboard focus is never set: that
+            // would bring Zoom to the front and take the keyboard from whatever the user is typing in.
             if (row.Patterns.SelectionItem.IsSupported)
                 row.Patterns.SelectionItem.Pattern.Select();
-            else
-                row.Focus();
             return true;
         }
         catch (Exception ex)

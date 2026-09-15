@@ -52,6 +52,7 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
         Assert.Equal(0, second);
         Assert.Single(runner.Meetings);
         Assert.Equal("teacher-1", runner.Meetings[0].AccountId);
+        Assert.Equal("teacher-1", runner.Meetings[0].GroupId);
     }
 
     [Fact]
@@ -98,10 +99,37 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
     {
         var schedule = Schedule(true, ScheduleDays.None, new TimeOnly(19, 0)) with { OccurrenceDate = new DateOnly(2026, 9, 14) };
         var xml = WindowsTaskSchedulerService.BuildOneTimeTaskXml(schedule, @"C:\Some Folder\ZoomAutoAdmit.Inspector.exe");
-        Assert.Contains("2026-09-14T19:00:00", xml);
+        Assert.Contains("2026-09-14T18:45:00", xml);
         Assert.Contains("TimeTrigger", xml); Assert.DoesNotContain("CalendarTrigger", xml);
         Assert.Contains("InteractiveToken", xml); Assert.Contains(schedule.Id.ToString(), xml);
         Assert.DoesNotContain("WEEKLY", xml);
+    }
+
+    [Fact]
+    public async Task EarlyLaunchKeepsOfficialSessionTimeAndSeparateGroup()
+    {
+        var date = new DateOnly(2026, 9, 14);
+        var official = new TimeOnly(19, 0);
+        var schedule = Schedule(true, ScheduleDays.None, official) with
+        {
+            OccurrenceDate = date,
+            GroupName = "CAI5_AIS4_S7"
+        };
+        var store = Store();
+        await store.UpsertAsync(schedule);
+        var runner = new FakeScheduledMeetingRunner();
+        await using var scheduler = new WindowsMeetingScheduler(store, runner);
+
+        var launch = new DateTimeOffset(date.ToDateTime(new TimeOnly(18, 45)), DateTimeOffset.Now.Offset);
+        Assert.Equal(1, await scheduler.RunDueAsync(launch));
+
+        var meeting = Assert.Single(runner.Meetings);
+        Assert.Equal("teacher-1", meeting.AccountId);
+        Assert.Equal("CAI5_AIS4_S7", meeting.GroupId);
+        Assert.Equal(new DateTimeOffset(date.ToDateTime(official), launch.Offset), meeting.ScheduledStartTime);
+        var session = new MeetingSession(Guid.NewGuid(), meeting, launch);
+        Assert.Equal("CAI5_AIS4_S7", session.GroupId);
+        Assert.Equal(meeting.ScheduledStartTime, session.StartTime);
     }
 
     private static MeetingSchedule Schedule(

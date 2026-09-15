@@ -44,12 +44,23 @@ public sealed class WindowsRuntimeBootstrapperTests : IDisposable
     public async Task BootstrapWiresAttendanceAndDisposesItBeforeRuntimeShutdown()
     {
         var store = new AttendanceTestStore();
+        // Never the real dashboard or the real follow-up file from a test.
+        var lmsRuns = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var queue = new ZoomAutoAdmit.WebAutomation.Lms.LmsFollowUpQueue(Path.Combine(_root, "Lms", "follow-up.json"));
         var bootstrapper = new WindowsRuntimeBootstrapper(CreateAccountsFile("teacher-1"),
             Path.Combine(_root, "Profiles"), new AlwaysResolvableCredentialReference(),
             SchedulesPath, new NoTaskScheduler(),
-            attendanceSources: _ => new AttendanceTestSource(), attendanceStore: store);
+            attendanceSources: _ => new AttendanceTestSource(), attendanceStore: store,
+            createLmsBridge: e => new LmsMeetingBridge(e,
+                (group, start, day, _) =>
+                {
+                    lmsRuns.Enqueue($"{group} {day:yyyy-MM-dd} {start:HH\\:mm}");
+                    return Task.FromResult(ZoomAutoAdmit.WebAutomation.Lms.LmsRunResult.Success("started"));
+                },
+                queue, hasLogin: () => true, log: _ => { }));
         var meeting = new ZoomAutoAdmit.Core.Meetings.ScheduledMeeting(
-            new Uri("https://zoom.us/j/12345678901"), "teacher-1", DateTimeOffset.UtcNow);
+            new Uri("https://zoom.us/j/12345678901"), "teacher-1", DateTimeOffset.UtcNow,
+            GroupId: "CAI5_AIS4_S7", ScheduledStartTime: new DateTimeOffset(2026, 9, 15, 19, 0, 0, TimeSpan.FromHours(3)));
         var session = new ZoomAutoAdmit.Core.Meetings.MeetingSession(Guid.NewGuid(), meeting, DateTimeOffset.UtcNow);
         var context = new ZoomAutoAdmit.Core.Meetings.MeetingLaunchContext(session,
             new("teacher-1", "Teacher", "reference"), SessionEngineType.Desktop, null);
@@ -57,9 +68,14 @@ public sealed class WindowsRuntimeBootstrapperTests : IDisposable
             ZoomAutoAdmit.Core.Meetings.MeetingLifecycleEventKind.Active);
         bootstrapper.LifecycleEvents.PublishAdmission(session.SessionId);
         await bootstrapper.Attendance.CaptureManualAsync(session.SessionId);
+        await bootstrapper.Lms.DrainAsync();
         await bootstrapper.DisposeAsync();
         Assert.Equal(new[] { "MeetingStart", "AdmitEvent", "Manual", "MeetingEnd" },
             store.Snapshots.Select(snapshot => snapshot.Reason));
+        // The LMS half of the class, however it was started: Run Session for the meeting's group
+        // at its scheduled time, and the three follow-up steps written down.
+        Assert.Equal(new[] { $"CAI5_AIS4_S7 2026-09-15 {new DateTimeOffset(2026, 9, 15, 19, 0, 0, TimeSpan.FromHours(3)).ToLocalTime():HH\\:mm}" }, lmsRuns);
+        Assert.Equal(4, (await queue.ReadAsync()).Count);        // attendance, late pass, Complete, Zoom recording
     }
 
     private sealed class AttendanceTestSource : ZoomAutoAdmit.Attendance.IAttendanceParticipantSource

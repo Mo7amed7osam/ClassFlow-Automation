@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#2A3878"/>
+      <stop offset="0.55" stop-color="#141C4A"/>
+      <stop offset="1" stop-color="#0A0E2A"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.62" r="0.55">
+      <stop offset="0" stop-color="#F2FCFF" stop-opacity="0.95"/>
+      <stop offset="0.38" stop-color="#38BDF8" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#2563EB" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gateL" x1="0" y1="0" x2="1" y2="0.2">
+      <stop offset="0" stop-color="#1E3A8A"/>
+      <stop offset="1" stop-color="#4F93F7"/>
+    </linearGradient>
+    <linearGradient id="gateR" x1="1" y1="0" x2="0" y2="0.2">
+      <stop offset="0" stop-color="#1E3A8A"/>
+      <stop offset="1" stop-color="#4F93F7"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#BFF0FF" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#3B82F6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8FB6FF" stop-opacity="0.55"/>
+      <stop offset="0.5" stop-color="#8FB6FF" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#8FB6FF" stop-opacity="0.18"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="120" height="120" rx="30" fill="url(#bg)"/>
+
+  <path d="M28 60 A36 36 0 0 1 100 60" fill="none" stroke="#38BDF8" stroke-opacity="0.55" stroke-width="2"/>
+  <circle cx="64" cy="24" r="3.5" fill="#7DE3FF"/>
+  <circle cx="29" cy="59" r="3" fill="#7DE3FF" fill-opacity="0.9"/>
+  <circle cx="99" cy="59" r="3" fill="#7DE3FF" fill-opacity="0.9"/>
+
+  <ellipse cx="64" cy="78" rx="33" ry="38" fill="url(#glow)"/>
+  <path d="M55 74 L73 74 L80 112 L48 112 Z" fill="url(#beam)"/>
+
+  <path d="M24 38 L46 48 L46 104 L24 114 Z" fill="url(#gateL)"/>
+  <path d="M104 38 L82 48 L82 104 L104 114 Z" fill="url(#gateR)"/>
+  <path d="M46 48 L46 104" stroke="#9CC6FF" stroke-opacity="0.7" stroke-width="2"/>
+  <path d="M82 48 L82 104" stroke="#9CC6FF" stroke-opacity="0.7" stroke-width="2"/>
+
+  <circle cx="64" cy="58" r="11" fill="#F4FDFF"/>
+  <path d="M50 94 L50 82 a14 14 0 0 1 28 0 L78 94 Z" fill="#F4FDFF"/>
+
+  <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="29.25" fill="none" stroke="url(#rim)" stroke-width="1.5"/>
+</svg>

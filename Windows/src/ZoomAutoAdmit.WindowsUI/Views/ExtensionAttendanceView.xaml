@@ -1,0 +1,10 @@
+<UserControl x:Class="ZoomAutoAdmit.WindowsUI.Views.ExtensionAttendanceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf">
+<!-- The Chrome extension's attendance page itself, inside the app (WebAttendance). -->
+<Border Style="{DynamicResource Card}" Padding="0" ClipToBounds="True"><Grid>
+<wv2:WebView2 x:Name="Browser" AutomationProperties.Name="Attendance"/>
+<TextBlock x:Name="Placeholder" Text="Loading attendance…" HorizontalAlignment="Center" VerticalAlignment="Center" Style="{DynamicResource Muted}"/>
+</Grid></Border>
+</UserControl>

@@ -28,6 +28,9 @@ public sealed class SingleClickExecutor
         _mouseInput = mouseInput;
     }
 
+    /// <summary>How long the person must have left the mouse and keyboard alone before a click.</summary>
+    public static TimeSpan QuietBeforeClick { get; set; } = TimeSpan.FromSeconds(2);
+
     public bool TryClick(int x, int y)
     {
         if (Interlocked.Exchange(ref _clickAttempted, 1) != 0)
@@ -35,7 +38,17 @@ public sealed class SingleClickExecutor
             return false;
         }
 
+        // Never while the person is typing or pointing, and never anywhere but on Zoom: a click
+        // read off a screenshot on another monitor or under another window must not land in
+        // their work. The monitor tries again on its next pass (UI Automation needs neither).
+        if (_mouseInput is WindowsMouseInput)
+        {
+            if (!UserActivity.WaitForQuiet(QuietBeforeClick, TimeSpan.FromSeconds(1.5))) return false;
+            if (!UserActivity.IsZoomAt(x, y)) return false;
+        }
+
         _mouseInput.LeftClickOncePreservingCursor(x, y);
+        UserActivity.MarkInjected();
         return true;
     }
 }
@@ -93,6 +106,9 @@ public sealed class WindowsMouseInput : IMouseInput
 
     public void ScrollWheelPreservingCursor(int x, int y, int wheelDelta)
     {
+        // Scrolling moves the pointer too: only when the person is away, and only over Zoom.
+        if (!UserActivity.WaitForQuiet(SingleClickExecutor.QuietBeforeClick, TimeSpan.FromSeconds(1)) || !UserActivity.IsZoomAt(x, y)) return;
+        UserActivity.MarkInjected();
         bool hasOriginal = GetCursorPos(out var original);
 
         try

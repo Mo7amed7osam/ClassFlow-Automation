@@ -28,7 +28,7 @@ public sealed class ViewModelTests
     }
 
     [Fact]
-    public async Task AccountEditorSavesCredentialReferenceWithoutPasswordField()
+    public async Task AccountEditorSavesGroupAndCredentialReference()
     {
         var service = new FakeWindowsUiService();
         var viewModel = new AccountsViewModel(service)
@@ -36,6 +36,7 @@ public sealed class ViewModelTests
             AccountId = "teacher-2",
             DisplayName = "Teacher Two",
             ZoomEmail = "teacher2@example.com",
+            GroupName = "CAI5_AIS4_S7",
             CredentialReference = "wincred:ZoomAutoAdmit/teacher-2",
             PreferredEngine = EnginePreference.Desktop
         };
@@ -45,8 +46,31 @@ public sealed class ViewModelTests
         var saved = Assert.Single(service.Accounts);
         Assert.Equal("wincred:ZoomAutoAdmit/teacher-2", saved.CredentialReference);
         Assert.Equal("teacher2@example.com", saved.ZoomEmail);
+        Assert.Equal("CAI5_AIS4_S7", saved.GroupName);
         Assert.Equal(AccountEnginePreference.Desktop, saved.PreferredEngine);
-        Assert.Equal("Account saved. Passwords are never stored here.", viewModel.StatusMessage);
+        Assert.Equal("Profile saved. Save a password if this Zoom profile needs one.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task AccountEditorStoresPasswordOutsideMetadataAndSavesOnlyItsReference()
+    {
+        var service = new FakeWindowsUiService();
+        var credentials = new FakeZoomCredentials();
+        var viewModel = new AccountsViewModel(service, credentials)
+        {
+            AccountId = "zoom-s7", DisplayName = "S7 Zoom", GroupName = "CAI5_AIS4_S7",
+            ZoomEmail = "teacher@example.com", DefaultMeetingUrl = "https://zoom.us/j/12345678901"
+        };
+
+        viewModel.SavePassword("test-only-secret");
+        await viewModel.SaveAsync();
+
+        Assert.True(viewModel.HasSavedPassword);
+        Assert.Equal(("zoom-s7", "teacher@example.com", "test-only-secret"), credentials.Saved);
+        var account = Assert.Single(service.Accounts);
+        Assert.Equal("wincred:ZoomAutoAdmit/ZoomProfile/zoom-s7", account.CredentialReference);
+        Assert.Equal("CAI5_AIS4_S7", account.GroupName);
+        Assert.DoesNotContain("test-only-secret", account.ToString());
     }
 
     [Fact]
@@ -147,6 +171,26 @@ public sealed class ViewModelTests
             Assert.Equal(item.Title, model.PageTitle);
             Assert.True(item.Index < MainViewModel.TabCount, $"{item.Title} points past the last page.");
         }
+    }
+
+    [Fact]
+    public void TheRecordingsPageIsInTheSidebar()
+    {
+        var temp = Directory.CreateTempSubdirectory("recordings-page-").FullName;
+        try
+        {
+            var dashboard = new RecordingsDashboardViewModel(
+                new RecordingsDashboardSettingsStore(Path.Combine(temp, "dashboard.json")),
+                new DatabasePasswordStore("ZoomAutoAdmit/Tests/" + Guid.NewGuid()),     // nothing saved there: never a real secret
+                new CentralServerHost(new DatabasePasswordStore("ZoomAutoAdmit/Tests/" + Guid.NewGuid())));
+            using var model = new MainViewModel(new FakeWindowsUiService(), recordingsDashboard: dashboard);
+            var item = Assert.Single(model.Navigation, n => n.Title == "Recordings");
+            Assert.Equal("RECORDS", item.Section);
+            model.NavigateCommand.Execute(item.Index.ToString());
+            Assert.Equal("Recordings", model.PageTitle);
+            Assert.Same(dashboard, model.RecordingsDashboard);
+        }
+        finally { Directory.Delete(temp, recursive: true); }
     }
 
     private static WindowsMeetingAccountMetadata Account(string id) =>
@@ -376,5 +420,14 @@ public sealed class ViewModelTests
             CurrentStatus = status;
             StatusChanged?.Invoke(status);
         }
+    }
+
+    private sealed class FakeZoomCredentials : IZoomProfileCredentialStore
+    {
+        public (string Account, string Email, string Password)? Saved { get; private set; }
+        public bool HasPassword(string accountId) => Saved?.Account == accountId;
+        public string ReferenceFor(string accountId) => $"wincred:ZoomAutoAdmit/ZoomProfile/{accountId}";
+        public void Save(string accountId, string email, string password) => Saved = (accountId, email, password);
+        public void Delete(string accountId) { if (Saved?.Account == accountId) Saved = null; }
     }
 }

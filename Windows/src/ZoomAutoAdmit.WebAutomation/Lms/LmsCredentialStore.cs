@@ -27,13 +27,22 @@ public interface ILmsCredentialStore
 /// copy: the password reaches Zoom Auto Admit only to type it into the LMS login form, and
 /// nothing else ever reads it.
 /// </summary>
-public sealed class LmsCredentialStore(string target = "ZoomAutoAdmit/LMS/Dashboard") : ILmsCredentialStore
+public sealed class LmsCredentialStore(string? target = null) : ILmsCredentialStore
 {
     private const int NotFound = 1168;
     private const int MaximumBlobBytes = 2560;
 
+    /// <summary>Without a target, the account chosen in the app (<see cref="LmsAccountDirectory"/>).</summary>
+    private string Target => target ?? new LmsAccountDirectory().Active().Target;
+
+    /// <summary>The browser profile this sign-in uses, so two accounts never share one LMS session.</summary>
+    public string Profile => target == null
+        ? new LmsAccountDirectory().Active().Profile
+        : new LmsAccountDirectory().List().FirstOrDefault(a => a.Target == target)?.Profile ?? LmsAccountDirectory.LegacyProfile;
+
     public LmsAccount? Read()
     {
+        string target = Target;
         if (!CredRead(target, 1, 0, out var pointer))
         {
             if (Marshal.GetLastWin32Error() == NotFound) return null;
@@ -67,6 +76,7 @@ public sealed class LmsCredentialStore(string target = "ZoomAutoAdmit/LMS/Dashbo
         var bytes = JsonSerializer.SerializeToUtf8Bytes(
             new { email = account.Email.Trim(), password = account.Password });
         if (bytes.Length > MaximumBlobBytes) throw new ArgumentException("The LMS sign-in is too long to store.");
+        string target = Target;
         var handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
         try
         {
@@ -93,7 +103,7 @@ public sealed class LmsCredentialStore(string target = "ZoomAutoAdmit/LMS/Dashbo
 
     public void Delete()
     {
-        if (CredDelete(target, 1, 0)) return;
+        if (CredDelete(Target, 1, 0)) return;
         if (Marshal.GetLastWin32Error() == NotFound) return;
         throw new Win32Exception(
             Marshal.GetLastWin32Error(),

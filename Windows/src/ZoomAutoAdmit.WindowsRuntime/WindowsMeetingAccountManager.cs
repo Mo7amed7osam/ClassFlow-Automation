@@ -20,6 +20,8 @@ public sealed record WindowsMeetingAccountMetadata(
     string CredentialReference,
     AccountEnginePreference? PreferredEngine = AccountEnginePreference.Auto)
 {
+    /// <summary>The LMS/roster group hosted by this Zoom profile. Older profiles use AccountId.</summary>
+    public string? GroupName { get; init; }
     public string? ZoomEmail { get; init; }
     public string? DefaultMeetingUrl { get; init; }
     /// <summary>
@@ -311,11 +313,15 @@ public sealed class WindowsMeetingAccountManager : IMeetingAccountManager
         _ = AccountWebProfile.ForAccount(account.AccountId);
         if (string.IsNullOrWhiteSpace(account.DisplayName))
             throw new ArgumentException("Display name is required.", nameof(account));
+        string groupName = string.IsNullOrWhiteSpace(account.GroupName) ? account.AccountId.Trim() : account.GroupName.Trim();
+        if (!System.Text.RegularExpressions.Regex.IsMatch(groupName, @"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,99}$"))
+            throw new ArgumentException("Group may contain letters, numbers, spaces, underscore, dash and dot (up to 100).", nameof(account));
         string? email = NormalizeZoomEmail(account.ZoomEmail);
         if (email == null && string.IsNullOrWhiteSpace(account.CredentialReference))
             throw new ArgumentException("Zoom email is required (legacy records may use a credential reference).", nameof(account));
         return account with { AccountId = account.AccountId.Trim(), DisplayName = account.DisplayName.Trim(),
-            CredentialReference = account.CredentialReference?.Trim() ?? string.Empty, ZoomEmail = email,
+            CredentialReference = account.CredentialReference?.Trim() ?? string.Empty,
+            GroupName = groupName, ZoomEmail = email,
             DefaultMeetingUrl = NormalizeDefaultMeetingUrl(account.DefaultMeetingUrl),
             WebProfileName = NormalizeWebProfileName(account.WebProfileName) };
     }

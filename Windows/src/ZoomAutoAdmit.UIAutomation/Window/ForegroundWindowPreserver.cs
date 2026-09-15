@@ -30,10 +30,21 @@ public sealed class ForegroundWindowPreserver : IDisposable
     public IntPtr OriginalForegroundHwnd => _originalForegroundHwnd;
     public string OriginalForegroundProcess => _originalForegroundProcess;
 
+    /// <summary>Zoom is only brought to the front when the person has left the computer this long.</summary>
+    public static TimeSpan RequiredIdle { get; set; } = TimeSpan.FromSeconds(20);
+
     public bool ActivateZoomTemporarily()
     {
         if (_zoomHwnd == IntPtr.Zero || !NativeMethods.IsWindow(_zoomHwnd))
         {
+            return false;
+        }
+
+        // Never take the screen from someone who is working: while they type or point, Zoom stays
+        // where it is and the caller tries again later.
+        if (!ZoomAutoAdmit.UIAutomation.Input.UserActivity.IsIdleFor(RequiredIdle))
+        {
+            ConsoleLogger.Info("[FOREGROUND] The user is active; Zoom was not brought to the front.");
             return false;
         }
 
@@ -52,6 +63,13 @@ public sealed class ForegroundWindowPreserver : IDisposable
         _zoomActivated = true;
 
         Thread.Sleep(150); // Allow DWM and Zoom to render
+        // Windows may refuse the switch; then keys meant for Zoom would land in the user's window.
+        var front = NativeMethods.GetForegroundWindow();
+        if (front != _zoomHwnd && !NativeMethods.GetProcessNameSafe(front).Contains("zoom", StringComparison.OrdinalIgnoreCase))
+        {
+            ConsoleLogger.Info("[FOREGROUND] Windows kept another window in front; nothing will be typed.");
+            return false;
+        }
         return true;
     }
 
