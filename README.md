@@ -1,10 +1,10 @@
 <div align="center">
 
-# Zoom Auto Admit
+# ClassFlow Automation
 
-### An autonomous operations platform for live online classes
+### End-to-end automation of the online class lifecycle
 
-**Zoom → Attendance → LMS → Recordings, end to end, with no one at the keyboard.**
+**Zoom → Attendance → LMS → Recordings, one automated flow, with no one at the keyboard.**
 
 ![macOS](https://img.shields.io/badge/macOS-13%2B-111827?style=for-the-badge&logo=apple&logoColor=white)
 ![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white)
@@ -32,9 +32,9 @@ That is **~15 error-prone steps per class, across multiple Zoom accounts, LMS sc
 
 ## The solution
 
-Zoom Auto Admit runs the entire class lifecycle on its own from the macOS menu bar. It drives the **native Zoom app through the Accessibility API** (no screen coordinates, no screenshots), automates the **LMS dashboard with Playwright**, reconciles attendance with a **deterministic + AI name-matching engine**, pulls **Zoom cloud recordings**, syncs **Google Drive links from Google Sheets**, and reports everything on an **operations dashboard** with smart notifications and pre-flight health checks.
+ClassFlow Automation runs the entire class lifecycle on its own from the macOS menu bar. It drives the **native Zoom app through the Accessibility API** (no screen coordinates, no screenshots), automates the **LMS dashboard with Playwright**, reconciles attendance with a **deterministic + AI name-matching engine**, pulls **Zoom cloud recordings**, syncs **Google Drive links from Google Sheets**, and reports everything on an **operations dashboard** with smart notifications and pre-flight health checks.
 
-It is in daily production use for real cohorts.
+It is in daily production use for real cohorts. The macOS app ships as **Zoom Auto Admit** (its original name, kept for the bundle and settings).
 
 <div align="center">
 

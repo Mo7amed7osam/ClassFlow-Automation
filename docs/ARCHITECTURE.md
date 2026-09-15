@@ -2,7 +2,7 @@
 
 ← [Back to README](../README.md) · [Lifecycle](LIFECYCLE.md) · [User guide](USER-GUIDE.md)
 
-Zoom Auto Admit is three cooperating runtimes on one Mac, with no backend server:
+ClassFlow Automation is three cooperating runtimes on one Mac, with no backend server:
 
 | Runtime | Language | Responsibility |
 |---|---|---|

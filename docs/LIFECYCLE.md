@@ -1,6 +1,6 @@
 # The Class Lifecycle
 
-What Zoom Auto Admit does for one scheduled class, from the minutes before it starts to the next morning. Every step below runs without an operator.
+What ClassFlow Automation does for one scheduled class, from the minutes before it starts to the next morning. Every step below runs without an operator.
 
 ← [Back to README](../README.md) · [Architecture](ARCHITECTURE.md) · [User guide](USER-GUIDE.md)
 
