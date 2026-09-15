@@ -70,7 +70,9 @@ export function App() {
   const visible = useMemo(() => {
     if (!state) return []
     const q = query.trim().toLowerCase()
+    const view = state.view
     return state.rows.filter((r) => {
+      if (view && (r.date < view.from || r.date > view.to)) return false
       if (group !== 'all' && r.group !== group) return false
       if (q && !`${r.group} ${r.title} ${r.date} ${r.next}`.toLowerCase().includes(q)) return false
       switch (stat) {
@@ -157,7 +159,13 @@ export function App() {
         {stat !== 'all' && <button type="button" className="chip clear" onClick={() => setStat('all')}><Icon name="close" size={12} /> {stats.find((s) => s.key === stat)?.label}</button>}
       </div>
 
-      <DaysPicker value={range} onChange={setRange} />
+      <DaysPicker value={range} onChange={setRange} onShow={(from, to) => run('view', () => api.viewRange(from, to))} />
+      {state.view && (
+        <div className="view-bar">
+          <Icon name="calendar" size={14} /> Showing only {state.view.from} → {state.view.to}
+          <button type="button" className="chip small clear" onClick={() => run('view', () => api.viewRange('', '', true))}><Icon name="close" size={12} /> Show the usual weeks</button>
+        </div>
+      )}
       {state.status && <p className="status">{state.status}</p>}
 
       {BUCKETS.map(({ key, label }) => {
@@ -181,7 +189,20 @@ export function App() {
           </section>
         )
       })}
-      {visible.length === 0 && <div className="empty"><Icon name="calendar" size={28} /><p>No class matches these filters.</p></div>}
+      {visible.length === 0 && (
+        <div className="empty">
+          <Icon name="calendar" size={28} />
+          {state.view ? (
+            <>
+              <p>Nothing is kept on this PC for {state.view.from} → {state.view.to}{group !== 'all' ? ` (${shortGroup(group)})` : ''}.</p>
+              <button type="button" className="btn primary" disabled={state.busy || checking !== null}
+                onClick={() => run('check', () => api.check(false, state.view!.from, state.view!.to))}>
+                {checking === 'check' || state.busy ? <span className="spinner light" /> : <Icon name="refresh" size={15} />} Read these days from the LMS
+              </button>
+            </>
+          ) : <p>No class matches these filters.</p>}
+        </div>
+      )}
 
       {confirm && <ConfirmDialog row={confirm.row} action={confirm.action} onCancel={() => setConfirm(null)} onConfirm={(link) => doAction(confirm.row, confirm.action, link)} />}
       {assignment && (

@@ -19,7 +19,12 @@ export function rangeOf(key: string, from?: string, to?: string): DayRange {
   return { from: from || back(6), to: to || iso(new Date()), label: `${from} → ${to}` }
 }
 
-export function DaysPicker({ value, onChange }: { value: DayRange & { key: string }; onChange: (range: DayRange & { key: string }) => void }) {
+export function DaysPicker({ value, onChange, onShow }: {
+  value: DayRange & { key: string }
+  onChange: (range: DayRange & { key: string }) => void
+  /** Show only the classes of these days in the list (old ones included). */
+  onShow?: (from: string, to: string) => void
+}) {
   const [from, setFrom] = useState(value.from)
   const [to, setTo] = useState(value.to)
   return (
@@ -34,6 +39,7 @@ export function DaysPicker({ value, onChange }: { value: DayRange & { key: strin
           <input type="date" value={from} max={to} onChange={(e) => { setFrom(e.target.value); onChange({ key: 'custom', ...rangeOf('custom', e.target.value, to) }) }} aria-label="From" />
           <span>→</span>
           <input type="date" value={to} min={from} onChange={(e) => { setTo(e.target.value); onChange({ key: 'custom', ...rangeOf('custom', from, e.target.value) }) }} aria-label="To" />
+          {onShow && <button type="button" className="btn small primary" disabled={!from || !to} onClick={() => onShow(from, to)}>Show these days</button>}
         </span>
       )}
     </div>

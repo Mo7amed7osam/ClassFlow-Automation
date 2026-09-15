@@ -19,6 +19,9 @@ namespace ZoomAutoAdmit.WindowsUI.Tests;
 
 public sealed class RedesignViewTests
 {
+    /// <summary>No central server: the pages must never sign in to the real one with this PC's kept sessions.</summary>
+    private static CentralViewModel Offline() => new(new ZoomAutoAdmit.WindowsUI.Services.CentralApiClient(() => null));
+
     private sealed class PreviewAttendance : IAttendanceHistoryReader
     {
         public Task<AttendanceHistory> ReadAsync(CancellationToken token = default) => Task.FromResult(new AttendanceHistory(
@@ -51,7 +54,7 @@ public sealed class RedesignViewTests
     [Fact]
     public void NavigationRetainsExistingCommandIndexesAndSupportsSearch()
     {
-        using var model = new MainViewModel(new PreviewService());
+        using var model = new MainViewModel(new PreviewService(), central: Offline());
         model.ShowStartMeetingCommand.Execute(null);
         Assert.Equal(1, model.SelectedTabIndex);
         model.NavigateCommand.Execute("2");
@@ -72,7 +75,7 @@ public sealed class RedesignViewTests
     {
         var credentials = new AiSetupTests.MemoryStore();
         var ai = new AiSetupTests.FakeAi();
-        using var model = new MainViewModel(new PreviewService(), aiCredentials: credentials, aiService: ai, attendanceHistory: new PreviewAttendance());
+        using var model = new MainViewModel(new PreviewService(), aiCredentials: credentials, aiService: ai, attendanceHistory: new PreviewAttendance(), central: Offline());
         await model.Attendance.RefreshAsync();
         await model.Accounts.RefreshAsync();
         model.Accounts.SelectedAccount = model.Accounts.Items[0];

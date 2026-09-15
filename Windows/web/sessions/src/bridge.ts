@@ -68,6 +68,7 @@ export const api = {
   open: (url: string) => call<boolean>('open', { url }),
   materialFolder: (group: string, date: string, start: string, clear = false) => call<Result>('materialFolder', { group, date, start, clear }),
   trackFolder: (track: string) => call<Result>('trackFolder', { track }),
+  viewRange: (from: string, to: string, clear = false) => call<Result>('viewRange', { from, to, clear }),
   setAssignment: (group: string, date: string, start: string, title: string, deadline: string, none: boolean, description = '', file = '') =>
     call<Result>('setAssignment', { group, date, start, title, deadline, none, description, file }),
   assignmentFile: (group: string, date: string) => call<{ ok: boolean; path: string; name: string }>('assignmentFile', { group, date }),

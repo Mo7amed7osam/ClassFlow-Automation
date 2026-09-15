@@ -202,14 +202,17 @@ public sealed class LmsSessionsViewModel : ObservableObject
 
     // ------------------------------------------------------------------ the rows
 
+    /// <summary>Days chosen on the page (From - to); otherwise the last two weeks and the next one.</summary>
+    public (DateOnly From, DateOnly To)? ViewRange { get; set; }
+
     public async Task ReloadAsync()
     {
         try
         {
             var now = DateTime.Now;
             var today = DateOnly.FromDateTime(now);
-            var from = today.AddDays(-14);
-            var to = today.AddDays(7);
+            var from = ViewRange?.From ?? today.AddDays(-14);
+            var to = ViewRange?.To ?? today.AddDays(7);
             var schedules = await _schedules.ListAsync();
             var pending = await _queue.ReadAsync();
             var history = await _queue.ReadHistoryAsync();

@@ -117,6 +117,14 @@ public sealed class CentralApiClient
     // account that signed in here, so the Dashboard can offer them to pick from.
     private static readonly DatabasePasswordStore Legacy = new("ZoomAutoAdmit/Central/Session");
     private static DatabasePasswordStore SessionOf(string username) => new($"ZoomAutoAdmit/Central/Session/{username.ToLowerInvariant()}");
+    // "Remember the password": kept by Windows (Credential Manager, this Windows user only), one per
+    // account, so Continue signs in again by itself once the 30-day session has ended.
+    private static CentralLoginStore PasswordOf(string username) => new($"ZoomAutoAdmit/Central/Password/{username.ToLowerInvariant()}");
+    private static (string Username, string Password)? SavedPassword(string? username)
+    {
+        if (string.IsNullOrWhiteSpace(username)) return null;
+        try { return PasswordOf(username).Read(); } catch { return null; }
+    }
     private readonly CentralKnownAccounts _known = new();
     private DatabasePasswordStore? _session => _known.Current is { } user ? SessionOf(user) : null;
     private HttpClient? _http;
@@ -130,11 +138,11 @@ public sealed class CentralApiClient
     }
 
     public CentralMe? Me { get; private set; }
-    public bool HasSavedLogin => (_session is { } s && SafeRead(s) != null) || _logins.Read() != null;
+    public bool HasSavedLogin => (_session is { } s && SafeRead(s) != null) || _logins.Read() != null || SavedPassword(_known.Current) != null;
 
-    /// <summary>The accounts that signed in on this PC, newest first; HasSession = can continue without a password.</summary>
+    /// <summary>The accounts that signed in on this PC, newest first; each can continue without typing when it has a session or a saved password.</summary>
     public IReadOnlyList<CentralKnownAccount> KnownAccounts =>
-        [.. _known.List().Select(a => a with { HasSession = SafeRead(SessionOf(a.Username)) != null })];
+        [.. _known.List().Select(a => a with { HasSession = SafeRead(SessionOf(a.Username)) != null, HasPassword = SavedPassword(a.Username) != null })];
 
     private static string? SafeRead(DatabasePasswordStore? store) { try { return store?.Read(); } catch { return null; } }
 
@@ -164,24 +172,42 @@ public sealed class CentralApiClient
         if (cookie != null) SessionOf(username).Save(cookie.Name + "\n" + cookie.Value);
     }
 
-    /// <summary>Continue as another account that signed in here. Null when its session has ended (sign in again).</summary>
+    /// <summary>
+    /// Continue as another account that signed in here: its kept session, or - when that has ended -
+    /// its saved password. Null when it has neither (or the password no longer works): sign in again.
+    /// </summary>
     public async Task<CentralMe?> SwitchToAsync(string username, CancellationToken token = default)
     {
         _known.SetCurrent(username);
         Me = null; _http?.Dispose(); _http = null;
         try { Me = await GetDirectAsync<CentralMe>("api/v1/auth/me", token); _known.Touch(Me); return Me; }
-        catch (CentralApiException ex) when (ex.Status == HttpStatusCode.Unauthorized) { try { SessionOf(username).Delete(); } catch { } return null; }
+        catch (CentralApiException ex) when (ex.Status == HttpStatusCode.Unauthorized) { try { SessionOf(username).Delete(); } catch { } }
+        return await SignInWithSavedPasswordAsync(username, token);
     }
 
-    /// <summary>Removes an account from this PC's list (and ends its kept session on the server when it is the current one).</summary>
+    /// <summary>A fresh 30-day session from the account's saved password; a password the server refuses is removed.</summary>
+    private async Task<CentralMe?> SignInWithSavedPasswordAsync(string? username, CancellationToken token)
+    {
+        if (SavedPassword(username) is not { } saved) return null;
+        try { return await SignInAsync(saved.Username, saved.Password, remember: true, savePassword: true, token: token); }
+        catch (CentralApiException ex) when (ex.Status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            try { PasswordOf(saved.Username).Delete(); } catch { }             // changed or disabled: type it again
+            return null;
+        }
+    }
+
+    /// <summary>Removes an account from this PC's list - its kept session and saved password too.</summary>
     public void ForgetAccount(string username)
     {
         if (string.Equals(_known.Current, username, StringComparison.OrdinalIgnoreCase)) Forget();
         try { SessionOf(username).Delete(); } catch { }
+        try { PasswordOf(username).Delete(); } catch { }
         _known.Remove(username);
     }
 
-    public async Task<CentralMe> SignInAsync(string username, string password, bool remember, CancellationToken token = default)
+    /// <param name="savePassword">Keep the password in Windows Credential Manager for this account; false removes a saved one.</param>
+    public async Task<CentralMe> SignInAsync(string username, string password, bool remember, bool savePassword = false, CancellationToken token = default)
     {
         // The server wants X-Dashboard-Request on every POST, the sign-in included.
         using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/auth/login")
@@ -191,11 +217,12 @@ public sealed class CentralApiClient
         request.Headers.Add("X-Dashboard-Request", "1");
         using var response = await Http().SendAsync(request, token);
         if (!response.IsSuccessStatusCode) throw await ErrorAsync(response, token);
-        // No password is kept on this PC any more: a remembered sign-in is a server session.
+        // The single sign-in an older version kept is replaced by the account's own entry.
         try { _logins.Delete(); } catch { }
         string who = username.Trim().ToLowerInvariant();
         _known.SetCurrent(who);
         if (remember) KeepSession(who); else try { SessionOf(who).Delete(); } catch { }
+        if (savePassword) PasswordOf(who).Save(who, password); else try { PasswordOf(who).Delete(); } catch { }
         Me = await GetDirectAsync<CentralMe>("api/v1/auth/me", token);
         _known.Touch(Me);
         return Me;
@@ -235,9 +262,10 @@ public sealed class CentralApiClient
             return Me;
         }
         catch (CentralApiException ex) when (ex.Status == HttpStatusCode.Unauthorized) { try { _session?.Delete(); } catch { } }
+        if (await SignInWithSavedPasswordAsync(_known.Current, token) is { } me) return me;
         var saved = _logins.Read();
         if (saved == null) return null;
-        return await SignInAsync(saved.Value.Username, saved.Value.Password, remember: true, token);
+        return await SignInAsync(saved.Value.Username, saved.Value.Password, remember: true, token: token);
     }
 
     public Task<T> GetAsync<T>(string path, CancellationToken token = default) => WithSignInAsync(() => GetDirectAsync<T>(path, token), token);
@@ -257,9 +285,10 @@ public sealed class CentralApiClient
     {
         if (Me == null) await EnsureSignedInAsync(token);
         try { return await call(); }
-        catch (CentralApiException ex) when (ex.Status == HttpStatusCode.Unauthorized && _logins.Read() is { } saved)
+        catch (CentralApiException ex) when (ex.Status == HttpStatusCode.Unauthorized && (SavedPassword(_known.Current) ?? _logins.Read()) is { } saved)
         {
-            await SignInAsync(saved.Username, saved.Password, remember: true, token);
+            // The session ended mid-use: a fresh one from the saved password, and the call again.
+            await SignInAsync(saved.Username, saved.Password, remember: true, savePassword: SavedPassword(saved.Username) != null, token: token);
             return await call();
         }
     }
@@ -363,6 +392,8 @@ public sealed record CentralLmsAccount(string Id, string Label, string Email, st
 public sealed record CentralKnownAccount(string Username, string DisplayName, string Role, DateTimeOffset LastUsed)
 {
     public bool HasSession { get; init; }
+    /// <summary>Its password is saved in Windows Credential Manager on this PC.</summary>
+    public bool HasPassword { get; init; }
 }
 
 /// <summary>

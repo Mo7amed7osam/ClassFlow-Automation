@@ -203,6 +203,9 @@
       else if (m.push === "rosters") {
         // The app's groups appear under Saved rosters, kept in step with the app.
         const saved = read("savedRosters") || {};
+        // The app's list is the whole set: an app roster it no longer sends (another person's group) goes.
+        const sent = new Set((m.rosters || []).map(r => "app:" + r.group));
+        for (const key of Object.keys(saved)) if (key.startsWith("app:") && !sent.has(key)) delete saved[key];
         for (const r of m.rosters || []) saved["app:" + r.group] = { name: r.group + " (app roster)", names: r.names, updatedAt: new Date().toISOString() };
         await local.set({ savedRosters: saved });
       }

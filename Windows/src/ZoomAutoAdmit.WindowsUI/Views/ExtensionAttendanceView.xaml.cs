@@ -189,7 +189,10 @@ public partial class ExtensionAttendanceView : UserControl
     {
         var rosters = await _feed.RostersAsync();
         _rosterByGroup = rosters.ToDictionary(r => r.Group, r => r.Names, StringComparer.OrdinalIgnoreCase);
-        Push(new { push = "rosters", rosters = rosters.Select(r => new { group = r.Group, names = r.Names }) });
+        // Saved rosters offer this person's groups only (a roster read with another account stays on the PC).
+        var mine = LmsRosterImport.GroupsFor(DataContext as ViewModels.MainViewModel);
+        var shown = mine.Count == 0 ? rosters : [.. rosters.Where(r => mine.Contains(r.Group, StringComparer.OrdinalIgnoreCase))];
+        Push(new { push = "rosters", rosters = shown.Select(r => new { group = r.Group, names = r.Names }) });
     }
 
     private void PushSnapshot(ExtensionAttendanceFeed.Snapshot s, IReadOnlyDictionary<string, IReadOnlyList<string>> rosters)

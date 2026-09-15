@@ -136,18 +136,22 @@ public sealed class CentralViewModel : ObservableObject
 
     // ------------------------------------------------------------------ sign-in (password from code-behind)
 
-    public async Task SignInAsync(string password, bool remember)
+    /// <param name="savePassword">Keep the password in Windows Credential Manager, so Continue works after the session ends.</param>
+    public async Task SignInAsync(string password, bool remember, bool savePassword = false)
     {
         if (string.IsNullOrWhiteSpace(Username) || string.IsNullOrEmpty(password)) { Status = "Username and password are required."; return; }
+        CentralMe me;
         try
         {
             IsBusy = true;
-            var me = await _api.SignInAsync(Username, password, remember);
-            ShowMe(me);
-            await RefreshAsync();
+            me = await _api.SignInAsync(Username, password, remember, savePassword);
         }
-        catch (Exception ex) { Status = ex.Message; }
+        catch (Exception ex) { Status = ex.Message; return; }
         finally { IsBusy = false; }
+        ShowMe(me);
+        // Not busy any more: RefreshAsync skips itself while busy, which left the accounts, groups and
+        // recordings unread after every sign-in with a password.
+        await RefreshAsync();
     }
 
     private void SignOut()

@@ -83,13 +83,13 @@ public partial class DashboardWebView : UserControl
                 return Done(central.Status);
             case "signIn":
                 central.Username = Text(p, "username");
-                await central.SignInAsync(Text(p, "password"), Flag(p, "remember"));
+                await central.SignInAsync(Text(p, "password"), Flag(p, "remember"), Flag(p, "savePassword"));
                 string? lms = await SyncLmsAsync();
                 return new { ok = central.IsSignedIn, message = central.IsSignedIn ? $"Signed in as {central.SignedInAs}. {lms}" : central.Status };
             case "switchAccount":
             {
                 var me = await central.Api.SwitchToAsync(Text(p, "username"));
-                if (me == null) return new { ok = false, message = $"{Text(p, "username")}'s session has ended; type the password once to continue." };
+                if (me == null) return new { ok = false, message = $"{Text(p, "username")}'s session has ended and no working password is saved; type the password once to continue." };
                 await central.RefreshAsync();
                 string? lmsNow = await SyncLmsAsync();
                 return Done($"Continuing as {me.DisplayName} ({me.Role}). {lmsNow}");
@@ -197,7 +197,7 @@ public partial class DashboardWebView : UserControl
             status = central.Status,
             busy = central.IsBusy || sessions.IsBusy,
             savedLogin = central.Api.HasSavedLogin,
-            known = central.Api.KnownAccounts.Select(a => new { username = a.Username, displayName = a.DisplayName, role = a.Role, hasSession = a.HasSession, lastUsed = a.LastUsed.LocalDateTime.ToString("ddd dd MMM") }),
+            known = central.Api.KnownAccounts.Select(a => new { username = a.Username, displayName = a.DisplayName, role = a.Role, hasSession = a.HasSession, hasPassword = a.HasPassword, lastUsed = a.LastUsed.LocalDateTime.ToString("ddd dd MMM") }),
             me = me == null ? null : new
             {
                 username = me.Username, displayName = me.DisplayName, role = me.Role, allGroups = me.AllGroups,

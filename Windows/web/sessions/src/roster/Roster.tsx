@@ -27,6 +27,7 @@ export function Roster() {
   const [menu, setMenu] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [allLms, setAllLms] = useState(false)
+  const [showOthers, setShowOthers] = useState(false)
   const nextToast = useRef(1)
 
   useEffect(() => {
@@ -53,12 +54,17 @@ export function Roster() {
     }
   }, [say])
 
-  const groups = state?.groups ?? []
+  // Only this person's groups, unless they ask for the others kept on this PC (a roster read earlier
+  // with another account).
+  const allGroups = state?.groups ?? []
+  const mine = allGroups.filter((g) => g.mine)
+  const others = allGroups.length - mine.length
+  const groups = showOthers || mine.length === 0 ? allGroups : mine
   const group = groups.find((g) => g.id === selected) ?? groups[0] ?? null
   useEffect(() => { if (group && group.id !== selected) setSelected(group.id) }, [group, selected])
   const choose = (id: string) => { setSelected(id); remember(id); setQuery(''); setMenu(false) }
 
-  const lmsOnly = useMemo(() => (state?.lmsGroups ?? []).filter((g) => !groups.some((x) => x.id.toLowerCase() === g.toLowerCase())), [state, groups])
+  const lmsOnly = useMemo(() => (state?.lmsGroups ?? []).filter((g) => !allGroups.some((x) => x.id.toLowerCase() === g.toLowerCase())), [state, allGroups])
   const students = useMemo(() => {
     const q = query.trim().toLowerCase()
     const all = group?.students ?? []
@@ -108,6 +114,12 @@ export function Roster() {
               {reading === g.id ? <span className="spinner" /> : <span className="rail-count">{g.students.length}</span>}
             </button>
           ))}
+          {mine.length > 0 && others > 0 && (
+            <button type="button" className="btn ghost small rail-more" onClick={() => setShowOthers(!showOthers)}
+              title="Rosters kept on this PC for groups that are not yours (read earlier with another account)">
+              {showOthers ? 'Only my groups' : `Show ${others} other group${others === 1 ? '' : 's'} on this PC`}
+            </button>
+          )}
           {lmsOnly.length > 0 && (
             <>
               <h3 className="rail-title">On the LMS · no roster yet</h3>

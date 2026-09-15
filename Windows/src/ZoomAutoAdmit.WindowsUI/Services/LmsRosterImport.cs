@@ -25,8 +25,10 @@ public sealed class LmsRosterImport(IGroupRosterService? rosters = null, Func<Lm
     public static bool IsBusy => Gate.CurrentCount == 0;
 
     /// <summary>
-    /// The groups a roster can be brought for: a coordinator's own groups, or - for the admin and
-    /// before signing in - every group the app knows (rosters, the timetable, the server's list).
+    /// The groups that are this person's: a dashboard coordinator's own groups; when the LMS account
+    /// in use is a coordinator's, the groups of its timetable and of what the LMS showed that account;
+    /// otherwise (the admin) every group the app knows - rosters, the timetable, the server's list.
+    /// A roster read earlier with another account is therefore not shown as this person's.
     /// </summary>
     public static IReadOnlyList<string> GroupsFor(ViewModels.MainViewModel? main)
     {
@@ -34,8 +36,19 @@ public sealed class LmsRosterImport(IGroupRosterService? rosters = null, Func<Lm
         if (main != null)
         {
             var me = main.Central.IsSignedIn ? main.Central.Api.Me : null;
+            var lms = main.LmsSessions.SelectedAccount;
             if (me != null && !me.AllGroups)
                 names.AddRange((me.Groups ?? []).Where(g => !g.Archived).Select(g => g.Name));
+            else if (lms is { Role: "coordinator" })
+            {
+                names.AddRange(main.LmsSessions.Rows.Where(r => r.Zoom != "—").Select(r => r.Group));     // this PC's timetable
+                try
+                {
+                    names.AddRange(new LmsSessionCache().Read()
+                        .Where(e => e.Account.Equals(lms.Email, StringComparison.OrdinalIgnoreCase)).Select(e => e.Session.Group));
+                }
+                catch { }
+            }
             else
             {
                 names.AddRange(main.Roster.Groups.Select(g => g.GroupId));
@@ -43,7 +56,7 @@ public sealed class LmsRosterImport(IGroupRosterService? rosters = null, Func<Lm
                 if (main.Central.IsAdmin) names.AddRange(main.Central.Groups.Where(g => !g.Archived).Select(g => g.Group));
             }
         }
-        return [.. names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim())
+        return [.. names.Where(n => !string.IsNullOrWhiteSpace(n) && !n.Contains(" | ")).Select(n => n.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)];
     }
 

@@ -55,7 +55,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         IGroupRosterService? groups = null, IGroupRosterDialogs? groupDialogs = null,
         IAiCredentialStore? aiCredentials = null, IAiMatchingService? aiService = null,
         IAttendanceHistoryReader? attendanceHistory = null, IAttendanceDialogs? attendanceDialogs = null,
-        RecordingsDashboardViewModel? recordingsDashboard = null, LmsSessionsViewModel? lmsSessions = null)
+        RecordingsDashboardViewModel? recordingsDashboard = null, LmsSessionsViewModel? lmsSessions = null,
+        CentralViewModel? central = null)
     {
         _service = service;
         _filteredNavigation = Navigation;
@@ -64,7 +65,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RecordingsDashboard = recordingsDashboard ?? new RecordingsDashboardViewModel();
         LmsSessions = lmsSessions ?? new LmsSessionsViewModel();
         LmsSessions.Processor = Lms.FollowUpProcessor;
-        Central = new CentralViewModel();
+        Central = central ?? new CentralViewModel();
+        Central.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(CentralViewModel.IsSignedIn) or nameof(CentralViewModel.IsAdmin)) RefreshNavigation();
+        };
         // "Check sheet" looks first at what n8n sent the central server from the recordings sheet.
         LmsSessions.CentralDriveLink = async (group, date, start) =>
         {
@@ -214,12 +219,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string NavigationSearch
     {
         get => _navigationSearch;
-        set
-        {
-            if (SetProperty(ref _navigationSearch, value))
-                SetProperty(ref _filteredNavigation, (IReadOnlyList<NavigationItem>)Navigation.Where(n =>
-                    n.Title.Contains(value?.Trim() ?? "", StringComparison.OrdinalIgnoreCase)).ToArray(), nameof(FilteredNavigation));
-        }
+        set { if (SetProperty(ref _navigationSearch, value)) RefreshNavigation(); }
+    }
+
+    /// <summary>The server and the coordinators are the admin's to run: a signed-in coordinator does not see those pages.</summary>
+    private static readonly int[] AdminOnlyPages = [CoordinatorsPage, 14];
+    public bool IsCoordinatorView => Central is { IsSignedIn: true, IsAdmin: false };
+
+    private void RefreshNavigation()
+    {
+        string query = _navigationSearch?.Trim() ?? "";
+        bool coordinator = IsCoordinatorView;
+        SetProperty(ref _filteredNavigation, (IReadOnlyList<NavigationItem>)Navigation.Where(n =>
+            n.Title.Contains(query, StringComparison.OrdinalIgnoreCase) && !(coordinator && AdminOnlyPages.Contains(n.Index))).ToArray(),
+            nameof(FilteredNavigation));
+        OnPropertyChanged(nameof(IsCoordinatorView));
+        if (coordinator && AdminOnlyPages.Contains(SelectedTabIndex)) SelectedTabIndex = DashboardPage;
     }
     public int SelectedTabIndex
     {

@@ -93,7 +93,7 @@ export function Dashboard() {
         </div>
       )}
 
-      {!me && <SignIn busy={working !== null} known={state.known} onSignIn={(u, p, r) => run('in', 'signIn', { username: u, password: p, remember: r })}
+      {!me && <SignIn busy={working !== null} known={state.known} onSignIn={(u, p, r, s) => run('in', 'signIn', { username: u, password: p, remember: r, savePassword: s })}
         onContinue={(u) => run('switch', 'switchAccount', { username: u })} onForget={(u) => run('forget', 'forgetAccount', { username: u })} />}
 
       {!coordinatorsView && (
@@ -132,35 +132,40 @@ type Run = (label: string, method: string, params?: Record<string, unknown>) => 
 
 type Known = DashState['known'][number]
 
-/** Accounts that signed in on this PC: one click continues (their session is kept in the database). */
+/** Accounts that signed in on this PC: one click continues (their session, or their saved password). */
 function KnownAccounts({ known, busy, onContinue, onPick, onForget }: { known: Known[]; busy: boolean; onContinue: (u: string) => void; onPick: (u: string) => void; onForget: (u: string) => void }) {
   if (known.length === 0) return null
   return (
     <div className="known">
-      {known.map((k) => (
+      {known.map((k) => {
+        const ready = k.hasSession || k.hasPassword
+        return (
         <div key={k.username} className="known-card" style={{ '--hue': groupHue(k.username) } as React.CSSProperties}>
-          <button type="button" className="known-main" disabled={busy} onClick={() => (k.hasSession ? onContinue(k.username) : onPick(k.username))}>
+          <button type="button" className="known-main" disabled={busy} onClick={() => (ready ? onContinue(k.username) : onPick(k.username))}
+            title={k.hasSession ? 'Its 30-day session is still open.' : k.hasPassword ? 'Its password is saved on this PC (Windows Credential Manager).' : 'Type its password once.'}>
             <span className="avatar">{(k.displayName || k.username).slice(0, 1).toUpperCase()}</span>
             <span className="known-who"><b>{k.displayName}</b><span>{k.username} · <span className={`role-tag ${k.role}`}>{k.role}</span></span></span>
-            <span className={`known-go${k.hasSession ? ' live' : ''}`}>{k.hasSession ? 'Continue' : 'Password'}</span>
+            <span className={`known-go${ready ? ' live' : ''}`}>{ready ? 'Continue' : 'Password'}</span>
           </button>
-          <button type="button" className="known-x" aria-label={`Remove ${k.username} from this PC`} title="Remove from this PC" onClick={() => onForget(k.username)}><Icon name="close" size={13} /></button>
+          <button type="button" className="known-x" aria-label={`Remove ${k.username} from this PC`} title="Remove from this PC (and its saved password)" onClick={() => onForget(k.username)}><Icon name="close" size={13} /></button>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
 
-function SignIn({ busy, known, onSignIn, onContinue, onForget }: { busy: boolean; known: Known[]; onSignIn: (u: string, p: string, r: boolean) => void; onContinue: (u: string) => void; onForget: (u: string) => void }) {
+function SignIn({ busy, known, onSignIn, onContinue, onForget }: { busy: boolean; known: Known[]; onSignIn: (u: string, p: string, r: boolean, s: boolean) => void; onContinue: (u: string) => void; onForget: (u: string) => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(true)
+  const [savePassword, setSavePassword] = useState(true)
   const [other, setOther] = useState(known.length === 0)
   return (
-    <form className="panel signin" onSubmit={(e) => { e.preventDefault(); onSignIn(username, password, remember); setPassword('') }}>
+    <form className="panel signin" onSubmit={(e) => { e.preventDefault(); onSignIn(username, password, remember, savePassword); setPassword('') }}>
       <div className="signin-copy">
         <h2><Icon name="user" size={18} /> {known.length ? 'Choose an account' : 'Sign in'}</h2>
-        <p className="muted">{known.length ? 'Accounts that signed in on this PC. Continue needs no password while its 30-day session lasts.' : 'Admin or coordinator. New coordinators get their sign-in from the admin.'}</p>
+        <p className="muted">{known.length ? 'Accounts that signed in on this PC. Continue needs no password: their session, or their password saved on this PC, signs them in.' : 'Admin or coordinator. New coordinators get their sign-in from the admin.'}</p>
         <KnownAccounts known={known} busy={busy} onContinue={onContinue} onForget={onForget}
           onPick={(u) => { setUsername(u); setOther(true); setTimeout(() => document.getElementById('dash-password')?.focus(), 0) }} />
         {known.length > 0 && !other && <button type="button" className="btn ghost small" onClick={() => setOther(true)}>+ Use another account</button>}
@@ -168,7 +173,8 @@ function SignIn({ busy, known, onSignIn, onContinue, onForget }: { busy: boolean
       {other && <>
       <label className="field"><span>Username</span><input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} /></label>
       <label className="field"><span>Password</span><input id="dash-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
-      <label className="check"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Keep me signed in for 30 days (the session is kept in the database; no password is saved)</label>
+      <label className="check"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Keep me signed in for 30 days</label>
+      <label className="check"><input type="checkbox" checked={savePassword} onChange={(e) => setSavePassword(e.target.checked)} /> Remember the password on this PC (Windows Credential Manager), so Continue works after the 30 days too</label>
       <button type="submit" className="btn primary" disabled={busy || !username || !password}>{busy ? <span className="spinner light" /> : <Icon name="bolt" size={14} />} Sign in</button>
       </>}
     </form>
@@ -186,7 +192,7 @@ function SwitchMenu({ state, busy, run }: { state: DashState; busy: boolean; run
         <div className="menu" role="menu">
           {others.map((k) => (
             <button key={k.username} type="button" role="menuitem" onClick={() => { setOpen(false); run('switch', 'switchAccount', { username: k.username }) }}>
-              <Icon name="user" size={15} /> Switch to {k.displayName} ({k.role}){k.hasSession ? '' : ' — needs password'}
+              <Icon name="user" size={15} /> Switch to {k.displayName} ({k.role}){k.hasSession || k.hasPassword ? '' : ' — needs password'}
             </button>
           ))}
           <button type="button" role="menuitem" onClick={() => { setOpen(false); run('out', 'signOut') }}><Icon name="close" size={15} /> Sign out</button>

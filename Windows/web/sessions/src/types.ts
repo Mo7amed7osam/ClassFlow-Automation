@@ -68,6 +68,8 @@ export interface State {
   accounts: Account[]
   sheet: { url: string; tabs: Record<string, string>; groups: string[] }
   materials?: { tracks: { track: string; folder: string }[] }
+  /** The days chosen with "Show these days"; null is the usual two weeks back and one ahead. */
+  view?: { from: string; to: string } | null
   working: string[]
   rows: Row[]
 }

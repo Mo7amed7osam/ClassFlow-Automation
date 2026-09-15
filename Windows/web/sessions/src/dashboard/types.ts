@@ -4,7 +4,7 @@ export interface DashState {
   status: string
   busy: boolean
   savedLogin: boolean
-  known: { username: string; displayName: string; role: string; hasSession: boolean; lastUsed: string }[]
+  known: { username: string; displayName: string; role: string; hasSession: boolean; hasPassword?: boolean; lastUsed: string }[]
   me: null | { username: string; displayName: string; role: string; allGroups: boolean; groups: string[] }
   lms: { active?: string | null; onServer: boolean; canKeepPasswords: boolean; accounts: { id: string; label: string; email: string; role: string }[] }
   sessions: {

@@ -165,6 +165,18 @@ public partial class SessionsWebView : UserControl
                     Reply(id, new { ok = true, path = picker.FileName, name = Path.GetFileNameWithoutExtension(picker.FileName) });
                     return;
                 }
+                case "viewRange":
+                {
+                    // The classes of the chosen days, even old ones; "clear" goes back to the usual weeks.
+                    if (!B("clear") && DateOnly.TryParse(S("from"), out var vf) && DateOnly.TryParse(S("to"), out var vt))
+                        model.ViewRange = vf <= vt ? (vf, vt) : (vt, vf);
+                    else model.ViewRange = null;
+                    await model.ReloadAsync();
+                    var v = model.ViewRange;
+                    int shown = v == null ? model.Rows.Count : model.Rows.Count(r => r.Date >= v.Value.From && r.Date <= v.Value.To);
+                    Reply(id, new { ok = true, message = v == null ? "Back to the last two weeks and the next one." : $"{shown} class(es) from {v.Value.From:dd MMM yyyy} to {v.Value.To:dd MMM yyyy} on this PC." });
+                    return;
+                }
                 case "open": OpenOutside(S("url")); Reply(id, true); return;
                 case "useAccount": model.UseAccount(S("id")); Reply(id, new { ok = true, message = model.Status }); PushState(); return;
                 case "removeAccount": model.RemoveAccount(S("id")); Reply(id, new { ok = true, message = model.Status }); PushState(); return;
@@ -204,6 +216,7 @@ public partial class SessionsWebView : UserControl
             account = model.ActiveAccount,
             accounts = model.Accounts.Select(a => new { id = a.Id, label = a.Label, email = a.Email, role = a.Role, active = a.Id == model.SelectedAccount?.Id }),
             sheet = new { url = sheet.Url ?? "", tabs = sheet.Tabs, groups },
+            view = model.ViewRange is { } range ? new { from = range.From.ToString("yyyy-MM-dd"), to = range.To.ToString("yyyy-MM-dd") } : null,
             materials = new { tracks = ZoomAutoAdmit.WebAutomation.Lms.MaterialPlanner.FixedTracks.Select(t => new { track = t, folder = materials.Tracks.GetValueOrDefault(t) ?? "" }) },
             working,
             rows = model.Rows.Select(r => new
