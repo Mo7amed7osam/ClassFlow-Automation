@@ -48,6 +48,7 @@ internal static class Program
                 "lms-roster" => await LmsRosterCommand.ExecuteAsync(options),
                 "lms-describe" => await LmsRosterCommand.DescribeAsync(options),
                 "lms-material" => await LmsRosterCommand.MaterialAsync(options),
+                "lms-check" => await LmsRosterCommand.CheckAsync(options),
                 "repair-schedules" => await RepairSchedulesCommand.ExecuteAsync(options),
                 "serve-api" => await RecordingApiCommand.ServeAsync(options),
                 "api-autostart" => RecordingApiCommand.Autostart(options),

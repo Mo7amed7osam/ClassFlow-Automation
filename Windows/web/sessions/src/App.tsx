@@ -198,7 +198,8 @@ export function App() {
                 <SessionCard key={row.key} row={row} now={now} working={working}
                   onAction={(r, a) => (a === 'material' ? openMaterial(r) : setConfirm({ row: r, action: a }))} onOpen={(url) => api.open(url)}
                   onMaterial={openMaterial}
-                  onAssignment={(r) => setAssignment(r)} />
+                  onAssignment={(r) => setAssignment(r)}
+                  onCheck={(r) => run('check', () => api.check(true, r.date, r.date))} />
               ))}
             </div>
           </section>
@@ -221,7 +222,9 @@ export function App() {
 
       {confirm && <ConfirmDialog row={confirm.row} action={confirm.action} onCancel={() => setConfirm(null)} onConfirm={(link) => doAction(confirm.row, confirm.action, link)} />}
       {material && (
-        <MaterialDialog row={material.row} preview={material.preview} busy={working.has(workingKey(material.row, 'material'))}
+        <MaterialDialog row={state.rows.find((r) => r.key === material.row.key) ?? material.row} preview={material.preview}
+          busy={working.has(workingKey(material.row, 'material'))} checking={checking === 'check' || state.busy}
+          onCheck={() => run('check', () => api.check(true, material.row.date, material.row.date))}
           onPick={pickMaterial} onCancel={() => setMaterial(null)}
           onAssignment={() => setAssignment(material.row)}
           onUpload={() => { const m = material; setMaterial(null); doAction(m.row, 'material', m.preview?.path ?? undefined) }} />

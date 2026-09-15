@@ -82,6 +82,7 @@ public class CliOptions
         "lms-roster",
         "lms-describe",
         "lms-material",
+        "lms-check",
         "repair-schedules",
         "serve-api",
         "api-autostart",

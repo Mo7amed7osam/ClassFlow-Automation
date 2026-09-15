@@ -52,6 +52,8 @@ export interface Material {
   chosen?: string | null
   /** The last full check found some of it removed on the LMS */
   removedOnLms?: boolean
+  /** When the session's page (attachments, assignment) was last read on the LMS */
+  seenOnLms?: string | null
 }
 
 /** What a folder or file (or the class's own material) would put up; nothing is kept until Upload. */

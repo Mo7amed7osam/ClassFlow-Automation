@@ -187,14 +187,17 @@ export function AssignmentDialog({ row, onSave, onCancel, pickFile }: {
  * A class's material in one box: what goes up (its own material, or a folder or file picked here),
  * then Upload or Cancel. A pick is kept for the class only on Upload.
  */
-export function MaterialDialog({ row, preview, busy, onPick, onUpload, onCancel, onAssignment }: {
+export function MaterialDialog({ row, preview, busy, checking, onPick, onUpload, onCancel, onAssignment, onCheck }: {
   row: Row
   preview: MaterialPreview | null
   busy: boolean
+  checking: boolean
   onPick: (kind: 'folder' | 'file') => void
   onUpload: () => void
   onCancel: () => void
   onAssignment: () => void
+  /** Read this class on the LMS now, to see what is really there. */
+  onCheck: () => void
 }) {
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === 'Escape' && onCancel()
@@ -220,6 +223,10 @@ export function MaterialDialog({ row, preview, busy, onPick, onUpload, onCancel,
               ? <p className="material-assignment"><Icon name="calendar" size={13} /> Assignment “{preview.assignment.title}”, due {preview.assignment.deadline} <button type="button" className="link-btn" onClick={onAssignment}>Change</button></p>
               : <p className="material-assignment muted"><Icon name="calendar" size={13} /> No assignment <button type="button" className="link-btn" onClick={onAssignment}>Add one</button></p>}
             {row.material?.removedOnLms && <p className="warn-line"><Icon name="alert" size={13} /> The last check found some of it removed on the LMS; Upload puts back what is missing.</p>}
+            <p className="material-seen">
+              <Icon name="refresh" size={13} /> {row.material?.seenOnLms ? `The LMS was read for this class ${row.material.seenOnLms}.` : 'This class has not been read on the LMS yet.'}
+              <button type="button" className="link-btn" disabled={checking} onClick={onCheck}>{checking ? 'Checking…' : 'Check on the LMS'}</button>
+            </p>
           </>
         )}
         <div className="dialog-actions spread">

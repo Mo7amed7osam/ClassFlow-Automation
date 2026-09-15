@@ -78,6 +78,26 @@ public static class LmsRosterCommand
         return result.IsSuccess ? 0 : 2;
     }
 
+    /// <summary>
+    /// lms-check --day D: what the Sessions page's full check does for one day - every session of the
+    /// timetable's groups read (status, link, attendance, attachments, assignment) and kept where the
+    /// app reads it. Nothing is changed on the LMS.
+    /// </summary>
+    public static async Task<int> CheckAsync(CliOptions options, CancellationToken cancellationToken = default)
+    {
+        if (options.LmsDay == null) { ConsoleLogger.Error("lms-check requires --day."); return 1; }
+        DateOnly day = options.LmsDay.Value;
+        var schedules = await new ZoomAutoAdmit.WindowsRuntime.Scheduling.WindowsMeetingScheduleStore().ListAsync();
+        var groups = schedules.Select(s => s.GroupName ?? s.AccountId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var store = new LmsCredentialStore();
+        var list = await new LmsSessionRunner(store).SurveyAsync(day, day, groups, openEach: true, cancellationToken: cancellationToken);
+        new LmsSessionCache().Merge(list, day, day, store.Read()?.Email ?? "", listOnly: false);
+        foreach (var s in list)
+            Console.WriteLine($"  {s.Group} {s.Start:HH\\:mm} {s.Title} · {s.PageStatus} · attachments: {(s.Attachments == null ? "?" : s.Attachments.Count.ToString())} · assignment: {s.HasAssignment?.ToString() ?? "?"}");
+        ConsoleLogger.Success($"{list.Count} session(s) of {day:yyyy-MM-dd} read and kept for the app.");
+        return 0;
+    }
+
     public static async Task<int> ExecuteAsync(CliOptions options, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(options.LmsGroup))

@@ -21,9 +21,11 @@ interface Props {
   onMaterial: (row: Row) => void
   /** Open the assignment's title and deadline. */
   onAssignment: (row: Row) => void
+  /** Read this one class on the LMS now: status, link, attendance, attachments, assignment. */
+  onCheck: (row: Row) => void
 }
 
-export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, onAssignment }: Props) {
+export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, onAssignment, onCheck }: Props) {
   const [openStep, setOpenStep] = useState<StepKey | null>(null)
   const [menu, setMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -128,6 +130,9 @@ export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, o
                   </button>
                   <button type="button" role="menuitem" onClick={() => { setMenu(false); onAssignment(row) }}>
                     <Icon name="calendar" size={15} /> Assignment…
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setMenu(false); onCheck(row) }}>
+                    <Icon name="refresh" size={15} /> Check this class on the LMS
                   </button>
                   {row.lmsUrl && (
                     <button type="button" role="menuitem" onClick={() => { setMenu(false); onOpen(row.lmsUrl!) }}>

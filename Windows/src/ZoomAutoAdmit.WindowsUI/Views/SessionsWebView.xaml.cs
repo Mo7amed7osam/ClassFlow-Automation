@@ -282,7 +282,7 @@ public partial class SessionsWebView : UserControl
                 {
                     track = m.Track, number = m.Number, folder = m.Folder, files = m.Files, skipped = m.Skipped, technical = m.Technical,
                     @fixed = m.Fixed, note = m.Note, assignmentTitle = m.AssignmentTitle, deadline = m.Deadline, noAssignment = m.NoAssignment, done = m.Done,
-                    description = m.Description, assignmentFile = m.AssignmentFile, chosen = m.Chosen, removedOnLms = m.RemovedOnLms,
+                    description = m.Description, assignmentFile = m.AssignmentFile, chosen = m.Chosen, removedOnLms = m.RemovedOnLms, seenOnLms = m.SeenOnLms,
                 },
             }),
         };

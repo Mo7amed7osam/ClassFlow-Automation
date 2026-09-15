@@ -43,6 +43,8 @@ public sealed record MaterialInfo(
     public string? Chosen { get; init; }
     /// <summary>The LMS showed some of it removed since the app put it there.</summary>
     public bool RemovedOnLms { get; init; }
+    /// <summary>When the session's own page (its attachments and assignment) was last read; null: never.</summary>
+    public string? SeenOnLms { get; init; }
 }
 
 /// <summary>
@@ -406,6 +408,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
                     Chosen = materials.Folders.GetValueOrDefault(materialKey),
                     // Removed on the LMS on purpose: shown as empty, never put back by itself.
                     RemovedOnLms = removed || removedFiles.Length > 0 || assignmentRemoved,
+                    SeenOnLms = seenAt?.LocalDateTime.ToString("ddd dd MMM HH:mm"),
                 };
 
                 bool linkNext = next is "Waiting for the Drive link" or "Add the record link" or "Record link";
