@@ -11,7 +11,7 @@ export default defineConfig({
     outDir: '../../src/ZoomAutoAdmit.WindowsUI/WebSessions',
     emptyOutDir: true,
     sourcemap: false,
-    rollupOptions: { input: { index: resolve(__dirname, 'index.html'), dashboard: resolve(__dirname, 'dashboard.html'), roster: resolve(__dirname, 'roster.html') } },
+    rollupOptions: { input: { index: resolve(import.meta.dirname, 'index.html'), dashboard: resolve(import.meta.dirname, 'dashboard.html'), roster: resolve(import.meta.dirname, 'roster.html') } },
   },
   server: { host: '127.0.0.1', port: 5190 },
 })

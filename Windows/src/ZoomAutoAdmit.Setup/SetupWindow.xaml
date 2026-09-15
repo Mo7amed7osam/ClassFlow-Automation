@@ -1,0 +1,71 @@
+<Window x:Class="ZoomAutoAdmit.Setup.SetupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Zoom Auto Admit Setup" Width="580" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen" Background="#F3F5F9" FontFamily="Segoe UI" Icon="app.ico">
+    <DockPanel>
+        <!-- Header -->
+        <Border DockPanel.Dock="Top" Padding="24,20">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#4F46E5" Offset="0"/>
+                    <GradientStop Color="#7C3AED" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <StackPanel Orientation="Horizontal">
+                <Image Source="app.ico" Width="52" Height="52" Margin="0,0,14,0"/>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Zoom Auto Admit" Foreground="White" FontSize="22" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="Subtitle" Text="Setup" Foreground="#E0E7FF" FontSize="12.5" Margin="0,2,0,0"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Footer -->
+        <Border DockPanel.Dock="Bottom" Padding="24,14" Background="White" BorderBrush="#E4E7EE" BorderThickness="0,1,0,0">
+            <DockPanel LastChildFill="False">
+                <Button x:Name="MainButton" DockPanel.Dock="Right" Content="Install" Style="{StaticResource PrimaryButton}" MinWidth="110" Click="OnMain" IsDefault="True"/>
+                <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="Cancel" Style="{StaticResource Button}" Margin="0,0,8,0" MinWidth="90" Click="OnClose" IsCancel="True"/>
+            </DockPanel>
+        </Border>
+
+        <Grid Margin="24,18,24,20">
+            <!-- 1. Choices -->
+            <StackPanel x:Name="FormPage">
+                <TextBlock Text="Install for this Windows user (no administrator rights needed)." Foreground="{StaticResource Muted}" FontSize="12.5" Margin="0,0,0,14" TextWrapping="Wrap"/>
+
+                <TextBlock Text="Install to" FontWeight="SemiBold" Foreground="{StaticResource Text}" Margin="0,0,0,5"/>
+                <DockPanel Margin="0,0,0,14">
+                    <Button DockPanel.Dock="Right" Content="Browse…" Style="{StaticResource Button}" Margin="8,0,0,0" Click="OnBrowse"/>
+                    <TextBox x:Name="FolderBox"/>
+                </DockPanel>
+
+                <StackPanel x:Name="ServerPanel">
+                    <TextBlock Text="Server address" FontWeight="SemiBold" Foreground="{StaticResource Text}" Margin="0,0,0,5"/>
+                    <TextBox x:Name="ServerBox"/>
+                    <TextBlock Text="The central server this PC connects to (the admin's). Leave it as it is unless the admin gave you another address."
+                               Foreground="{StaticResource Muted}" FontSize="11.5" Margin="0,4,0,14" TextWrapping="Wrap"/>
+                </StackPanel>
+                <TextBlock x:Name="KeptNote" Visibility="Collapsed" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,0,0,12" TextWrapping="Wrap"
+                           Text="This PC already has Zoom Auto Admit's settings: they are kept, and the app is updated in place."/>
+
+                <CheckBox x:Name="DesktopBox" Content="Put a shortcut on the desktop" IsChecked="True"/>
+                <CheckBox x:Name="LaunchBox" Content="Open Zoom Auto Admit when setup finishes" IsChecked="True"/>
+
+                <Border x:Name="WebViewWarning" Visibility="Collapsed" Background="#FDF3E3" CornerRadius="8" Padding="12,10" Margin="0,14,0,0">
+                    <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="#8A4B04">
+                        This PC does not have Microsoft Edge WebView2, which the app's pages need.
+                        <Hyperlink Click="OnWebView2">Install WebView2 from Microsoft</Hyperlink>, then open the app.
+                    </TextBlock>
+                </Border>
+            </StackPanel>
+
+            <!-- 2. Installing / done -->
+            <StackPanel x:Name="ProgressPage" Visibility="Collapsed" VerticalAlignment="Center">
+                <TextBlock x:Name="ProgressTitle" Text="Installing…" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Text}"/>
+                <TextBlock x:Name="ProgressText" Text="" Foreground="{StaticResource Muted}" FontSize="12.5" Margin="0,6,0,12" TextWrapping="Wrap"/>
+                <ProgressBar x:Name="Progress" Height="8" Minimum="0" Maximum="100" Foreground="{StaticResource Primary}" Background="#E4E7EE" BorderThickness="0"/>
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</Window>

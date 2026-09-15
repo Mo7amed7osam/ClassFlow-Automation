@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The installer people run: one .exe holding the whole app (self-contained, so the PC needs no
+    .NET). Built by Windows/installer/build-setup.ps1, which publishes the app, zips it, and passes
+    the zip here as PayloadZip. Installs for the current Windows user, without administrator rights.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ZoomAutoAdmit-Setup</AssemblyName>
+    <ApplicationIcon>..\ZoomAutoAdmit.WindowsUI\Assets\app.ico</ApplicationIcon>
+    <Product>Zoom Auto Admit</Product>
+    <Company>Zoom Auto Admit</Company>
+    <!-- The server a new PC connects to, set by the build script. -->
+    <DefaultServer Condition="'$(DefaultServer)' == ''"></DefaultServer>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="DefaultServer" Value="$(DefaultServer)" />
+    <Resource Include="..\ZoomAutoAdmit.WindowsUI\Assets\app.ico" Link="app.ico" />
+    <EmbeddedResource Include="$(PayloadZip)" LogicalName="payload.zip" Condition="'$(PayloadZip)' != '' And Exists('$(PayloadZip)')" />
+  </ItemGroup>
+</Project>

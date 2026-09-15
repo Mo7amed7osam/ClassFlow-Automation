@@ -18,6 +18,14 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // "Uninstall" in Windows' Apps list: remove the app and stop, without opening it.
+        if (e.Args.Any(a => a.Equals("--uninstall", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            Services.Uninstaller.Run();
+            Shutdown();
+            return;
+        }
         WindowsUiRuntimeLog.Initialize();
         WindowsUiRuntimeLog.Write("STARTUP", "Application startup entered.");
         // Tier 2 means the GPU draws the window. Tier 0 is software rendering, where every
