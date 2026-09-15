@@ -358,7 +358,7 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
           e.preventDefault()
           const result = await run('create', 'createUser', { username, displayName, password, groupIds: picked }) as Result | undefined
           if (result?.ok) {
-            const text = signInText(state.shareServer, { username: username.trim(), displayName: displayName.trim() }, namesOf(picked), password)
+            const text = signInText({ username: username.trim(), displayName: displayName.trim() }, namesOf(picked), password)
             setShare({ title: `${username.trim()} was created.`, text })
             copy(text)
             setUsername(''); setDisplayName(''); setPassword(''); setPicked([]); setAdding(false)
@@ -413,10 +413,10 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
                 ) : (
                   <>
                     <button type="button" className="btn small" onClick={() => { setEditing(u.id); setEditGroups(u.groups.map((g) => g.id)) }}>Groups</button>
-                    <button type="button" className="btn small" title="Copies the server, their username and groups, and what to do, ready to send them" onClick={() => copy(signInText(state.shareServer, u, u.groups.map((g) => g.name)))}><Icon name="sheet" size={13} /> Copy sign-in</button>
+                    <button type="button" className="btn small" title="Copies their username, password and groups, ready to send them" onClick={() => copy(signInText(u, u.groups.map((g) => g.name)))}><Icon name="sheet" size={13} /> Copy sign-in</button>
                     <button type="button" className="btn small ghost" disabled={working !== null} onClick={() => run('st', 'setStatus', { id: u.id, status: u.status === 'disabled' ? 'active' : 'disabled' })}>{u.status === 'disabled' ? 'Enable' : 'Disable'}</button>
                     <ResetPassword id={u.id} run={run} busy={working !== null} onSet={(password) => {
-                      const text = signInText(state.shareServer, u, u.groups.map((g) => g.name), password)
+                      const text = signInText(u, u.groups.map((g) => g.name), password)
                       setShare({ title: `${u.username}'s new password was set.`, text })
                       copy(text)
                     }} />
@@ -476,24 +476,15 @@ function GroupPicker({ groups, value, onChange }: { groups: { id: string; name: 
 }
 
 /**
- * What the admin sends a coordinator: where to sign in, as whom, their groups, and what to do. The
- * password is in it only right after the admin typed it (a new coordinator, or a reset).
+ * What the admin sends a coordinator: their username, password and groups. The password is in it
+ * only right after the admin typed it (a new coordinator, or a reset); the server keeps no copy.
  */
-function signInText(server: string, user: { username: string; displayName: string }, groups: string[], password?: string) {
-  const lines = [
-    `Zoom Auto Admit — your sign-in${user.displayName && user.displayName !== user.username ? ` (${user.displayName})` : ''}`,
-    '',
-    ...(server ? [`Server: ${server}`] : []),
+function signInText(user: { username: string; displayName: string }, groups: string[], password?: string) {
+  return [
     `Username: ${user.username}`,
     `Password: ${password ?? '(the one I gave you)'}`,
-    ...(groups.length ? [`Your groups: ${groups.join(', ')}`] : []),
-    '',
-    '1. Install Zoom Auto Admit (ZoomAutoAdmit-Setup) and open it.',
-    '2. "Get started" opens by itself. Sign in with this username and password,',
-    '   then add your LMS account, a Zoom account and session link for each group,',
-    '   and your OpenRouter key (you can skip that one).',
-  ]
-  return lines.join('\n')
+    `Groups: ${groups.length ? groups.join(', ') : '(none yet)'}`,
+  ].join('\n')
 }
 
 function ResetPassword({ id, run, busy, onSet }: { id: string; run: Run; busy: boolean; onSet: (password: string) => void }) {

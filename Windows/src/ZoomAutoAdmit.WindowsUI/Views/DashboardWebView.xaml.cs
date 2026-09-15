@@ -212,7 +212,6 @@ public partial class DashboardWebView : UserControl
         return new
         {
             server = new { up = server.IsServerUp || server.IsClientMode, text = server.StatusText, detail = server.StatusDetail, clientMode = server.IsClientMode },
-            shareServer = server.Settings.ServerUrl ?? "",
             status = central.Status,
             busy = central.IsBusy || sessions.IsBusy,
             savedLogin = central.Api.HasSavedLogin,

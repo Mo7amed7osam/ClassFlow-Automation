@@ -5,7 +5,6 @@ export function demoDash(): DashState {
   const today = new Date().toISOString().slice(0, 10)
   return {
     server: { up: true, text: 'Running on this PC', detail: 'Port 8780', clientMode: false },
-    shareServer: 'https://central.example.net/',
     status: '', busy: false, savedLogin: true,
     known: [{ username: 'admin', displayName: 'Admin', role: 'admin', hasSession: true, lastUsed: 'Tue 15 Sep' }, { username: 'sara.c', displayName: 'Sara', role: 'coordinator', hasSession: false, lastUsed: 'Sun 13 Sep' }],
     me: { username: 'admin', displayName: 'Admin', role: 'admin', allGroups: true, groups: ['CAI5_AIS4_S7', 'CAI5_AIS4_S8'] },

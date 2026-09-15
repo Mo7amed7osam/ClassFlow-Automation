@@ -5,14 +5,14 @@ import { groupHue, shortGroup } from '../logic'
 import type { Reply, WelcomeState, ZoomAccount } from './types'
 import { demoWelcome } from './demo'
 
-// Get started: what a new coordinator types once, in order. Their account first (the admin made it),
+// Get started: what a new user types once, in order. Their account first (coordinator or admin),
 // then their LMS account, a Zoom account and session link per group, and their own AI key (or Skip).
 
 const rpc = <T,>(method: string, params: Record<string, unknown> = {}) => (inApp ? call<T>(method, params) : demoWelcome.call<T>(method, params))
 
 type Step = 'account' | 'lms' | 'zoom' | 'ai' | 'done'
 const STEPS: { key: Step; title: string; hint: string }[] = [
-  { key: 'account', title: 'Your account', hint: 'The sign-in the admin gave you' },
+  { key: 'account', title: 'Your account', hint: 'Coordinator or admin' },
   { key: 'lms', title: 'LMS account', hint: 'The email you use on the LMS' },
   { key: 'zoom', title: 'Zoom & session links', hint: 'One Zoom account per group' },
   { key: 'ai', title: 'AI key', hint: 'OpenRouter · optional' },
@@ -149,7 +149,7 @@ function AccountStep({ state, onNext }: { state: WelcomeState; onNext: () => voi
 
   return (
     <section className="step">
-      <Head n={1} title="Your coordinator account" text="Sign in with the username and password the admin made for you. The app then knows your groups and keeps your LMS account for you." />
+      <Head n={1} title="Your account" text="Sign in with your username and password: the coordinator account the admin made for you, or the admin account. The app then knows your groups and keeps your LMS account for you." />
       {me ? (
         <div className="card-box signed">
           <span className="avatar">{me.displayName.slice(0, 1).toUpperCase()}</span>
@@ -250,7 +250,7 @@ function ZoomStep({ state, onNext }: { state: WelcomeState; onNext: () => void }
           return <ZoomGroup key={g} group={g} account={account} open={open === g} onToggle={() => setOpen(open === g ? null : g)}
             onSaved={() => setOpen(groups.find((x) => x !== g && !saved.some((z) => same(z.group, x))) ?? null)} />
         })}
-        {groups.length === 0 && <p className="muted">The admin has not given you a group yet. Type your group's name as the LMS writes it:</p>}
+        {groups.length === 0 && <p className="muted">{state.me?.allGroups ? 'You see every group.' : 'The admin has not given you a group yet.'} Type a group's name as the LMS writes it:</p>}
       </div>
       <form className="add-group" onSubmit={(e) => {
         e.preventDefault()
