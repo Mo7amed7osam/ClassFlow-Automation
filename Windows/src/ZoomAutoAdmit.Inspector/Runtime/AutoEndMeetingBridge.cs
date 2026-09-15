@@ -1,19 +1,26 @@
+using Microsoft.Playwright;
 using ZoomAutoAdmit.Attendance;
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.Core.Sessions;
 using ZoomAutoAdmit.UIAutomation.Meetings;
+using ZoomAutoAdmit.WebAutomation;
 using ZoomAutoAdmit.WindowsRuntime.Scheduling;
 
 namespace ZoomAutoAdmit.Inspector.Runtime;
 
 /// <summary>
-/// Ends a class for everyone once it is over (AutoEndRule): three hours after the class's time, when
-/// nobody but the host is left, or when fewer than five people have sat there muted for five
-/// minutes. It only reads the participants list (never opens anything) until then; right before
-/// ending it reads once more, and it never ends while anyone's mic is on, while the list cannot be
-/// read in full, or when this account is not the meeting's host. Zoom app meetings only: the Web
-/// list does not say who is muted.
+/// Ends a class for everyone once it is over. From three hours after the class's time:
+/// <list type="bullet">
+/// <item>nobody but the host is left (Zoom app and Web);</item>
+/// <item>the co-host the app made (the instructor) left and has not come back for five minutes
+/// (Zoom app and Web);</item>
+/// <item>fewer than five people have sat there muted for five minutes (Zoom app only: the Web list
+/// does not say who is muted).</item>
+/// </list>
+/// It only reads the participants list until then; right before ending it reads once more, and it
+/// never ends while anyone's mic is on, while the list cannot be read in full, or when this account
+/// is not the meeting's host. "Leave" is never pressed.
 /// </summary>
 public sealed class AutoEndMeetingBridge : IAsyncDisposable
 {
@@ -26,7 +33,7 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
     private readonly MeetingLifecycleEvents _events;
     private readonly Func<MeetingLaunchContext, IAttendanceParticipantSource> _participants;
     private readonly EndMeeting _end;
-    private readonly Func<bool> _meetingOpen;
+    private readonly Func<MeetingLaunchContext, bool> _meetingOpen;
     private readonly LmsMeetingBridge.ClassStart? _classStart;
     private readonly Action<string> _log;
     private readonly TimeSpan _interval;
@@ -40,17 +47,22 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
         MeetingLifecycleEvents events,
         Func<MeetingLaunchContext, IAttendanceParticipantSource> participants,
         EndMeeting? end = null,
-        Func<bool>? meetingOpen = null,
+        Func<MeetingLaunchContext, bool>? meetingOpen = null,
         LmsMeetingBridge.ClassStart? classStart = null,
         Action<string>? log = null,
         TimeSpan? interval = null,
         Func<DateTimeOffset>? now = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        Func<IPage?>? webPage = null)
     {
         _events = events;
         _participants = participants;
-        _end = end ?? ((_, token) => Task.Run(() => new ZoomDesktopMeetingEnder().EndForAll(), token));
-        _meetingOpen = meetingOpen ?? (() => ZoomDesktopMeetingEnder.MeetingWindow() != IntPtr.Zero);
+        _end = end ?? ((context, token) => context.EngineType == SessionEngineType.Web
+            ? ZoomWebMeetingEnder.EndForAllAsync(webPage?.Invoke(), token)
+            : Task.Run(() => new ZoomDesktopMeetingEnder().EndForAll(), token));
+        _meetingOpen = meetingOpen ?? (context => context.EngineType == SessionEngineType.Web
+            ? webPage?.Invoke() is { IsClosed: false }
+            : ZoomDesktopMeetingEnder.MeetingWindow() != IntPtr.Zero);
         _classStart = classStart;
         _log = log ?? (message => { WindowsSchedulerLog.Write("MEETING", message); ConsoleLogger.Info($"[AUTO_END] {message}"); });
         _interval = interval ?? TimeSpan.FromSeconds(30);
@@ -69,7 +81,7 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
                 if (_watches.Remove(context.Session.SessionId, out var stop)) { stop.Cancel(); stop.Dispose(); }
                 return Task.CompletedTask;
             }
-            if (context.EngineType != SessionEngineType.Desktop || _watches.ContainsKey(context.Session.SessionId)) return Task.CompletedTask;
+            if (_watches.ContainsKey(context.Session.SessionId)) return Task.CompletedTask;
             var cancellation = new CancellationTokenSource();
             _watches[context.Session.SessionId] = cancellation;
             _running.Add(Task.Run(() => WatchAsync(context, cancellation.Token)));
@@ -80,11 +92,14 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
     /// <summary>Completes when every watch seen so far has stopped (tests).</summary>
     public Task DrainAsync() { lock (_sync) return Task.WhenAll(_running); }
 
+    private sealed record Room(IReadOnlyList<ParticipantRow> Rows, IReadOnlyList<string> Names, bool Complete, RoomState State);
+
     private async Task WatchAsync(MeetingLaunchContext context, CancellationToken token)
     {
         try
         {
             var session = context.Session;
+            bool web = context.EngineType == SessionEngineType.Web;
             var local = session.StartTime.ToLocalTime();
             var classStart = new DateTimeOffset(local.Year, local.Month, local.Day, local.Hour, local.Minute, 0, local.Offset);
             if (!session.HasScheduledStart && _classStart != null &&
@@ -100,21 +115,40 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
             }
 
             var tracker = new AutoEndTracker();
-            RoomState? lastLogged = null;
+            bool sawCoHost = false;
+            DateTimeOffset? coHostLastSeen = null;
+            string? lastLogged = null;
             while (!token.IsCancellationRequested)
             {
                 if (!Enabled) { await _delay(_interval, token); continue; }
-                if (!_meetingOpen()) { _log($"{session.GroupId}: the meeting is over; stopped watching."); return; }
-                var (rows, state) = await ReadRoomAsync(context, token);
-                var held = tracker.Observe(_now(), state);
-                var decision = AutoEndRule.Decide(_now() - classStart, state, held);
-                if (state != lastLogged) { _log($"{session.GroupId} {classStart:HH:mm}: {Describe(state, rows)} - {decision.Reason}."); lastLogged = state; }
+                if (!_meetingOpen(context)) { _log($"{session.GroupId}: the meeting is over; stopped watching."); return; }
+                var room = await ReadRoomAsync(context, token);
+
+                // The instructor: whoever the app made co-host here, or anyone Zoom shows as co-host.
+                bool coHostHere = CoHostPresent(room, session.SessionId);
+                if (coHostHere) { sawCoHost = true; coHostLastSeen = _now(); }
+                else if (!sawCoHost && AssignedCoHosts.For(session.SessionId).Count > 0 && room.Complete) { sawCoHost = true; coHostLastSeen = _now(); }
+                TimeSpan? coHostGone = sawCoHost && !coHostHere && room.Complete && coHostLastSeen is { } seen ? _now() - seen : null;
+
+                var held = tracker.Observe(_now(), room.State);
+                var since = _now() - classStart;
+                var decision = AutoEndRule.Decide(since, web && room.State == RoomState.SmallAndSilent ? RoomState.Busy : room.State, held);
+                if (decision.Action != AutoEndAction.EndForAll)
+                {
+                    var byCoHost = CoHostAbsenceRule.Decide(since, sawCoHost, coHostGone, room.Rows.Any(r => r.Audio == ParticipantAudio.Unmuted), room.Complete);
+                    if (byCoHost.Action == AutoEndAction.EndForAll || coHostGone != null) decision = byCoHost;
+                }
+                string summary = $"{Describe(room)} - {decision.Reason}";
+                if (summary != lastLogged) { _log($"{session.GroupId} {classStart:HH:mm}: {summary}."); lastLogged = summary; }
+
                 if (decision.Action == AutoEndAction.EndForAll)
                 {
-                    if (!rows.Any(r => r.IsHostMe)) { _log($"{session.GroupId}: this account is not the meeting's host, so it is left open."); return; }
-                    // One more look right before: someone may have just unmuted or joined.
-                    var (_, again) = await ReadRoomAsync(context, token);
-                    if (again != state) { tracker.Observe(_now(), again); await _delay(_interval, token); continue; }
+                    if (!room.Rows.Any(r => r.IsHostMe)) { _log($"{session.GroupId}: this account is not the meeting's host, so it is left open."); return; }
+                    // One more look right before: someone may have just unmuted, joined or come back.
+                    var again = await ReadRoomAsync(context, token);
+                    bool stillOver = again.Complete && !again.Rows.Any(r => r.Audio == ParticipantAudio.Unmuted) &&
+                                     (again.State == room.State || !CoHostPresent(again, session.SessionId) && coHostGone != null);
+                    if (!stillOver) { await _delay(_interval, token); continue; }
                     _log($"{session.GroupId}: ending the meeting for everyone ({decision.Reason}).");
                     var (ended, message) = await _end(context, token);
                     _log($"{session.GroupId}: {message}");
@@ -127,25 +161,32 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
         catch (Exception ex) { _log($"{context.Session.GroupId}: the end-of-class watch stopped ({ex.GetType().Name}: {ex.Message})."); }
     }
 
-    private async Task<(IReadOnlyList<ParticipantRow> Rows, RoomState State)> ReadRoomAsync(MeetingLaunchContext context, CancellationToken token)
+    private static bool CoHostPresent(Room room, Guid sessionId)
+    {
+        var assigned = AssignedCoHosts.For(sessionId);
+        return room.Rows.Any(r => r.IsCoHost) ||
+               room.Names.Any(n => assigned.Any(a => string.Equals(a.Trim(), n.Trim(), StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private async Task<Room> ReadRoomAsync(MeetingLaunchContext context, CancellationToken token)
     {
         try
         {
             var read = await _participants(context).ReadAsync(token);
-            // Without Zoom's row text nobody's mic can be known: that is never an empty, silent room.
-            if (read.Participants.Any(p => p.RowLabel == null)) return ([], RoomState.Unreadable);
+            // Without Zoom's row text nobody's role or mic can be known: never an empty, silent room.
+            if (read.Participants.Any(p => p.RowLabel == null)) return new([], [], false, RoomState.Unreadable);
             var rows = read.Participants.Select(p => ParticipantRow.Parse(p.RowLabel)).ToArray();
-            return (rows, AutoEndRule.Classify(rows, read.IsComplete));
+            return new(rows, [.. read.Participants.Select(p => p.Name)], read.IsComplete, AutoEndRule.Classify(rows, read.IsComplete));
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception) { return ([], RoomState.Unreadable); }
+        catch (Exception) { return new([], [], false, RoomState.Unreadable); }
     }
 
-    private static string Describe(RoomState state, IReadOnlyList<ParticipantRow> rows) => state switch
+    private static string Describe(Room room) => room.State switch
     {
         RoomState.HostAlone => "only the host is in the meeting",
-        RoomState.SmallAndSilent => $"{rows.Count(r => !r.IsMe)} people, all muted",
-        RoomState.Busy => $"{rows.Count(r => !r.IsMe)} people, or someone talking",
+        RoomState.SmallAndSilent => $"{room.Rows.Count(r => !r.IsMe)} people, all muted",
+        RoomState.Busy => $"{room.Rows.Count(r => !r.IsMe)} people",
         _ => "the participants list could not be read",
     };
 

@@ -74,7 +74,8 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
         AutoEnd = createAutoEnd != null ? createAutoEnd(LifecycleEvents) : new AutoEndMeetingBridge(
             LifecycleEvents,
             attendanceSources ?? (context => sources.Create(context, mayOpenPanel: false)),
-            classStart: classStart);
+            classStart: classStart,
+            webPage: () => webEngine.ActiveMeetingPage);
         ConsoleLogger.Success("[BOOTSTRAP] Services initialized");
     }
 

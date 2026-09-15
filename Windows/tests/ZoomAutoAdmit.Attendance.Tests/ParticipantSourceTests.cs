@@ -7,6 +7,10 @@ namespace ZoomAutoAdmit.Attendance.Tests;
 
 public class ParticipantSourceTests
 {
+    /// <summary>What the page's one DOM read returns for these names (each row's text is its name).</summary>
+    private static WebAttendanceParticipantSource.WebRead Read(params string[] names) =>
+        new() { Rows = [.. names.Select(n => new WebAttendanceParticipantSource.WebRow { Name = n, Label = n })], Complete = false };
+
     [Fact]
     public void DesktopUsesOnlyNameElementsAndKeepsRawDuplicateNames()
     {
@@ -36,8 +40,8 @@ public class ParticipantSourceTests
         var list = new Mock<ILocator>(MockBehavior.Strict);
         list.Setup(l => l.CountAsync()).ReturnsAsync(1);
         list.Setup(l => l.IsVisibleAsync(It.IsAny<LocatorIsVisibleOptions>())).ReturnsAsync(true);
-        list.Setup(l => l.EvaluateAsync<string[]>(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<LocatorEvaluateOptions>()))
-            .ReturnsAsync(["eyouth coordinator", "eyouth coordinator"]);
+        list.Setup(l => l.EvaluateAsync<WebAttendanceParticipantSource.WebRead>(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<LocatorEvaluateOptions>()))
+            .ReturnsAsync(Read("eyouth coordinator", "eyouth coordinator"));
         var source = new WebAttendanceParticipantSource(page.Object, p =>
         {
             Assert.Same(page.Object, p);
@@ -78,9 +82,9 @@ public class ParticipantSourceTests
         var list = new Mock<ILocator>();
         list.Setup(l => l.CountAsync()).ReturnsAsync(1);
         list.Setup(l => l.IsVisibleAsync(It.IsAny<LocatorIsVisibleOptions>())).ReturnsAsync(true);
-        list.SetupSequence(l => l.EvaluateAsync<string[]>(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<LocatorEvaluateOptions>()))
+        list.SetupSequence(l => l.EvaluateAsync<WebAttendanceParticipantSource.WebRead>(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<LocatorEvaluateOptions>()))
             .ThrowsAsync(new PlaywrightException("Frame detached"))
-            .ReturnsAsync(["Participant"]);
+            .ReturnsAsync(Read("Participant"));
         var source = new WebAttendanceParticipantSource(page.Object, _ => list.Object);
         await Assert.ThrowsAsync<PlaywrightException>(() => source.ReadAsync(default));
         Assert.Single((await source.ReadAsync(default)).Participants);

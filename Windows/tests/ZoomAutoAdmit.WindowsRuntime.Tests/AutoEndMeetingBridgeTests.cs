@@ -20,7 +20,8 @@ public sealed class AutoEndMeetingBridgeTests
             Task.FromResult(new ParticipantReadResult([.. rowsAt(clock()).Select(l => new ParticipantPresence(l) { RowLabel = l })], true));
     }
 
-    private static async Task<(List<DateTimeOffset> Ended, bool Open)> Run(Func<DateTimeOffset, string[]> rowsAt, TimeSpan until)
+    private static async Task<(List<DateTimeOffset> Ended, bool Open)> Run(Func<DateTimeOffset, string[]> rowsAt, TimeSpan until,
+        SessionEngineType engine = SessionEngineType.Desktop, string? assignedCoHost = null)
     {
         var now = ClassTime.AddHours(1);
         var ended = new List<DateTimeOffset>();
@@ -28,12 +29,13 @@ public sealed class AutoEndMeetingBridgeTests
         var events = new MeetingLifecycleEvents();
         await using var bridge = new AutoEndMeetingBridge(events, _ => new Room(rowsAt, () => now),
             end: (_, _) => { ended.Add(now); open = false; return Task.FromResult((true, "ended")); },
-            meetingOpen: () => open && now < ClassTime + until,
+            meetingOpen: _ => open && now < ClassTime + until,
             log: _ => { }, interval: TimeSpan.FromSeconds(30), now: () => now,
             delay: (d, _) => { now += d; return Task.CompletedTask; });
         var meeting = new ScheduledMeeting(new Uri("https://zoom.us/j/12345678901"), "S7", DateTimeOffset.UtcNow, GroupId: "CAI5_AIS4_S7", ScheduledStartTime: ClassTime);
         var session = new MeetingSession(Guid.NewGuid(), meeting, DateTimeOffset.UtcNow);
-        await events.PublishAsync(new MeetingLaunchContext(session, new("S7", "S7", "ref"), SessionEngineType.Desktop, null), MeetingLifecycleEventKind.Active);
+        if (assignedCoHost != null) AssignedCoHosts.Record(session.SessionId, assignedCoHost);
+        await events.PublishAsync(new MeetingLaunchContext(session, new("S7", "S7", "ref"), engine, null), MeetingLifecycleEventKind.Active);
         await bridge.DrainAsync();
         return (ended, open);
     }
@@ -70,6 +72,42 @@ public sealed class AutoEndMeetingBridgeTests
         var (ended, _) = await Run(t => t - ClassTime is var age && age > TimeSpan.FromMinutes(184) && age < TimeSpan.FromMinutes(185)
             ? [Host, Guest("A"), Guest("Teacher", talking: true)] : [Host, Guest("A"), Guest("Teacher")], TimeSpan.FromHours(5));
         Assert.True(Assert.Single(ended) - ClassTime >= TimeSpan.FromMinutes(190));
+    }
+
+    private static string Instructor(bool talking = false) => $"Mostafa Badr,(Co-host, guest), Computer audio {(talking ? "unmuted" : "muted")},Video on";
+
+    [Fact]
+    public async Task TheInstructorLeavingForFiveMinutesAfterThreeHoursEndsIt()
+    {
+        // Twenty students still there, but the co-host (the instructor) left at 3 h 10.
+        string[] students = [.. Enumerable.Range(1, 20).Select(i => Guest("Student " + i))];
+        var (ended, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(190) ? [Host, Instructor(), .. students] : [Host, .. students], TimeSpan.FromHours(5));
+        // Last seen at the 30-second read just before 3 h 10: five minutes after that.
+        Assert.InRange(Assert.Single(ended) - ClassTime, TimeSpan.FromMinutes(194), TimeSpan.FromMinutes(196));
+    }
+
+    [Fact]
+    public async Task TheInstructorComingBackKeepsItGoing()
+    {
+        string[] students = [Guest("A"), Guest("B"), Guest("C"), Guest("D"), Guest("E")];
+        // Out for three minutes only, then back until the meeting closes by itself at 4 h.
+        var (ended, _) = await Run(t => t - ClassTime is var age && age > TimeSpan.FromMinutes(185) && age < TimeSpan.FromMinutes(188)
+            ? [Host, .. students] : [Host, Instructor(), .. students], TimeSpan.FromHours(4));
+        Assert.Empty(ended);
+    }
+
+    [Fact]
+    public async Task OnTheWebTheHostAloneOrTheInstructorGoneEndsIt()
+    {
+        // The Web list says who is who, not who is muted.
+        const string webHost = "Mohab (Host, me)";
+        var (alone, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(170) ? [webHost, "Rowida Amr"] : [webHost], TimeSpan.FromHours(5), SessionEngineType.Web);
+        Assert.InRange(Assert.Single(alone) - ClassTime, TimeSpan.FromHours(3), TimeSpan.FromMinutes(182));
+        var (gone, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(200) ? [webHost, "Mostafa Badr", "Rowida Amr", "A", "B", "C", "D"] : [webHost, "Rowida Amr", "A", "B", "C", "D"],
+            TimeSpan.FromHours(5), SessionEngineType.Web, assignedCoHost: "Mostafa Badr");
+        Assert.InRange(Assert.Single(gone) - ClassTime, TimeSpan.FromMinutes(204), TimeSpan.FromMinutes(206));
+        var (small, _) = await Run(_ => [webHost, "Rowida Amr", "A"], TimeSpan.FromHours(4), SessionEngineType.Web);
+        Assert.Empty(small);                                     // a small room is not ended on the Web: mics are unknown
     }
 
     [Fact]

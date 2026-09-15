@@ -9,7 +9,10 @@ public sealed record ParticipantRow(bool IsMe, ParticipantAudio Audio)
 {
     /// <summary>This app's own row, and it is the meeting's host (not a co-host).</summary>
     public bool IsHostMe { get; init; }
+    /// <summary>Someone else who is a co-host (the instructor the app made co-host, usually).</summary>
+    public bool IsCoHost { get; init; }
     private static readonly Regex HostMe = new(@"\(\s*host\s*,\s*me\s*\)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex CoHost = new(@"\(\s*co-?host\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     // "Unmuted" contains "muted", so it is looked for first.
     private static readonly Regex Unmuted = new(@"\baudio\s+unmuted\b|\b(speaking|talking)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex Muted = new(@"\baudio\s+muted\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -30,7 +33,7 @@ public sealed record ParticipantRow(bool IsMe, ParticipantAudio Audio)
             : Muted.IsMatch(text) ? ParticipantAudio.Muted
             : Status.IsMatch(text) && !text.Contains("audio", StringComparison.OrdinalIgnoreCase) ? ParticipantAudio.NoAudio
             : ParticipantAudio.Unknown;
-        return new(me, audio) { IsHostMe = HostMe.IsMatch(text) };
+        return new(me, audio) { IsHostMe = HostMe.IsMatch(text), IsCoHost = !me && CoHost.IsMatch(text) };
     }
 }
 
@@ -80,6 +83,30 @@ public static class AutoEndRule
             RoomState.Unreadable => new(AutoEndAction.Wait, "the participants list could not be read in full"),
             _ => new(AutoEndAction.Wait, $"waiting for the state to hold ({heldFor.TotalSeconds:0} s so far)"),
         };
+    }
+}
+
+public static class CoHostAbsenceRule
+{
+    public static readonly TimeSpan GoneFor = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// The user's second rule: from three hours after the class's time, a co-host who was in the
+    /// meeting (the instructor the app made co-host) and has been gone five minutes ends it - the
+    /// five minutes counted from the three hours at the earliest. Not while anyone's mic is on, and
+    /// only on a read that saw the whole list.
+    /// </summary>
+    public static AutoEndDecision Decide(TimeSpan sinceClassStart, bool sawCoHost, TimeSpan? coHostGoneFor, bool anyoneTalking, bool readComplete)
+    {
+        if (sinceClassStart < AutoEndRule.EndAfter) return new(AutoEndAction.Wait, "less than three hours since the class's time");
+        if (!sawCoHost || coHostGoneFor is not { } gone) return new(AutoEndAction.Wait, "the co-host is in the meeting (or never was)");
+        if (!readComplete) return new(AutoEndAction.Wait, "the participants list could not be read in full");
+        if (anyoneTalking) return new(AutoEndAction.Wait, "someone's mic is on");
+        var pastThree = sinceClassStart - AutoEndRule.EndAfter;
+        if (gone > pastThree) gone = pastThree;
+        return gone >= GoneFor
+            ? new(AutoEndAction.EndForAll, $"the co-host left and has not come back for {GoneFor.TotalMinutes:0} minutes")
+            : new(AutoEndAction.Wait, $"the co-host left {gone.TotalMinutes:0.#} minutes ago");
     }
 }
 

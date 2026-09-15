@@ -40,27 +40,45 @@ public sealed class WebAttendanceParticipantSource : IAttendanceParticipantSourc
             throw new InvalidOperationException("Exactly one visible Joined list is required for attendance.");
 
         // One DOM read avoids mixing names from separate re-renders. No hover/click/scroll.
-        var names = await list.EvaluateAsync<string[]>("""
+        // Each row's own text comes too ("Mohab (Host, me)", "Mostafa (Co-host)"), and whether the
+        // list shows everyone: a list that does not scroll has every row rendered.
+        var read = await list.EvaluateAsync<WebRead>("""
             (list, selectors) => {
               if (/waiting/i.test(list.getAttribute('aria-label') || ''))
                 throw new Error('Attendance requires Joined, not Waiting Room');
               const rows = [...list.querySelectorAll(selectors.rows)]
                 .filter(row => !row.parentElement?.closest(selectors.rows) ||
                   !list.contains(row.parentElement.closest(selectors.rows)));
-              return rows.map(row => {
+              const read = rows.map(row => {
                 const names = [...row.querySelectorAll(selectors.names)].filter(node =>
                   !node.closest('button,[role="button"],menu,[role="menu"]'));
                 const name = names.map(node => node.getAttribute('data-name') || node.textContent || '')
                   .find(value => value.trim().length > 0);
                 if (!name) throw new Error('Participant row has no readable name');
-                return name;
+                const label = (row.getAttribute('aria-label') || row.innerText || row.textContent || '').replace(/\s+/g, ' ').trim();
+                return { name, label };
               });
+              const scroller = [list, ...list.querySelectorAll('*')].find(e => e.scrollHeight > e.clientHeight + 2 && /auto|scroll/.test(getComputedStyle(e).overflowY));
+              return { rows: read, complete: !scroller };
             }
             """, new { rows = _rowSelector, names = _nameSelector }, new() { Timeout = 3000 })
             .WaitAsync(cancellationToken);
-        if (names.Length == 0)
+        if (read.Rows.Length == 0)
             throw new InvalidOperationException("No participant rows exposed; cannot distinguish empty from unavailable DOM rows.");
-        return new(names.Select(name => new ParticipantPresence(name)).ToArray(), false,
-            "Rendered Joined-list rows only; virtualized/collapsed rows may not be exposed.");
+        return new(read.Rows.Select(row => new ParticipantPresence(row.Name) { RowLabel = row.Label }).ToArray(), read.Complete,
+            read.Complete ? "Every Joined-list row was on the page." : "Rendered Joined-list rows only; virtualized/collapsed rows may not be exposed.");
+    }
+
+    /// <summary>What one read of the list returns: each row's name and whole text, and whether every row was on the page.</summary>
+    public sealed class WebRead
+    {
+        public WebRow[] Rows { get; set; } = [];
+        public bool Complete { get; set; }
+    }
+
+    public sealed class WebRow
+    {
+        public string Name { get; set; } = "";
+        public string Label { get; set; } = "";
     }
 }

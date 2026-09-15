@@ -197,6 +197,9 @@ public sealed class SessionRoleBridge : IAsyncDisposable
                     if (outcome.Success)
                     {
                         assignedAnyone = true;
+                        // The end-of-class watch looks for this person: gone for five minutes after the
+                        // three hours, the class is over.
+                        AssignedCoHosts.Record(session.SessionId, name);
                         Log($"[COHOST] Assignment successful: {outcome.Message}", session.SessionId);
                         Raise(new(SessionRoleNoticeKind.CoHostAssigned, "Co-host assigned",
                             $"{match.Person.Name} — matched \"{name}\" in {profile!.SessionType} ({match.Source}, {match.Confidence}%).", session.SessionId));
