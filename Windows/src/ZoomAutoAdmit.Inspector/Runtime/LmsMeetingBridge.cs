@@ -71,12 +71,12 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
         {
             if (!_handled.Add(session.SessionId)) return Task.CompletedTask;     // live once per meeting
             // Not awaited by the meeting: admission goes on while the dashboard is driven.
-            _pending.Add(Task.Run(() => HandleAsync(session.GroupId, session.StartTime, _stopping.Token)));
+            _pending.Add(Task.Run(() => HandleAsync(session.GroupId, session.StartTime, _stopping.Token, snapToClass: !session.HasScheduledStart)));
         }
         return Task.CompletedTask;
     }
 
-    private async Task HandleAsync(string group, DateTimeOffset scheduledStart, CancellationToken token)
+    private async Task HandleAsync(string group, DateTimeOffset scheduledStart, CancellationToken token, bool snapToClass = true)
     {
         if (string.IsNullOrWhiteSpace(group)) return;
         var local = scheduledStart.ToLocalTime();
@@ -85,7 +85,8 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
         start = new TimeOnly(start.Hour, start.Minute);
         // A meeting opened by hand (or late) has only the moment it went live: it is the class it is
         // nearest to, so its steps are that class's and the Sessions page shows one card, not two.
-        if (_classStart != null)
+        // A class whose time was given (scheduled, or taken back after a restart) keeps it.
+        if (_classStart != null && snapToClass)
         {
             try
             {

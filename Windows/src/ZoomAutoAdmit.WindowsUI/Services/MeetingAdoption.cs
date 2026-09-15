@@ -50,8 +50,19 @@ public static class MeetingAdoption
             var s = current.Schedule;
             var accounts = await bootstrapper.AccountManager.ListConfiguredAsync(token);
             var account = accounts.FirstOrDefault(a => a.AccountId.Equals(s.AccountId, StringComparison.OrdinalIgnoreCase));
+            // The class this meeting was already recorded as before the app closed (a meeting opened by
+            // hand at 18:51 is kept as 18:51): its attendance, results and LMS steps carry on under the
+            // same class instead of starting a second one.
+            string group = s.GroupName ?? s.AccountId;
+            var recorded = new ExtensionAttendanceFeed().Since(now.AddHours(-4))
+                .Where(x => x.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && x.Start != DateTime.MinValue &&
+                            Math.Abs((x.Start - current.Start).TotalMinutes) <= ScheduleTiming.SameClassWindow.TotalMinutes)
+                .MaxBy(x => x.At);
+            var start = recorded?.Start ?? current.Start;
+            if (start != current.Start) ConsoleLogger.Info($"[ADOPT] {group}: carrying on as the {start:HH:mm} class it was recorded as.");
+            current.Start = start;
             var meeting = new ScheduledMeeting(new Uri(s.MeetingUrl), s.AccountId, DateTimeOffset.Now,
-                GroupId: s.GroupName ?? s.AccountId,
+                GroupId: group,
                 ScheduledStartTime: new DateTimeOffset(current.Start, DateTimeOffset.Now.Offset));
             var session = new MeetingSession(Guid.NewGuid(), meeting, DateTimeOffset.UtcNow);
             var context = new MeetingLaunchContext(session,

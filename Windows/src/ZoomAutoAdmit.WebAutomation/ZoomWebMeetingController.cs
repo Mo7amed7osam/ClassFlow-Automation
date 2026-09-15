@@ -139,7 +139,29 @@ public sealed class ZoomWebMeetingController
                         uri.Host.EndsWith(".zoom.com", StringComparison.OrdinalIgnoreCase);
         if (!zoomHost)
             throw new ArgumentException("--meeting-url must use a Zoom domain.", nameof(meetingUrl));
-        return uri;
+        return JoinForm(uri);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex MeetingNumber = new(@"^\d{9,12}$");
+
+    /// <summary>
+    /// A meeting's link in its "/j/&lt;number&gt;" form, which the Web client needs (the user's rule:
+    /// the "j" must be there): "zoom.us/91473108490", "/wc/join/91473108490" and
+    /// "/wc/91473108490/join" all become "zoom.us/j/91473108490", keeping the passcode (?pwd=…).
+    /// Any other link (personal /my/ links, /s/ start links) is left as it is.
+    /// </summary>
+    public static Uri JoinForm(Uri uri)
+    {
+        string[] parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        string? number = parts switch
+        {
+            [var n] when MeetingNumber.IsMatch(n) => n,
+            ["wc", "join", var n] when MeetingNumber.IsMatch(n) => n,
+            ["wc", var n, "join" or "start"] when MeetingNumber.IsMatch(n) => n,
+            _ => null,
+        };
+        if (number == null) return uri;
+        return new UriBuilder(uri) { Path = "/j/" + number }.Uri;
     }
 
     public static async Task<IPage> OpenMeetingPageAsync(IBrowserContext context, Uri meetingUrl)

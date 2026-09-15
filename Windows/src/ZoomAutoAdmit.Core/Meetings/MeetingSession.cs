@@ -26,6 +26,7 @@ public sealed class MeetingSession
         AccountId = meeting.AccountId;
         GroupId = string.IsNullOrWhiteSpace(meeting.GroupId) ? meeting.AccountId : meeting.GroupId.Trim();
         StartTime = meeting.ScheduledStartTime ?? meeting.StartTime;
+        HasScheduledStart = meeting.ScheduledStartTime.HasValue;
         CreatedAt = createdAt;
         _state = MeetingState.Scheduled;
         _history = [new(MeetingState.Scheduled, createdAt, "Session created.")];
@@ -36,6 +37,8 @@ public sealed class MeetingSession
     public string AccountId { get; }
     public string GroupId { get; }
     public DateTimeOffset StartTime { get; }
+    /// <summary>The class's time was given (a scheduled or taken-back class); false: only when it went live.</summary>
+    public bool HasScheduledStart { get; }
     public DateTimeOffset CreatedAt { get; }
 
     public MeetingState State

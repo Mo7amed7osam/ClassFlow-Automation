@@ -16,6 +16,17 @@ public class ZoomWebMeetingControllerTests
         Assert.Throws<ArgumentException>(() => ZoomWebMeetingController.ValidateMeetingUrl(value));
     }
 
+    [Theory]
+    [InlineData("https://zoom.us/j/91473108490", "https://zoom.us/j/91473108490")]
+    [InlineData("https://zoom.us/91473108490", "https://zoom.us/j/91473108490")]                          // the "j" forgotten
+    [InlineData("https://us06web.zoom.us/wc/join/91473108490?pwd=abc", "https://us06web.zoom.us/j/91473108490?pwd=abc")]
+    [InlineData("https://zoom.us/wc/91473108490/join", "https://zoom.us/j/91473108490")]
+    [InlineData("https://zoom.us/my/some.teacher", "https://zoom.us/my/some.teacher")]                     // not a meeting number
+    public void MeetingLinksAlwaysOpenInTheirJForm(string link, string expected)
+    {
+        Assert.Equal(expected, ZoomWebMeetingController.ValidateMeetingUrl(link).AbsoluteUri);
+    }
+
     [Fact]
     public async Task ManagedContextOpensMeetingUrlWithoutExistingChrome()
     {
