@@ -103,7 +103,7 @@ public sealed class ViewModelTests
         {
             using var viewModel = new MainViewModel(service,
                 roster: new ZoomAutoAdmit.Roster.StudentRosterStore(Path.Combine(root, "students.json")),
-                groups: new ZoomAutoAdmit.Roster.GroupRosterStore(Path.Combine(root, "groups.json"), seedOnFirstUse: false));
+                groups: new ZoomAutoAdmit.Roster.GroupRosterStore(Path.Combine(root, "groups.json")));
             var exception = await Assert.ThrowsAsync<AggregateException>(viewModel.InitializeAsync);
             Assert.NotEmpty(exception.InnerExceptions);
             Assert.Equal(1, service.GetActiveSessionsCalls);

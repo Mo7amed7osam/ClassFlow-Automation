@@ -4,7 +4,4 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="Data/initial-groups.json" LogicalName="ZoomAutoAdmit.Roster.initial-groups.json" />
-  </ItemGroup>
 </Project>

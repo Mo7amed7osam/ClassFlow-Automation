@@ -159,6 +159,18 @@ public partial class DashboardWebView : UserControl
                 await central.Api.SetUserGroupsAsync(Text(p, "id"), List(p, "groupIds"));
                 await central.RefreshAsync();
                 return Done("Their groups were saved.");
+            case "copyText":
+            {
+                // The sign-in the admin sends a coordinator. Only the clipboard sees it; nothing logs it.
+                string text = Text(p, "text");
+                if (text.Length == 0) return new { ok = false, message = "Nothing to copy." };
+                for (int attempt = 0; ; attempt++)
+                {
+                    try { Clipboard.SetText(text); break; }
+                    catch (System.Runtime.InteropServices.COMException) when (attempt < 4) { await Task.Delay(100); }
+                }
+                return Done("Copied. Paste it in a message to them.");
+            }
             case "resetPassword":
             {
                 string password = Text(p, "password");
@@ -200,6 +212,7 @@ public partial class DashboardWebView : UserControl
         return new
         {
             server = new { up = server.IsServerUp || server.IsClientMode, text = server.StatusText, detail = server.StatusDetail, clientMode = server.IsClientMode },
+            shareServer = server.Settings.ServerUrl ?? "",
             status = central.Status,
             busy = central.IsBusy || sessions.IsBusy,
             savedLogin = central.Api.HasSavedLogin,

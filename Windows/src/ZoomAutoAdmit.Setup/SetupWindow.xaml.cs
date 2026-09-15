@@ -75,7 +75,8 @@ public partial class SetupWindow : Window
             await Task.Run(() => Installer.Install(folder, server, desktop, progress));
             _stage = Stage.Done;
             ProgressTitle.Text = "Zoom Auto Admit is installed";
-            ProgressText.Text = $"Installed in {folder}. It is in the Start menu{(desktop ? " and on the desktop" : "")}, and can be removed from Windows' Apps list.";
+            ProgressText.Text = $"Installed in {folder}. It is in the Start menu{(desktop ? " and on the desktop" : "")}, and can be removed from Windows' Apps list. " +
+                "When it opens, Get started walks you through your account and the rest.";
             Progress.Value = 100;
             MainButton.Content = "Open Zoom Auto Admit";
             CloseButton.Content = "Close";

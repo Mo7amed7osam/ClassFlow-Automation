@@ -13,7 +13,7 @@ namespace ZoomAutoAdmit.WindowsUI.Tests;
 public class GroupRosterViewModelTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "group-roster-ui-tests-" + Guid.NewGuid().ToString("N"));
-    private GroupRosterStore Store => new(Path.Combine(_root, "groups.json"), seedOnFirstUse: false);
+    private GroupRosterStore Store => new(Path.Combine(_root, "groups.json"));
     private sealed class Dialogs : IGroupRosterDialogs
     {
         public bool Confirm = true;

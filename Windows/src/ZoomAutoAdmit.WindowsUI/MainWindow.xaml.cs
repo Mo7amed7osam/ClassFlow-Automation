@@ -63,6 +63,10 @@ public partial class MainWindow : Window
     private void ToggleTheme(object sender, RoutedEventArgs e) => ApplyTheme(!IsDarkTheme);
     private void UseDarkTheme(object sender, RoutedEventArgs e) => ApplyTheme(true);
     private void UseLightTheme(object sender, RoutedEventArgs e) => ApplyTheme(false);
+    private void OpenGetStarted(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is ViewModels.MainViewModel model) Views.WelcomeWindow.Open(this, model);
+    }
 
     private void MinimizeWindow(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     private void MaximizeWindow(object sender, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;

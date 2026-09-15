@@ -8,7 +8,7 @@ public class GroupRosterTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "group-roster-tests-" + Guid.NewGuid().ToString("N"));
     private string FilePath => Path.Combine(_root, "groups.json");
-    private GroupRosterStore Store(bool seed = false) => new(FilePath, seedOnFirstUse: seed);
+    private GroupRosterStore Store() => new(FilePath);
     private async Task<RosterGroup> Group(string id = "Any-New-Group")
     {
         await Store().CreateAsync(id, "Dynamic group");
@@ -29,7 +29,7 @@ public class GroupRosterTests : IDisposable
         Assert.Equal("Renamed group", renamed.DisplayName);
         Assert.Equal(1, renamed.Revision);
         await Store().DeleteAsync(renamed);
-        Assert.Empty(await Store(true).ListAsync());
+        Assert.Empty(await Store().ListAsync());
         Assert.True(File.Exists(FilePath + ".bak"));
     }
 
@@ -139,20 +139,14 @@ public class GroupRosterTests : IDisposable
     }
 
     [Fact]
-    public async Task SeedDataHasExactCountsOrderAndStableGeneratedIdsAndDoesNotResurrectDeletedGroups()
+    public async Task ANewPcStartsWithNoGroupsAndDeletedGroupsStayDeleted()
     {
-        var first = await Store(true).ListAsync();
-        Assert.Equal(new[] { "CAI4_AIS4_S7", "CAI4_AIS4_S8" }, first.Select(g => g.GroupId));
-        Assert.Equal(new[] { 27, 25 }, first.Select(g => g.Students.Count));
-        Assert.Equal("menna allah mohammed mohammed mashhout", first[0].Students[14].FullName);
-        Assert.Equal("youssef Samir Zali Abdelmalk", first[1].Students[23].FullName);
-        foreach (var group in first)
-            Assert.Equal(Enumerable.Range(1, group.Students.Count), group.Students.Select(s => s.Order));
-        var second = await Store(true).ListAsync();
-        Assert.Equal(first.SelectMany(g => g.Students).Select(s => s.StudentId), second.SelectMany(g => g.Students).Select(s => s.StudentId));
-        await Store(true).DeleteAsync(first[0]);
-        await Store(true).DeleteAsync(first[1]);
-        Assert.Empty(await Store(true).ListAsync());
+        // Nobody else's students ship with the app: the first read is an empty roster, kept on disk.
+        Assert.Empty(await Store().ListAsync());
+        Assert.True(File.Exists(FilePath));
+        await Store().CreateAsync("G1", "Group");
+        await Store().DeleteAsync(Assert.Single(await Store().ListAsync()));
+        Assert.Empty(await Store().ListAsync());
     }
 
     [Fact]
@@ -161,10 +155,10 @@ public class GroupRosterTests : IDisposable
         Directory.CreateDirectory(_root);
         var legacyPath = Path.Combine(_root, "students.json");
         await File.WriteAllTextAsync(legacyPath, "legacy data");
-        await Store(true).ListAsync();
+        await Store().ListAsync();
         Assert.Equal("legacy data", await File.ReadAllTextAsync(legacyPath));
         await File.WriteAllTextAsync(FilePath, "{corrupt");
-        await Assert.ThrowsAnyAsync<Exception>(() => Store(true).CreateAsync("New", "New"));
+        await Assert.ThrowsAnyAsync<Exception>(() => Store().CreateAsync("New", "New"));
         Assert.Equal("{corrupt", await File.ReadAllTextAsync(FilePath));
     }
 
@@ -194,7 +188,7 @@ public class GroupRosterTests : IDisposable
     public async Task LogsDescribeGroupAndStudentChangesWithoutNames()
     {
         var logs = new List<string>();
-        var store = new GroupRosterStore(FilePath, logs.Add, seedOnFirstUse: false);
+        var store = new GroupRosterStore(FilePath, logs.Add);
         await store.CreateAsync("G", "Group");
         var g = Assert.Single(await store.ListAsync());
         await store.AddStudentAsync(g, Student(g, "S1", 1));

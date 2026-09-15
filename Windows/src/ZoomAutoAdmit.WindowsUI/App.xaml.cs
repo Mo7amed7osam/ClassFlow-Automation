@@ -88,6 +88,12 @@ public partial class App : Application
             window.DataContext = _viewModel;
             await _viewModel.InitializeAsync();
             WindowsUiRuntimeLog.Write("VIEWMODELS", "View model initialization completed.");
+            // A new coordinator's PC: nothing is set up yet, so the app walks them through it first.
+            if (window is MainWindow && Views.WelcomeWindow.IsFirstRun(_viewModel))
+            {
+                var model = _viewModel;
+                _ = Dispatcher.BeginInvoke(() => Views.WelcomeWindow.Open(window, model), DispatcherPriority.ApplicationIdle);
+            }
             StartCentralServerInBackground(_viewModel.RecordingsDashboard);
             RepairScheduledMeetingsInBackground(bootstrapper);
             // Opened mid-class (after a crash, or closed by hand): take the open meeting back.

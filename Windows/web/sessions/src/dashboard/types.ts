@@ -1,6 +1,8 @@
 // What DashboardWebView.BuildState sends. Kept in step with that method by hand.
 export interface DashState {
   server: { up: boolean; text: string; detail: string; clientMode: boolean }
+  /** The address coordinators' apps use to reach the server (put in the sign-in the admin copies). */
+  shareServer: string
   status: string
   busy: boolean
   savedLogin: boolean

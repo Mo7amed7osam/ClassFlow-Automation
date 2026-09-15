@@ -331,6 +331,10 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
   const [picked, setPicked] = useState<string[]>([])
   const [editing, setEditing] = useState<string | null>(null)
   const [editGroups, setEditGroups] = useState<string[]>([])
+  // A password the admin just typed (new coordinator, or a reset) is shown to copy once, then dropped.
+  const [share, setShare] = useState<{ title: string; text: string } | null>(null)
+  const copy = (text: string) => run('copy', 'copyText', { text })
+  const namesOf = (ids: string[]) => groups.filter((g) => ids.includes(g.id)).map((g) => g.name)
 
   return (
     <section className="panel coordinators">
@@ -338,13 +342,27 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
         <h2><Icon name="people" size={18} /> Coordinators</h2>
         <button type="button" className="btn primary small" onClick={() => setAdding(!adding)}>{adding ? 'Close' : '+ Add coordinator'}</button>
       </header>
-      <p className="muted">A coordinator signs in to this Dashboard (in their copy of the app) and sees only the groups ticked here — in the app and on the server.</p>
+      <p className="muted">A coordinator signs in to this Dashboard (in their copy of the app) and sees only the groups ticked here — in the app and on the server. <b>Copy sign-in</b> puts everything they need in one message.</p>
+
+      {share && (
+        <div className="share-box" role="status">
+          <Icon name="check" size={16} />
+          <div className="grow"><b>{share.title}</b><span>Copy it and send it to them (WhatsApp, email…). The password is not kept anywhere after you close this.</span></div>
+          <button type="button" className="btn small primary" onClick={() => copy(share.text)}><Icon name="sheet" size={13} /> Copy sign-in</button>
+          <button type="button" className="btn small ghost" onClick={() => setShare(null)}>Done</button>
+        </div>
+      )}
 
       {adding && (
         <form className="add-coord" onSubmit={async (e) => {
           e.preventDefault()
           const result = await run('create', 'createUser', { username, displayName, password, groupIds: picked }) as Result | undefined
-          if (result?.ok) { setUsername(''); setDisplayName(''); setPassword(''); setPicked([]); setAdding(false) }
+          if (result?.ok) {
+            const text = signInText(state.shareServer, { username: username.trim(), displayName: displayName.trim() }, namesOf(picked), password)
+            setShare({ title: `${username.trim()} was created.`, text })
+            copy(text)
+            setUsername(''); setDisplayName(''); setPassword(''); setPicked([]); setAdding(false)
+          }
         }}>
           <div className="form-grid">
             <label className="field"><span>Username</span><input autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="e.g. sara.coordinator" /></label>
@@ -395,8 +413,13 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
                 ) : (
                   <>
                     <button type="button" className="btn small" onClick={() => { setEditing(u.id); setEditGroups(u.groups.map((g) => g.id)) }}>Groups</button>
+                    <button type="button" className="btn small" title="Copies the server, their username and groups, and what to do, ready to send them" onClick={() => copy(signInText(state.shareServer, u, u.groups.map((g) => g.name)))}><Icon name="sheet" size={13} /> Copy sign-in</button>
                     <button type="button" className="btn small ghost" disabled={working !== null} onClick={() => run('st', 'setStatus', { id: u.id, status: u.status === 'disabled' ? 'active' : 'disabled' })}>{u.status === 'disabled' ? 'Enable' : 'Disable'}</button>
-                    <ResetPassword id={u.id} run={run} busy={working !== null} />
+                    <ResetPassword id={u.id} run={run} busy={working !== null} onSet={(password) => {
+                      const text = signInText(state.shareServer, u, u.groups.map((g) => g.name), password)
+                      setShare({ title: `${u.username}'s new password was set.`, text })
+                      copy(text)
+                    }} />
                   </>
                 )}
               </div>
@@ -452,12 +475,38 @@ function GroupPicker({ groups, value, onChange }: { groups: { id: string; name: 
   )
 }
 
-function ResetPassword({ id, run, busy }: { id: string; run: Run; busy: boolean }) {
+/**
+ * What the admin sends a coordinator: where to sign in, as whom, their groups, and what to do. The
+ * password is in it only right after the admin typed it (a new coordinator, or a reset).
+ */
+function signInText(server: string, user: { username: string; displayName: string }, groups: string[], password?: string) {
+  const lines = [
+    `Zoom Auto Admit — your sign-in${user.displayName && user.displayName !== user.username ? ` (${user.displayName})` : ''}`,
+    '',
+    ...(server ? [`Server: ${server}`] : []),
+    `Username: ${user.username}`,
+    `Password: ${password ?? '(the one I gave you)'}`,
+    ...(groups.length ? [`Your groups: ${groups.join(', ')}`] : []),
+    '',
+    '1. Install Zoom Auto Admit (ZoomAutoAdmit-Setup) and open it.',
+    '2. "Get started" opens by itself. Sign in with this username and password,',
+    '   then add your LMS account, a Zoom account and session link for each group,',
+    '   and your OpenRouter key (you can skip that one).',
+  ]
+  return lines.join('\n')
+}
+
+function ResetPassword({ id, run, busy, onSet }: { id: string; run: Run; busy: boolean; onSet: (password: string) => void }) {
   const [open, setOpen] = useState(false)
   const [password, setPassword] = useState('')
   if (!open) return <button type="button" className="btn small ghost" onClick={() => setOpen(true)}>Password</button>
   return (
-    <form className="inline-form" onSubmit={async (e) => { e.preventDefault(); await run('pw', 'resetPassword', { id, password }); setPassword(''); setOpen(false) }}>
+    <form className="inline-form" onSubmit={async (e) => {
+      e.preventDefault()
+      const result = await run('pw', 'resetPassword', { id, password }) as Result | undefined
+      if (result?.ok) onSet(password)
+      setPassword(''); setOpen(false)
+    }}>
       <input type="password" autoComplete="new-password" placeholder="New password (12+)" value={password} onChange={(e) => setPassword(e.target.value)} />
       <button type="submit" className="btn small primary" disabled={busy || password.length < 12}>Set</button>
       <button type="button" className="btn small ghost" onClick={() => setOpen(false)}>×</button>

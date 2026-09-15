@@ -44,7 +44,12 @@ public sealed class WebPageBridge
             if (Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri) && uri.Host != _host) { e.Cancel = true; OpenOutside(e.Uri); }
         };
         SetBackground(MainWindow.CurrentIsDark);
-        MainWindow.ThemeChanged += dark => { SetBackground(dark); Push(new { push = "theme", dark }); };
+        // The theme is changed from the main window; this page may live in another window (Get started),
+        // on its own thread in tests, or be closed already.
+        MainWindow.ThemeChanged += dark => _browser.Dispatcher.BeginInvoke(() =>
+        {
+            try { SetBackground(dark); Push(new { push = "theme", dark }); } catch (ObjectDisposedException) { } catch (InvalidOperationException) { }
+        });
         char joiner = _page.Contains('?') ? '&' : '?';
         core.Navigate($"https://{_host}/{_page}{joiner}theme={(MainWindow.CurrentIsDark ? "dark" : "light")}");
     }

@@ -23,7 +23,7 @@ Title="Zoom Auto Admit" Icon="Assets/app.ico" Width="1360" Height="860" MinWidth
 <Border Background="{DynamicResource SidebarBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,1,0"><Grid x:Name="SidebarBody" Margin="12,14,12,12">
 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 <StackPanel Orientation="Horizontal" Margin="4,0,0,18">
-<Border Width="34" Height="34" CornerRadius="9" Background="{DynamicResource PrimaryBrush}"><Viewbox Margin="9"><Path Data="M2,4 L15,4 Q17,4 17,6 L17,16 Q17,18 15,18 L2,18 Q0,18 0,16 L0,6 Q0,4 2,4 M17,9 L24,5 L24,17 L17,13" Stroke="White" StrokeThickness="2" StrokeLineJoin="Round"/></Viewbox></Border>
+<Image Source="/ZoomAutoAdmit.WindowsUI;component/Assets/app.ico" Width="36" Height="36" RenderOptions.BitmapScalingMode="HighQuality"/>
 <StackPanel Margin="10,0,0,0" VerticalAlignment="Center" Style="{StaticResource WideOnly}"><TextBlock Text="Zoom Auto Admit" FontSize="14.5" FontWeight="SemiBold"/><TextBlock Text="Classes, admits and attendance" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,1,0,0"/></StackPanel>
 </StackPanel>
 <Button Grid.Row="1" Style="{DynamicResource PrimaryButton}" Command="{Binding ShowStartMeetingCommand}" Margin="0,0,0,10" Padding="10,10" ToolTip="Start a meeting now" AutomationProperties.Name="Start Automation">
@@ -63,6 +63,8 @@ Title="Zoom Auto Admit" Icon="Assets/app.ico" Width="1360" Height="860" MinWidth
 <TabItem Header="AI Matching"><views:LazyPage><views:LazyPage.ContentTemplate><DataTemplate><views:MatchingView/></DataTemplate></views:LazyPage.ContentTemplate></views:LazyPage></TabItem>
 <TabItem Header="Waiting Room"><views:LazyPage><views:LazyPage.ContentTemplate><DataTemplate><views:WaitingRoomView/></DataTemplate></views:LazyPage.ContentTemplate></views:LazyPage></TabItem>
 <TabItem Header="Settings"><views:LazyPage><views:LazyPage.ContentTemplate><DataTemplate><ScrollViewer VerticalScrollBarVisibility="Auto"><Border Style="{DynamicResource Card}" HorizontalAlignment="Left" MaxWidth="820"><StackPanel>
+<TextBlock Text="Get started" Style="{DynamicResource CardTitle}"/><TextBlock Text="The first-run steps again: your account, your LMS account, a Zoom account and session link for each group, and your AI key." Style="{DynamicResource Muted}" TextWrapping="Wrap"/>
+<Button Content="Open Get started" Click="OpenGetStarted" HorizontalAlignment="Left" Margin="0,12,0,22" AutomationProperties.Name="Open Get started"/>
 <TextBlock Text="Appearance" Style="{DynamicResource CardTitle}"/><TextBlock Text="The app has one design. Pick night or day; the moon / sun button at the top does the same." Style="{DynamicResource Muted}" Margin="0,0,0,12"/><UniformGrid Columns="2" Margin="-3,0,0,18"><Button Content="&#x263E;   Night" Click="UseDarkTheme" Padding="20,14"/><Button Content="&#x263C;   Day" Click="UseLightTheme" Padding="20,14"/></UniformGrid>
 <CheckBox Content="Show a soft trail behind the pointer" IsChecked="{Binding IsEffectEnabled, ElementName=GhostCursor}" Margin="0,0,0,16"/>
 <TextBlock Text="Where your data is kept" Style="{DynamicResource CardTitle}"/><TextBlock Text="%LOCALAPPDATA%\ZoomAutoAdmit" FontFamily="{DynamicResource AppMono}" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,22"/>

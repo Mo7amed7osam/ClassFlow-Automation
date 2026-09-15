@@ -32,7 +32,9 @@
         <Grid Margin="24,18,24,20">
             <!-- 1. Choices -->
             <StackPanel x:Name="FormPage">
-                <TextBlock Text="Install for this Windows user (no administrator rights needed)." Foreground="{StaticResource Muted}" FontSize="12.5" Margin="0,0,0,14" TextWrapping="Wrap"/>
+                <TextBlock Text="Install for this Windows user (no administrator rights needed)." Foreground="{StaticResource Muted}" FontSize="12.5" Margin="0,0,0,4" TextWrapping="Wrap"/>
+                <TextBlock Text="Nothing is set up inside the app: when it first opens, Get started asks for your account (from the admin), your LMS account, your Zoom accounts and session links, and your OpenRouter key (optional)."
+                           Foreground="{StaticResource Muted}" FontSize="12.5" Margin="0,0,0,14" TextWrapping="Wrap"/>
 
                 <TextBlock Text="Install to" FontWeight="SemiBold" Foreground="{StaticResource Text}" Margin="0,0,0,5"/>
                 <DockPanel Margin="0,0,0,14">

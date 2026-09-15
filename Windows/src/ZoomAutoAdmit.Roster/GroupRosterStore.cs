@@ -10,20 +10,16 @@ public sealed class GroupRosterStore : IGroupRosterService
         public int SchemaVersion { get; init; } = 1;
         [JsonRequired] public List<RosterGroup> Groups { get; init; } = [];
     }
-    private sealed record SeedDocument(IReadOnlyList<SeedGroup> Groups);
-    private sealed record SeedGroup(string GroupId, string DisplayName, IReadOnlyList<SeedStudent> Students);
-    private sealed record SeedStudent(int Order, string FullName);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly Action<string> _log;
-    private readonly bool _seedOnFirstUse;
     public string FilePath { get; }
 
-    public GroupRosterStore(string? filePath = null, Action<string>? log = null, bool seedOnFirstUse = true)
+    /// <summary>A PC starts with no groups: every roster is the user's own (typed, imported or read from the LMS).</summary>
+    public GroupRosterStore(string? filePath = null, Action<string>? log = null)
     {
         FilePath = Path.GetFullPath(filePath ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZoomAutoAdmit", "Roster", "groups.json"));
         _log = log ?? Console.WriteLine;
-        _seedOnFirstUse = seedOnFirstUse;
     }
 
     public async Task<IReadOnlyList<RosterGroup>> ListAsync(CancellationToken token = default)
@@ -165,17 +161,6 @@ public sealed class GroupRosterStore : IGroupRosterService
         if (!File.Exists(FilePath))
         {
             List<RosterGroup> initial = [];
-            if (_seedOnFirstUse)
-            {
-                using var stream = typeof(GroupRosterStore).Assembly.GetManifestResourceStream("ZoomAutoAdmit.Roster.initial-groups.json")
-                    ?? throw new InvalidDataException("Initial roster data is missing.");
-                var seed = await JsonSerializer.DeserializeAsync<SeedDocument>(stream, Json, token)
-                    ?? throw new InvalidDataException("Initial roster data is invalid.");
-                initial = seed.Groups.Select(g => Normalize(new RosterGroup(g.GroupId, g.DisplayName, DateTimeOffset.UtcNow,
-                    g.Students.Select(s => new GroupStudent(Guid.NewGuid().ToString("D"), g.GroupId, s.Order, s.FullName, [])).ToArray()))).ToList();
-                ValidateIds(initial);
-            }
-            // Persist even an empty document so deleted groups are not recreated on restart.
             await WriteAsync(initial, token);
             return initial;
         }
