@@ -1,655 +1,244 @@
+<div align="center">
+
 # Zoom Auto Admit
 
-Native macOS menu-bar automation for admitting Zoom Waiting Room participants without stealing focus.
+### An autonomous operations platform for live online classes
 
-![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-111827?style=flat-square)
-![Language](https://img.shields.io/badge/language-Swift-ff6b35?style=flat-square)
-![Dependencies](https://img.shields.io/badge/dependencies-none-198754?style=flat-square)
+**Zoom → Attendance → LMS → Recordings, end to end, with no one at the keyboard.**
 
-Zoom Auto Admit watches Zoom's Accessibility hierarchy and presses `Admit All` when it is available. It can also press individual `Admit` buttons, run as a native menu-bar app, and schedule meetings from saved account profiles. It never uses coordinates, screenshots, Zoom APIs, or foreground activation on the monitoring path.
+![macOS](https://img.shields.io/badge/macOS-13%2B-111827?style=for-the-badge&logo=apple&logoColor=white)
+![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-Playwright-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![Chrome](https://img.shields.io/badge/Chrome%20%2F%20Edge-MV3%20extension-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)
 
-## Highlights
+![Tests](https://img.shields.io/badge/tests-460%2B%20passing-2ea44f?style=flat-square)
+![Swift core deps](https://img.shields.io/badge/Swift%20core-0%20third--party%20deps-2ea44f?style=flat-square)
+![Secrets](https://img.shields.io/badge/secrets-macOS%20Keychain-6f42c1?style=flat-square)
+![Status](https://img.shields.io/badge/status-in%20production-0969da?style=flat-square)
 
-- Runs quietly from the macOS menu bar with no Dock icon.
-- Monitors Zoom in the background while it remains on the current Desktop.
-- Uses Accessibility permission and PID-scoped UI reads instead of mouse coordinates.
-- Includes a diagnostic inspector for reviewing Zoom's live Accessibility tree.
-- Supports scheduled meeting startup, account selection, and launch at login.
-- Has a reusable monitor and workflow core with unit tests and no third-party dependencies.
-- Optional **Automation** (menu → Automation…): DEPI dashboard Run Session, attendance upload and late-joiner correction, recording links, an n8n recording API, Excel timetable and roster import, Zoom Web meetings for overlapping classes, and automatic co-host. Uses a bundled Node.js + Playwright helper; the core app still runs without it.
+[Lifecycle](docs/LIFECYCLE.md) · [Architecture](docs/ARCHITECTURE.md) · [User guide](docs/USER-GUIDE.md) · [Web extension](web-extension/README.md) · [Releases](../../releases)
 
-## Requirements
+</div>
 
-- macOS 13 or later
-- Apple Silicon Mac
-- Zoom Workplace for macOS
-- Accessibility permission for the installed app
-- Swift 5.9 toolchain (included with Xcode Command Line Tools)
+---
 
-## Quick start
+## The problem
 
-### Chrome / Edge extension (Zoom Web Client)
+A training coordinator running several cohorts a day repeats the same manual loop for every class:
 
-For meetings hosted at `app.zoom.us`, download `zoom-auto-admit-web.zip` from the
-[`web-v0.2.0` release](https://github.com/Mo7amed7osam/zoom-auto-admit/releases/tag/web-v0.2.0),
-unzip it, open `chrome://extensions` or `edge://extensions`, enable **Developer
-mode**, then choose **Load unpacked** and select the unzipped folder.
+open the right Zoom account → start the meeting → admit every late student from the waiting room → make the instructor co-host → take attendance by comparing messy Zoom names against the official roster → type it into the LMS → fix it again for late joiners → end the session → find the cloud recording → paste its link → replace it with the Drive copy the next day.
 
-The web extension now includes attendance tracking: import the official roster,
-start attendance, keep Zoom's Participants panel open, and it captures visible
-participant names every 15 seconds. Results preserve the roster's original order,
-show captured-but-unmatched Zoom names separately, and enforce one-to-one matching
-so one student cannot be marked present under two different Zoom identities.
+That is **~15 error-prone steps per class, across multiple Zoom accounts, LMS screens and a Google Sheet**, while the class is live.
 
-OpenRouter is optional and is used only when you press **Match unresolved names
-with AI**. Create a key at <https://openrouter.ai/settings/keys>, save it in the
-Attendance screen, and use `openrouter/free` for the free-model router. A `402`
-means the selected model/account cannot currently serve the request; switch to
-`openrouter/free` and check the key's limits or account balance. The key is stored
-only in the current browser profile—use a restricted key and do not share it.
+## The solution
 
-Full extension instructions are in [`web-extension/README.md`](web-extension/README.md).
+Zoom Auto Admit runs the entire class lifecycle on its own from the macOS menu bar. It drives the **native Zoom app through the Accessibility API** (no screen coordinates, no screenshots), automates the **LMS dashboard with Playwright**, reconciles attendance with a **deterministic + AI name-matching engine**, pulls **Zoom cloud recordings**, syncs **Google Drive links from Google Sheets**, and reports everything on an **operations dashboard** with smart notifications and pre-flight health checks.
 
-### Native macOS app
+It is in daily production use for real cohorts.
 
-Build the release app:
+<div align="center">
 
-```sh
-./Scripts/build-app.sh release
+| | |
+|:--|:--|
+| **~27,000** lines of Swift, Node.js & JavaScript | **460+** automated tests (439 Swift · 24 Node) |
+| **3** runtimes: native macOS app · Playwright helper · Chrome/Edge extension | **0** third-party dependencies in the Swift core |
+| **~15** manual steps per class → **0** | Persistent retry queue that **survives restarts** |
+
+</div>
+
+---
+
+## One class, fully automated
+
+```mermaid
+flowchart LR
+    subgraph Before["⏱ Before class"]
+        A1[Schedule fires] --> A2[Pre-flight health check<br/>Zoom · LMS · Google · mapping · roster]
+    end
+    subgraph Live["🎥 Live class"]
+        B1[Open Zoom with the<br/>right account & start] --> B2[Verify meeting is live]
+        B2 --> B3[Auto Admit<br/>waiting room]
+        B2 --> B4[Attendance snapshots<br/>+ name matching]
+        B2 --> B5[Co-host the instructor]
+        B2 --> B6[LMS: Run Session]
+        B4 --> B7[+90 min: upload attendance]
+        B7 --> B8[+3 h: correct late joiners]
+    end
+    subgraph End["🏁 End time"]
+        C1[Finalize register<br/>+ AI for unresolved names] --> C2[Final attendance correction]
+        C2 --> C3[LMS: Complete Session]
+        C3 --> C4[Attach Zoom recording link<br/>even while processing]
+    end
+    subgraph Morning["🌅 08:00 next day"]
+        D1[Read Google Sheet] --> D2[Replace Zoom link<br/>with Drive link]
+    end
+    Before --> Live --> End --> Morning
 ```
 
-Install and launch it:
+Every arrow is automatic. Every write to an external system is **read back and verified**. Every step that can fail is **queued on disk and retried**. → Full walkthrough: [docs/LIFECYCLE.md](docs/LIFECYCLE.md)
 
-```sh
+---
+
+## Features
+
+### 🎥 Zoom automation, native, focus-safe
+- **Auto Admit** via macOS Accessibility: presses *Admit All* / *Admit* by reading Zoom's UI tree, never by coordinates or screenshots; works while Zoom is in the background.
+- **Scheduled meetings** with saved Zoom account profiles: switches to the right account, handles the pre-join preview (mic/camera off), starts the meeting and **proves it is live** before anything else runs.
+- **Automatic co-host** for each group's instructors, confirmed from Zoom's participant list, with bounded retries.
+- **Zoom Web engine** for overlapping classes: a second meeting runs in a Playwright-driven browser profile when the desktop app is busy.
+- **Launch Agent** reopens the app before scheduled meetings even after it was quit.
+
+### 🧑‍🎓 Attendance intelligence
+- **Periodic participant snapshots**, plus extra snapshots right after admissions; evidence only accumulates, a missed read never removes anyone.
+- **Layered name matching:** exact → learned aliases → Arabic/Latin normalization → token and fuzzy similarity (Jaro-Winkler, Levenshtein) → **AI (OpenRouter) only for what is still unresolved**.
+- **Strict one-to-one assignment:** one Zoom name can never mark two students; a student who joins twice under different names (phone + laptop) is one attendee.
+- **Honorific-aware** ("Dr", "Eng", "م.") and device-name aware ("Ahmed's iPhone" is never auto-accepted).
+- **Learns aliases** only from confirmed matches, so the register gets faster every week.
+- **Global ignore list** for staff plus an **unknown-participant detector** (*Ignore permanently · Ignore this meeting · Add as student*).
+- Present / Needs Review / Absent, with CSV export and roster-order reports.
+
+### 🏫 LMS automation (Playwright)
+- **Run Session** when the meeting goes live, **attendance upload** at +90 min, **late-joiner correction** at +3 h (only rows that differ, then reload & verify).
+- **Complete Session** at the scheduled end time, never *Cancel Session*.
+- **Guard rails:** exact group-code matching (G1 never matches G10), session chosen by date + scheduled time, refuses to submit when most names don't belong to that session (another group's register), refuses groups that share an LMS code.
+- **Rehearse mode:** runs every step end to end and reports the decision without pressing anything that writes.
+
+### 🎬 Recording pipeline
+- **Zoom cloud recordings:** finds the class recording in Zoom Web *My Recordings* by group, date and time window, validated against the start time embedded in the share link, and copies its share link **even while Zoom is still processing**.
+- **Google Sheets sync** (OAuth 2.0 + PKCE, read-only scope): every day at 08:00 Cairo, Drive links from the recordings sheet replace the temporary Zoom links on the LMS.
+- Idempotent state machine per session (`pending → processing → attached / conflict / failed`), persisted locally; the sheet is never modified.
+
+### 📊 Operations center
+- **Operations Dashboard:** one card per class (Zoom, attendance, LMS, recording status, students present, next action, last success, last error), derived live from the system's stores with no duplicated state.
+- **Smart notifications:** only important events, repeats grouped into one updating notification, a success clears a class's failures, and clicking opens that class.
+- **Pre-flight health checks** 30 and 5 minutes before class, or on demand: Zoom install/account/Accessibility, LMS login and session existence, Google token and spreadsheet, recording sync, disk space, helper runtime. Report-only, never blocks a class.
+- Notification history and a 30-day event log.
+
+### 🌐 Chrome / Edge extension
+A Manifest V3 companion for hosts on the Zoom Web Client: auto-admit, roster import, attendance capture, local matching, optional AI, CSV export. Its admit/attendance script is also reused by the macOS app's Zoom Web engine. → [web-extension/](web-extension/README.md)
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph App["macOS menu-bar app · Swift / AppKit"]
+        UI[Dashboard · Schedules · Attendance · Automation · Settings]
+        SCH[SchedulerCoordinator<br/>timeline · launch agent · pre-flight]
+        ATT[AttendanceCoordinator<br/>snapshots · reconcile · AI at finalize]
+        AUTO[AutomationCoordinator<br/>persistent LMS follow-up queue]
+        REC[RecordingSyncCoordinator<br/>daily Google Sheet sync]
+        OPS[OperationsCenter<br/>event log · notifications · health checks]
+    end
+
+    subgraph Core["ZoomAutoAdmitCore · pure Swift, fully unit-tested"]
+        M[Matching engine]:::core
+        Q[Queues & stores]:::core
+        S[Status derivation]:::core
+        H[Health rules]:::core
+    end
+
+    AX[ZoomAXSupport<br/>Accessibility tree reader]
+    NODE[Node.js helper · Playwright<br/>JSON-lines over stdin/stdout]
+
+    ZOOM[(Zoom desktop)]
+    LMS[(LMS dashboard)]
+    ZWEB[(Zoom Web<br/>My Recordings)]
+    GS[(Google Sheets API)]
+    OR[(OpenRouter AI)]
+    KC[(macOS Keychain)]
+
+    UI --> SCH & ATT & AUTO & REC & OPS
+    SCH & ATT & AUTO & REC & OPS --> Core
+    SCH & ATT --> AX --> ZOOM
+    AUTO --> NODE --> LMS
+    NODE --> ZWEB
+    REC --> GS
+    ATT --> OR
+    AUTO & REC -.secrets.-> KC
+    classDef core fill:#eef6ff,stroke:#0969da
+```
+
+- **Separation of concerns.** All decisions (matching, scheduling, retry policy, status derivation, health rules, notification throttling) live in a pure Swift library with no UI and no I/O side effects, which makes them deterministic and testable against fixed dates.
+- **Process isolation.** Browser automation runs in a child Node.js process over a JSON-lines protocol. Credentials travel on stdin (never argv), and a crash in the helper can never take down Auto Admit or the attendance register.
+- **Crash-safe by design.** Follow-up steps, recording sync state, attendance registers and scheduler deadlines are persisted atomically; an interrupted class resumes after a relaunch, and abandoned registers are finalized at their scheduled end.
+
+→ Deep dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+---
+
+## Engineering highlights
+
+| Challenge | Approach |
+|---|---|
+| Automate a closed desktop app without an API | Read Zoom's live **Accessibility tree**, match controls by stable identifiers and state text, and verify outcomes from the UI instead of trusting action return codes. |
+| Messy real-world names (Arabic/English, typos, titles, devices, duplicates) | Multi-stage matcher with **greedy one-to-one assignment**, duplicate-identity folding, and AI restricted to unresolved names behind validation and confidence thresholds. |
+| Writes to systems we don't own must never be wrong | **Read-before-write, read-after-write** verification; whole-code session matching; cross-group plausibility check; conflicts are never auto-resolved. |
+| Steps that run hours after the class started | Durable **file-backed queue** with ordering (Run Session → attendance → correction → Complete → recording), retry budgets, and postponement that doesn't burn attempts. |
+| Zoom share links while a recording is still processing | Fall back to the recording's share dialog and validate the embedded start time before attaching. |
+| Operator trust | Derived-state **dashboard**, grouped notifications, pre-flight checks, **rehearse mode**, and a 30-day event log. |
+| Secrets | LMS password, Google refresh token and AI key live in the **macOS Keychain**; Google uses **OAuth 2.0 + PKCE** with a loopback redirect and a read-only scope. |
+
+---
+
+## Tech stack
+
+| Layer | Technologies |
+|---|---|
+| macOS app | Swift 5.9, AppKit (programmatic UI), ApplicationServices / Accessibility API, UserNotifications, Network.framework (OAuth loopback), Security (Keychain), LaunchAgents |
+| Automation helper | Node.js 20+, Playwright (persistent Chrome profiles), ExcelJS |
+| Browser extension | JavaScript, Chrome/Edge Manifest V3 |
+| Integrations | Zoom desktop & Web, LMS dashboard, Google Sheets API v4, OpenRouter |
+| Quality | XCTest (439 tests), `node:test` (24 tests), GitHub Actions release workflow |
+
+---
+
+## Repository layout
+
+```text
+Sources/
+  ZoomAXSupport/        Accessibility access to Zoom: participants, waiting room, menus, pre-join, co-host
+  ZoomAutoAdmitCore/    Pure logic: matching, scheduling, LMS queue, recording sync, OAuth, operations
+  ZoomAutoAdmitApp/     Menu-bar app: coordinators, dashboard, windows
+  AutoAdmit/, InspectZoom/  CLI tools for monitoring and inspecting Zoom's UI tree
+automation/             Node.js + Playwright helper (LMS, Zoom recordings, Excel, Zoom Web)
+web-extension/          Chrome / Edge MV3 extension
+Tests/                  XCTest suites for all three Swift modules
+docs/                   Lifecycle, architecture and the full user guide
+```
+
+---
+
+## Getting started
+
+```bash
+# 1. Build and bundle the app (installs the Node helper's packages)
+./Scripts/build-app.sh release
+
+# 2. Install
 ditto "dist/Zoom Auto Admit.app" "/Applications/Zoom Auto Admit.app"
 open "/Applications/Zoom Auto Admit.app"
-```
 
-Then grant Accessibility access to `/Applications/Zoom Auto Admit.app` in **System Settings → Privacy & Security → Accessibility**. The app's menu includes **Open Accessibility Settings**, **Check Again**, and diagnostic status details.
-
-Run the test suite:
-
-```sh
+# 3. Run the tests
 swift test
+cd automation && npm test
 ```
 
-Inspect Zoom's live hierarchy while its Participants panel is open:
+Requirements: macOS 13+, Zoom Workplace, Node.js 20+ and Google Chrome for the automation features. Grant Accessibility access in *System Settings → Privacy & Security → Accessibility*. Everything else (schedules, groups, LMS sign-in, Google, AI key) is configured inside the app. → [docs/USER-GUIDE.md](docs/USER-GUIDE.md)
 
-```sh
-./run-inspect.sh
-```
+---
 
-## Attendance snapshots
+## Privacy & safety
 
-A schedule records attendance only when its **Attendance** setting links a saved student group. Once the scheduled workflow verifies the meeting, the app creates and persists one `AttendanceSession`, takes a `meeting_started` snapshot within a few seconds, checks for a periodic snapshot every five seconds without continuously scanning Zoom, coalesces Auto Admit bursts into one `post_admit` snapshot, and supports **Attendance → Take Snapshot Now**.
+- Runs entirely on the operator's Mac. No backend server, no telemetry.
+- Only unresolved names ever leave the machine, and only if an AI key is configured.
+- Never ends a Zoom meeting, never presses Deny/Remove/Cancel, never overwrites a record link it didn't write.
 
-Attendance is evidence-only: only Zoom rows exposed as `ZMHCTableItemType_PANELIST` are eligible, Host/me/co-host rows and group ignore names are excluded, and `WAITINGLIST` rows never count. Successful snapshots accumulate as a union; an unreadable snapshot removes nobody and does not stop Auto Admit or the scheduler.
+---
 
-The schedule and attendance pipeline writes compact diagnostics to:
+<div align="center">
 
-```sh
-tail -f "$HOME/Library/Logs/Zoom Auto Admit/scheduler.log"
-```
+Built by **[Mohamed Hosam](https://github.com/Mo7amed7osam)** · Windows edition contributed by Mohab Mohamed
 
-Relevant lines begin with `[attendance]` and report schedule/group linkage, session creation, snapshot reason, Zoom PID and AX window count, raw PANELIST rows, filtered names, persistence, reconciliation, and the next due snapshot. No OpenRouter key or credential is logged.
-
-For a live isolation test, start a linked scheduled meeting and choose **Attendance → Take Snapshot Now**. Then verify `parser available=true`, a `snapshot-captured` line, and `session-saved=true`. Persisted sessions are under `~/Library/Application Support/Zoom Auto Admit/Attendance/` and appear in **Attendance → Review Attendance…**.
-
-### Match with AI
-
-Add an OpenRouter key under **Settings → AI attendance matching**, then open an attendance session and press **Match with AI**. Exact names, learned aliases, and other confidently resolved deterministic matches remain local. After those are removed, one request contains every unresolved student and every still-unclaimed observed PANELIST identity; no fuzzy score, token overlap, transliteration score, or script check filters AI candidate pairs.
-
-The request uses temporary IDs such as `s0` and `z0`, never session/student UUIDs. OpenRouter is instructed to compare the whole remaining roster globally, account for Arabic/English transliteration and incomplete names, and return one-to-one assignments. Returned IDs are validated against that exact request and its current session observations. A model response cannot create attendance evidence, reference another group, reuse a claimed Zoom identity, or overwrite a manual decision. Matches below the group's threshold—or explicitly marked `needs_review`—stay **Needs Review**.
-
-## Native menu bar app
-
-The primary build is a native macOS menu-bar application. It has no normal window, uses an SF Symbol status icon, and runs with AppKit's accessory activation policy plus `LSUIElement=true`, so it does not appear in the Dock during normal use.
-
-The menu shows monitoring, Zoom, Waiting Room, Accessibility, last-action, Auto Admit, Start/Stop, Launch at Login, and Quit controls. Monitoring runs on a dedicated utility queue and does not depend on the menu being open.
-
-### Build the application
-
-```sh
-cd "/Users/mohamedhosam/Documents/ChatGPT/New project/zoom-auto-admit"
-./Scripts/build-app.sh release
-```
-
-The build script compiles the arm64 release executable, creates the bundle, validates `Info.plist`, and verifies its code signature. It prefers an installed **Developer ID Application** or **Apple Development** signing identity so Accessibility grants remain associated with a stable code identity across rebuilds. If no suitable identity is present, it warns and falls back to ad-hoc signing; ad-hoc rebuilds can require removing and re-adding the Accessibility entry. Set `ZOOM_AUTO_ADMIT_SIGNING_IDENTITY` to select a specific local signing identity.
-
-```text
-/Users/mohamedhosam/Documents/ChatGPT/New project/zoom-auto-admit/dist/Zoom Auto Admit.app
-```
-
-### Install and open
-
-Copy the generated app to Applications in Finder, or run once:
-
-```sh
-ditto "/Users/mohamedhosam/Documents/ChatGPT/New project/zoom-auto-admit/dist/Zoom Auto Admit.app" "/Applications/Zoom Auto Admit.app"
-open "/Applications/Zoom Auto Admit.app"
-```
-
-After installation, normal use does not require Terminal.
-
-### Grant Accessibility to the app
-
-1. Open **Zoom Auto Admit** from `/Applications`.
-2. Click its menu-bar icon. The menu will show **Accessibility permission required**.
-3. Choose **Open Accessibility Settings**.
-4. In **System Settings → Privacy & Security → Accessibility**, add `/Applications/Zoom Auto Admit.app` with the `+` button if it is not already listed, then enable it.
-5. Quit and reopen the app if macOS has just changed the permission, then choose **Check Again**.
-
-Grant access to **Zoom Auto Admit.app itself**, not Terminal. No Automation/System Events or Full Disk Access permission is required.
-
-**Check Again** performs fresh calls to both `AXIsProcessTrusted()` and `AXIsProcessTrustedWithOptions(prompt=false)`; the result is not cached. It also verifies the actual running path, PID, bundle identifier, executable, installed `/Applications` copy, and code signature. If Accessibility is genuinely unavailable to the process — the trust APIs disagree, or an Accessibility call returns `kAXErrorAPIDisabled` — the menu shows **Permission granted — relaunch app**. No other AXError can produce that state; see *Background monitoring architecture* below.
-
-Choose **Open Accessibility Diagnostic Log** from the menu, or inspect it directly:
-
-```sh
-tail -n 100 "$HOME/Library/Logs/Zoom Auto Admit/accessibility.log"
-```
-
-For a live unified-log stream:
-
-```sh
-log stream --style compact --level info \
-  --predicate 'subsystem == "com.mohamedhosam.ZoomAutoAdmit"'
-```
-
-The diagnostic distinguishes `notTrusted`, `appBundleMismatch`, `possibleStaleTCCEntry`, `relaunchRequired`, and `trusted`. macOS exposes no public API for reading the Accessibility pane or TCC database directly, so `possibleStaleTCCEntry` is an evidence-based diagnosis: the installed app matches, both trust APIs remain false after the user explicitly chooses **Check Again**, or the recorded code-sign identity changed.
-
-If an older ad-hoc build is already enabled but remains untrusted, quit Zoom Auto Admit, remove its Accessibility row with the `−` button, install the newly signed build, add `/Applications/Zoom Auto Admit.app` again, enable it, and relaunch the app.
-
-### Use and test
-
-1. Start a Zoom meeting as Host, enable Waiting Room, and open Participants.
-2. Keep Zoom in the currently active macOS Desktop. Zoom may remain behind another application.
-3. Join from a second account/device and leave it waiting.
-4. Ensure **Auto Admit** is checked. The menu should change to Monitoring and then record the admit under Last action.
-5. Use **Stop Monitoring** and **Start Monitoring** to pause/resume safely. **Quit** cancels the monitor before terminating.
-6. Enable **Launch at Login** after the app is installed in `/Applications`; this uses `SMAppService.mainApp`.
-
-The menu-bar release deliberately does not perform automatic Cross-Space switching. If Zoom's meeting window is on another Desktop, the menu reports that state and asks you to move Zoom to the current Desktop or assign Zoom to All Desktops. The experimental CLI Cross-Space mode remains available for diagnostics but is not enabled by the app.
-
-Participant names are retained only in an in-memory list of up to ten recent actions and are discarded when the app quits.
-
-Small macOS command-line utility that watches Zoom's exposed Accessibility hierarchy and presses a Waiting Room `Admit All` button when one is available. If Zoom exposes only exact `Admit` buttons, it presses one per scan and rescans after the UI updates. It never changes Zoom settings, uses coordinates, uses screenshots, calls a Zoom API, or touches another application.
-
-This first version is intentionally driven by the live Accessibility hierarchy. Zoom can change its UI between releases, so run the inspector with the Participants panel open before using the monitor.
-
-## Files
-
-- `Package.swift` — SwiftPM manifest for macOS 13+ and the two executables.
-- `Sources/ZoomAXSupport/ZoomAXSupport.swift` — shared process validation, AX tree traversal, exact title/description matching, identifier-first Waiting Room checks, and AX press support.
-- `Sources/InspectZoom/inspect_zoom.swift` — prints the Zoom window hierarchy, including role, title, description, value, identifier, path, enabled state, and actions.
-- `Sources/AutoAdmit/auto_admit.swift` — guarded polling loop, logging, dry-run mode, signal-based stop handling, and safe no-op behavior when Zoom or the panel disappears.
-- `Sources/ZoomAXSupport/AXAccess.swift` — typed AXError handling: separates `apiDisabled` (permission) from `invalidUIElement` (stale) and `cannotComplete`/`noValue` (transient), plus bounded AX messaging timeouts.
-- `Sources/ZoomAXSupport/ZoomScanner.swift` — one complete, freshly acquired scan of the Zoom hierarchy by PID, and the Accessibility-first meeting-location classifier.
-- `Sources/ZoomAXSupport/ZoomAXActivityObserver.swift` — `AXObserver` on the Zoom process; an accelerator only, never the source of truth.
-- `Sources/ZoomAutoAdmitCore/AutoAdmitMonitor.swift` — reusable background monitor, retry state machine, and event model used by the menu-bar app.
-- `Sources/ZoomAutoAdmitCore/ZoomAccess.swift` — the single seam through which every Zoom-facing Accessibility call flows, so the state machine is testable against real failure modes.
-- `Sources/ZoomAXSupport/ZoomMenuBar.swift` and `ZoomMenuBarAccess.swift` — pure account matching over Zoom's Switch account submenu, and the guarded live press.
-- `Sources/ZoomAXSupport/ZoomMeetingPresence.swift` — active/notActive/unknown meeting detection from Accessibility evidence only.
-- `Sources/ZoomAXSupport/ZoomUICapture.swift` — read-only capture of Zoom's live hierarchy for diagnostics.
-- `Sources/ZoomAutoAdmitCore/Scheduling/` — schedule models, recurrence arithmetic, JSON persistence, the firing service and the workflow log.
-- `Sources/ZoomAutoAdmitCore/Workflow/` — the scheduled-start state machine, its automation seam and the live implementation.
-- `Sources/ZoomAutoAdmitApp/SchedulerCoordinator.swift` and `SchedulerWindowController.swift` — scheduler wiring into the existing monitor, and the schedules/profiles editor.
-- `Sources/ZoomAutoAdmitCore/ZoomAXActivitySource.swift` — keeps the observer following Zoom's PID across launches and quits.
-- `Sources/ZoomAutoAdmitApp/` — AppKit menu-bar application, state, menu controller, launch-at-login integration, and uncached Accessibility/code-sign diagnostics.
-- `AppBundle/Info.plist` and `Scripts/build-app.sh` — menu-only app metadata and reproducible `.app` bundle builder.
-- `Tests/ZoomAXSupportTests/ZoomAXSupportTests.swift` — pure matcher tests covering the observed Zoom hierarchy and safety rejection cases.
-- `run-inspect.sh` and `run-auto-admit.sh` — optional convenience launchers.
-
-No third-party dependencies are required. SwiftPM builds natively for Apple Silicon.
-
-## Background monitoring architecture
-
-The goal is that Zoom stays open in the background, on the same Desktop, possibly
-completely covered by another window, while participants are admitted and the
-foreground application is never disturbed.
-
-**Accessibility is addressed by PID, never by focus.** Each scan builds a fresh
-`AXUIElementCreateApplication(zoomPID)`, reads `AXWindows` from it, walks the
-meeting hierarchy and re-acquires the Admit button. Nothing consults
-`frontmostApplication`, `NSRunningApplication.isActive` (except to label the menu),
-`AXFocusedWindow`, `AXMainWindow` or `kCGWindowIsOnscreen` before deciding whether
-to scan. A covered background window on the current Space answers Accessibility
-exactly like a frontmost one.
-
-**No Accessibility reference outlives its scan.** The application element, the
-window list, the subtree and the buttons are all created inside one scan and
-dropped at the end of it, so a Zoom redraw can cost at most one scan.
-
-**Permission truth.** `AXIsProcessTrusted()` and
-`AXIsProcessTrustedWithOptions(prompt:false)` decide permission, and nothing else
-does. The system-wide `kAXFocusedApplication` probe is kept for the diagnostic log
-but never gates monitoring: it reads *the frontmost application*, so it returns
-`cannotComplete` whenever that unrelated app is slow to build its Accessibility
-tree (Chrome and other Electron-style apps do this routinely) and `noValue`
-whenever nothing holds Accessibility focus. Treating those as a permission failure
-is what previously produced a false **Permission granted — relaunch app** state
-while another window covered Zoom.
-
-**Transient failures retry instead of escalating.** A failed scan is classified as
-`apiDisabled`, `invalidUIElement` or transient. Anything but `apiDisabled` waits
-250–500 ms, re-acquires every reference and scans again, up to three attempts per
-poll. Only if all attempts fail does the menu show *Zoom: Temporarily unavailable
-/ Waiting Room: Retrying…*, and the next poll recovers on its own. The monitor is
-never stopped for a Zoom-side failure.
-
-**Same Space versus another Space.** Accessibility reachability is the signal.
-While the meeting hierarchy answers, Zoom is same-Space and monitorable no matter
-what covers it. `kCGWindowIsOnscreen` is never used on its own to decide a Space,
-because a covered window on the current Space still reports `true`. Only when the
-hierarchy stays absent across every retry *and* CoreGraphics still sees a meeting
-window is the state reported as another Desktop.
-
-**Hybrid observer plus polling.** An `AXObserver` registered on the Zoom process
-(created/destroyed, window created, row count, selected rows, value and layout
-changes) asks for an early scan, coalesced to at most one extra scan per 350 ms so
-a chatty Zoom cannot spin the CPU. The 0.75 s polling loop keeps running and stays
-authoritative, because Zoom's participant list is a custom control whose
-notification fidelity cannot be relied on. Observer registration failure costs
-latency, never correctness.
-
-**The menu bar app never brings Zoom forward.** It contains no
-`NSRunningApplication.activate`, `AXRaise`, `AXFrontmost`, unhide, Space change or
-synthetic event code at all, and `Scripts/build-app.sh` fails the build if any is
-introduced. The only activation code in the repository lives in the `auto-admit`
-CLI behind the opt-in `--cross-space` flag.
-
-## Automation (DEPI dashboard, recordings, Zoom Web, co-host)
-
-These features were first built for the Windows app (branch `Windows_and_web`) and work the same way here. They are off until turned on in **Automation…** from the menu bar. Browser work is done by `automation/`, a small Node.js + Playwright helper the app runs as a child process; requests go over stdin, so passwords never appear in the process list.
-
-**Requirements:** Node.js 20+ (`brew install node`) and Google Chrome (or run `npm run install-browser` in `automation/` once for Playwright's Chromium). `Scripts/build-app.sh` installs the helper's packages and bundles it into the app.
-
-| Feature | Where | What it does |
-| --- | --- | --- |
-| Run Session | Automation → LMS | When a scheduled meeting linked to a group goes live, signs in to the DEPI dashboard and presses **Run Session** on that group's session, picked by the scheduled time. |
-| Attendance upload | Automation → LMS | 90 minutes in, ticks Joined for every student the register marks **Present** and Not-joined for everyone else the dashboard lists. Every row is decided first; if one row cannot be ticked, nothing is submitted. |
-| Late-joiner correction | Automation → LMS | 3 hours in, opens View details and flips only the rows that disagree, then reloads and confirms. |
-| Recording sync (Google Sheet) | Automation → Recording Sync | Every day at 08:00 Cairo (and on **Sync Now**) the app reads the recordings spreadsheet through the Google Sheets API: each tab is a group's LMS code, columns A File Name, B Type, C Date, D Shared Link. A row's Drive link goes to that group's one LMS session on that date only after the class's attendance workflow is finished and the session has ended on the dashboard. The current record link is read first: empty → the Drive link is saved and read back; the same link → done; anything else → conflict, never overwritten (an existing Zoom recording link can optionally be treated as temporary). No session → stays pending; more than one → conflict. Progress is kept in `RecordingSync/records.json`; the sheet is never written. |
-| Follow-up queue | Automation → Follow-ups | The attendance steps are written to `~/Library/Application Support/Zoom Auto Admit/LMS/follow-up.json`, retried every 15 minutes up to 8 times, and still run after a restart. |
-| Excel timetable | Schedules → Import Excel… | Reads the DEPI `.xlsx` timetable and adds online sessions as one-time schedules; skips Physical, No Session, past dates and times already taken. Imported schedules stay disabled until enabled. |
-| Excel roster | Schedules → Groups → Import Excel… | `Order` + `Name` (or `FullName`) headers, optional `StudentId`, `Aliases` (`|`-separated), `Email`. Formulas are refused. |
-| Zoom Web meetings | Schedules → Zoom Accounts → Engine | **Web** always uses the browser, **Auto** uses the desktop app while it is free and the Zoom Web Client when it already holds a meeting, so classes can overlap. The web extension's own admit and attendance script runs inside the page; its attendance feeds the normal register. Sign in once per account with **Sign in to Zoom Web…**. |
-| Co-host | Schedules → Groups → Co-host candidates | Every 20 seconds during a register, a listed person who has joined is made co-host through the row's *More options → Make co-host*, confirmed from Zoom's list. Nobody who is not listed is ever made co-host. |
-| Open before meetings | Automation → Web & Co-host | A LaunchAgent opens the app (by bundle id) a few minutes before each meeting in the next two weeks, so a class starts even after the app was quit. |
-
-| Ignored participants | Settings → Attendance → Ignored participants | A global list of people who are never students (trainers, coordinators, admins). They are removed before matching: never unmatched, never sent to OpenRouter, never in review, never counted. Role tags and Zoom participant IDs are ignored when comparing. Import/export as text. |
-| Unknown participants | Prompt on a meeting's first snapshot | Names not on the roster that look like staff, have a host role, or keep turning up unmatched are offered as *Ignore permanently*, *Ignore this meeting only* or *Add as student*. |
-
-Before any dashboard step, the app refuses groups that share a dashboard code, steps whose group code changed since they were queued, and an upload where most present names are not on that session (another group's register).
-
-The dashboard group is the group's **LMS group code**, or its name when that is empty. The dashboard sign-in and the API key are stored in the Keychain. **Rehearse only** opens everything and logs the decision without pressing anything that writes.
-
-Run the helper's tests with `cd automation && npm test`.
-
-## Scheduled meetings
-
-A schedule opens Zoom, switches to a saved account, starts a specific meeting,
-verifies that it really started, and only then hands over to the existing Auto
-Admit monitor. Schedules live in a readable JSON file and survive relaunches.
-
-### Account identity
-
-Zoom's own application menu exposes everything the account layer needs, which is
-what the implementation uses:
-
-```
-Zoom Workplace ▸ Switch account ▸ "Display Name(email@example.com)"   ✓ = signed in
-```
-
-Three properties of that menu shaped the design, all confirmed by live capture:
-
-* It is an *application-level* Accessibility element, so it stays readable when
-  every Zoom window has been moved to another Space and `AXWindows` is empty.
-* Zoom builds the submenu eagerly, so saved accounts are enumerated without
-  opening any menu or clicking a profile picture.
-* `AXMenuItemMarkChar` is `"✓"` on the signed-in account, which is how the
-  active account is read.
-
-Accounts are matched on **email**, because display names collide — the captured
-client has three different accounts all showing "eyouth coordinator". An
-identifier without an `@` falls back to display-name matching, where a collision
-aborts the workflow as ambiguous rather than picking one.
-
-The `Sign out` submenu lists the *same account titles* as `Switch account`.
-Selection is therefore scoped structurally to the `Switch account` submenu, the
-live element is re-verified (role, title, Zoom's `menuItemDidClicked:`
-identifier, enabled, `AXPress`) immediately before pressing, and a test asserts
-that no account entry can ever originate from the sign-out branch.
-
-### Starting the meeting
-
-Meetings are started with Zoom's public `zoommtg` URL scheme, which the installed
-client registers under `CFBundleURLSchemes`:
-
-```
-zoommtg://zoom.us/start?confno=<meeting id, digits only>
-```
-
-This was chosen over navigating Zoom's meeting list because the list lives inside
-a window, and windows disappear from Accessibility whenever Zoom sits on another
-Space — the exact state Zoom was found in during discovery. A meeting number is
-also stable, unlike a row position. A schedule can instead choose *Personal
-meeting*, which presses Zoom's own `Start meeting` menu entry.
-
-Because meetings are addressed by number, there is no meeting list to be
-ambiguous about; the ambiguity guard lives on accounts, where collisions are
-real.
-
-### Proving the meeting started
-
-An `AXPress` returning success proves nothing, so the workflow waits for
-Accessibility evidence of an actual meeting: a window titled `Zoom Meeting`, or a
-meeting hierarchy. CoreGraphics is deliberately not accepted as evidence — this
-app holds no Screen Recording permission, so every Zoom CG window name comes back
-empty and the off-Space heuristic scores Zoom's ordinary main window exactly like
-a meeting window.
-
-That also gives meeting detection three answers rather than two: `active`,
-`notActive`, and `unknown` when Zoom's hierarchy is unreachable. Before starting
-anything the workflow refuses to disturb a call already in progress; if the state
-is `unknown` it spends its one permitted foreground interruption bringing Zoom
-forward and asks again, and stops entirely if it still cannot tell.
-
-### The pre-join preview
-
-Zoom usually shows a preview window before a meeting actually begins, offering
-Audio, Video and Start. The workflow handles it rather than sitting in front of
-it waiting — which is exactly what it did before this was added:
-
-```
-state=verifyingMeeting — Start requested via Zoom menu: Start meeting
-[90 seconds later] state=failed — The meeting did not start
-```
-
-Zoom labels these controls with the **action they perform, not the state they are
-in**: "Mute" means the microphone is currently live, "Unmute" means it is already
-muted, "Start Video" means the camera is off, "Stop Video" means it is on.
-Reading that backwards would switch a microphone *on* moments before a meeting,
-so the mapping is explicit, tested in both directions, and anything outside the
-known vocabulary is reported as `unknown`.
-
-For each device the workflow reads the live state first and only acts when it
-must:
-
-```
-Pre-join preview detected
-Microphone state: ON
-Turning microphone OFF
-Microphone state verified: OFF
-Camera state: ON
-Turning camera OFF
-Camera state verified: OFF
-Start button found
-Pressing Start
-Meeting verified (ax-meeting-window-title)
-Auto Admit active
-```
-
-If a device is already off, the log reads `Microphone state: OFF — no action` and
-nothing is pressed. Every one of these aborts the workflow *before* Start rather
-than guessing:
-
-* the control cannot be found,
-* several controls match the same device,
-* the state cannot be read confidently,
-* the control was pressed but the device did not actually turn off,
-* the Start button cannot be identified, or more than one candidate matches.
-
-When any of those happen the live preview hierarchy is written to
-`~/Library/Logs/Zoom Auto Admit/zoom-prejoin-snapshot.log`, so the vocabulary can
-be extended from real data instead of guesswork. `Join Audio` is deliberately
-classed as *off*: audio is not connected, nothing is transmitting, and pressing
-it would turn audio on.
-
-`Start` is matched exactly, never as a substring, so `Start Video` and
-`Join with Computer Audio` can never be mistaken for it. Windows showing
-in-meeting participant structure are never treated as a preview, so the
-automation cannot press controls during a live call.
-
-### Focus
-
-The startup workflow may bring Zoom forward — opening menus and starting a
-meeting need it. Auto Admit monitoring never does: once the meeting is verified
-the existing background monitor takes over unchanged, and `Scripts/build-app.sh`
-fails the build if a focus-stealing call appears anywhere outside the two
-allowlisted startup-workflow files.
-
-### Files
-
-Schedules and account profiles:
-
-```
-~/Library/Application Support/Zoom Auto Admit/schedules.json
-```
-
-Workflow log:
-
-```
-~/Library/Logs/Zoom Auto Admit/scheduler.log
-```
-
-No password, passcode or token is ever stored; a profile holds only the email of
-an account that is already signed in to Zoom.
-
-### Capturing Zoom's hierarchy again
-
-If a future Zoom build changes its UI, re-capture the live hierarchy from the
-menu bar item **Capture Zoom UI Snapshot**, which writes:
-
-```
-~/Library/Logs/Zoom Auto Admit/zoom-ui-snapshot.log
-```
-
-The command-line inspector can do the same when its terminal is
-Accessibility-trusted:
-
-```
-./run-inspect.sh --account-ui
-./run-inspect.sh --meetings-ui
-```
-
-## Required macOS permission
-
-Enable Accessibility for the program that actually executes the Swift code:
-
-1. Open **System Settings → Privacy & Security → Accessibility**.
-2. Unlock the pane if macOS asks for an administrator password.
-3. Add and enable the terminal app you use, such as **Terminal**, **iTerm**, or **Visual Studio Code**, when running through `swift run`.
-4. After building a stable binary, you can add and enable that binary directly instead. The release paths are printed by the build commands below.
-5. Quit and relaunch the terminal or binary after changing permission if macOS does not immediately recognize it.
-
-The inspector calls Apple's trusted-client check and may open the relevant pane. The utility does not need Full Disk Access.
-
-### Automation / System Events
-
-This implementation uses `AXUIElement` directly and does **not** use AppleScript or `System Events`, so it does not need **Privacy & Security → Automation → System Events** permission. If you later replace it with an AppleScript that sends UI events through System Events, macOS will ask you to allow the terminal/script host to control **System Events**; that is an additional Automation permission, not a substitute for Accessibility.
-
-## Build
-
-From this directory:
-
-```sh
-swift build -c release
-```
-
-The binaries will be under `.build/arm64-apple-macosx/release/` on Apple Silicon. If Swift chooses a different SDK path, use the exact path printed by:
-
-```sh
-swift build -c release --show-bin-path
-```
-
-## Inspect Zoom first
-
-1. Start or join a Zoom meeting as Host.
-2. Open the **Participants** panel. Enable Waiting Room and have the second test account/device waiting if you want to inspect a populated state.
-3. Run:
-
-```sh
-./run-inspect.sh --max-depth 14 2>&1 | tee zoom-accessibility.txt
-```
-
-Or use the built binary:
-
-```sh
-"$(swift build -c release --show-bin-path)/inspect-zoom" --max-depth 14 | tee zoom-accessibility.txt
-```
-
-Look for `identifier="ZMHCTableItemType_WAITINGLIST"`, `identifier="ZMHCTableItemType_WAITINGLIST_Group"`, and an `AXButton` whose exact title or description is `Admit` or `Admit All`. The printed `path=` is the accessibility path, not a screen coordinate. A matched control is summarized under `[GUARDED CANDIDATE]`, including its evidence, participant name when exposed, title, description, and path.
-
-If the inspector says Zoom was not found, start Zoom and retry. If it says no AXWindow elements or no marker appears, see Troubleshooting below.
-
-## Run safely
-
-Start with a dry run. It performs no click:
-
-```sh
-./run-auto-admit.sh --dry-run
-```
-
-Then run the real monitor:
-
-```sh
-./run-auto-admit.sh
-```
-
-The default interval is 0.75 seconds and is deliberately bounded to 0.5–1.0 seconds. To stop it, press **Ctrl-C** in that terminal. SIGTERM also stops it cleanly. `--once` is useful for a single validation pass:
-
-```sh
-./run-auto-admit.sh --dry-run --once
-```
-
-The monitor logs every candidate and every successful admit action with an ISO-8601 timestamp. For the observed participant-row hierarchy, dry run prints `Found Waiting Room participant: <name>` followed by `Would press Admit`. When no participant is waiting, it takes no action and stays quiet. It admits at most one individual participant per scan, then rebuilds the tree; this avoids pressing stale buttons while Zoom re-renders the list. `Admit All` is preferred whenever it is exposed in the same Waiting Room context.
-
-## Cross-Space operation
-
-On the tested macOS 27.0 system with Zoom Workplace (`us.zoom.xos`), direct off-Space AX traversal is not available. `CGWindowListCopyWindowInfo(.optionAll)` continues to enumerate the Zoom-owned `Zoom Meeting` window by PID and reports it as off-screen, but Zoom omits that window from its application `AXWindows` array. Because there is no AX window element, the utility cannot read its descendants or perform `AXRaise` on it in the background.
-
-macOS has no public API that exposes Mission Control Space IDs or switches/restores an arbitrary Space by ID. Private CoreGraphics/WindowServer Space APIs are deliberately not used.
-
-Cross-Space mode therefore uses a bounded public-API fallback:
-
-1. Run the ordinary background AX scan first.
-2. Use CoreGraphics metadata to verify a layer-0 Zoom Meeting window exists and is not on the current Space.
-3. Capture the current frontmost application, its focused AX window, and its on-screen CoreGraphics window IDs.
-4. Temporarily set the verified Zoom process's `AXFrontmost` attribute. If needed, request AppKit activation and temporarily unhide/unminimize the exact Zoom Meeting window.
-5. Run the unchanged strict Waiting Room matcher and press only a guarded candidate.
-6. Raise the previously focused window, restore its application, and restore Zoom's hidden/minimized state.
-
-### CoreGraphics diagnostics and meeting-window learning
-
-Dump every WindowServer record owned by the Zoom PID without filtering by title:
-
-```sh
-./run-inspect.sh --cg-windows
-```
-
-The output includes window number, owner PID/name, window name, layer, on-screen state, bounds, alpha, and sharing state. It also prints the exact list option:
-
-```text
-kCGWindowListOptionAll (rawValue=0); kCGWindowListOptionOnScreenOnly is NOT set
-```
-
-The implementation passes only `.optionAll` to `CGWindowListCopyWindowInfo`; it does not combine `.optionOnScreenOnly` or pre-filter records by `Zoom Meeting`.
-
-For the strongest discovery, start the monitor while the Participants panel is accessible in the current Space. It identifies a meeting AX tree structurally through Zoom participant identifiers or the exact `Participants list` AX outline, correlates that AX window to a normal-layer CoreGraphics window by bounds/title, and remembers the CG window ID for the lifetime of the Zoom process. When the meeting moves to another Space and loses its AX tree or CG title, that learned ID remains primary evidence.
-
-If the monitor starts after Zoom is already off-Space and no title is available, discovery can retain a lower-confidence candidate using only the verified Zoom PID, normal layer, nonzero meeting-sized bounds, nontransparent alpha, off-screen state, and exclusions for known non-meeting Zoom windows. This evidence permits only temporary Zoom exposure. It never authorizes a click; `WAITINGLIST`, exact Admit label, `AXButton`, enabled state, `AXPress`, and Breakout rejection remain mandatory.
-
-To compare the same live meeting in both states:
-
-```sh
-./run-inspect.sh --cg-windows | tee cg-current-space.txt
-# Move Zoom to the other Space, then:
-./run-inspect.sh --cg-windows | tee cg-other-space.txt
-```
-
-Enable it explicitly:
-
-```sh
-./run-auto-admit.sh --cross-space
-```
-
-The first off-Space probe occurs immediately. With no candidate, probes back off from 15 to 30 to 60 seconds. This avoids activating Zoom every 0.75-second polling cycle. Change the initial interval, with a minimum of five seconds, using `--cross-space-interval`.
-
-Important limitations:
-
-- A brief visible Space transition or flicker may occur; public APIs cannot guarantee a completely background-only exposure.
-- Exact Space restoration cannot be guaranteed if the prior app has no focused AX window or has windows assigned to every Space. The utility logs whether the prior on-screen window was verifiably restored.
-- An off-Space full-screen window and a normal window on another Space both appear as an off-screen WindowServer window. Public APIs do not provide a reliable distinction.
-- A minimized meeting is recognized when Zoom exposes its AX window and `AXMinimized`; a hidden app is recognized through `NSRunningApplication.isHidden`. An unexposed, off-screen window can only be classified as another Space or full-screen Space.
-- macOS exposes no public, reliable “someone is waiting” signal while Zoom withholds the off-Space AX subtree. Cross-Space mode therefore uses infrequent probes. It is opt-in for this reason.
-- `--dry-run --cross-space` never presses Admit, but it does exercise temporary exposure/restoration and can therefore produce the same brief Space transition.
-
-For a one-shot diagnostic dry run:
-
-```sh
-./run-auto-admit.sh --cross-space --dry-run --once
-```
-
-Run the matcher tests with:
-
-```sh
-swift test
-```
-
-## Safe test procedure
-
-Use a meeting that is not sensitive:
-
-1. On the Host account, enable Waiting Room and open Participants.
-2. Join from a second Zoom account or another device and remain in the Waiting Room.
-3. Run `--dry-run --once` and confirm the log names an exact `Admit All` or `Admit` button and shows a Waiting Room context.
-4. Stop the dry run, start the real monitor, and confirm the waiting test participant is admitted.
-5. End the meeting and press Ctrl-C to stop the utility.
-
-Do not test with real guests until the dry-run output and one controlled test behave as expected.
-
-## Safety behavior
-
-Before any possible press, the code:
-
-- resolves a currently running Zoom process using only the known Zoom bundle identifiers;
-- obtains only that process's AX windows;
-- requires the control to be an enabled `AXButton` with an available `AXPress` action;
-- accepts only exact normalized `Admit` / `Admit All` descriptions, or exact supported titles—never loose substring matching;
-- primarily requires a structural `ZMHCTableItemType_WAITINGLIST` participant cell or `ZMHCTableItemType_WAITINGLIST_Group` marker;
-- retains a tightly scoped accessible `Waiting Room` text check only for older Zoom trees that do not expose those identifiers;
-- rejects a candidate whose ancestor path is marked Breakout/Break Out;
-- rechecks that the same Zoom process still exists immediately before pressing.
-
-If any condition is absent, the scan is a no-op. The Participants panel closing is therefore handled as an ordinary no-op rather than an exception.
-
-## Troubleshooting: “Admit” cannot be found
-
-Run the inspector while the relevant panel is open and, ideally, while one test participant is waiting:
-
-```sh
-./run-inspect.sh --max-depth 20 | tee zoom-accessibility.txt
-```
-
-Then provide the complete output (or at least the lines around the Participants panel, Waiting Room, and any Admit-like controls). The important fields are `AXRole`, `title=`, `description=`, `value=`, `actions=`, `path=`, and whether `WAITING-ROOM-MARKER` appears. Also include your Zoom version and whether you use the standard or new Zoom Workplace client.
-
-Common causes:
-
-- Accessibility is enabled for Terminal but the binary is being launched by another host, such as VS Code; enable that host too.
-- The Participants panel is closed, collapsed, or rendered in a separate Zoom window; open it and inspect again.
-- Zoom exposes a localized title or description; do not edit the allowlist blindly. Capture the inspection output first so the exact role/title/context can be reviewed.
-- Zoom no longer exposes either the `WAITINGLIST` identifiers or a tightly scoped accessible Waiting Room marker. The safety rule intentionally refuses to click in that case.
-- A Zoom update changed the AX hierarchy or stopped exposing the controls. The utility cannot safely compensate with coordinates or image matching.
-
-## Notes
-
-The process uses macOS Accessibility only. It does not disable Waiting Room, modify Zoom preferences, use undocumented APIs, or interact with Breakout Rooms.
-
-### Google access for the recording sync
-
-1. In Google Cloud Console create a project, enable the **Google Sheets API**, configure the OAuth consent screen, and create an OAuth client of type **Desktop app**.
-2. In Automation → Recording Sync paste the client ID and secret, press **Save Client**, then **Connect Google…** and approve read-only access in the browser.
-3. Paste the spreadsheet ID and press **Test Connection**. The connected Google account must be able to open the sheet.
-
-While the consent screen's publishing status is *Testing*, Google expires refresh tokens after 7 days; publish it (or use an *Internal* app on Google Workspace) for a sync that keeps working.
+</div>
