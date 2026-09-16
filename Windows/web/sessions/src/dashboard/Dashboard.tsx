@@ -76,6 +76,12 @@ export function Dashboard() {
           <span className={`server-pill ${state.server.up ? 'up' : 'down'}`} title={state.server.detail}>
             <i className="pulse" /> {state.server.text}
           </span>
+          {me && state.server.clientMode && state.update && (
+            <button type="button" className="btn glass" disabled={working !== null || state.update.working}
+              title={state.update.status || `You have ${state.update.current}`} onClick={() => run('check-update', 'checkUpdate')}>
+              {working === 'check-update' ? <span className="spinner light" /> : <Icon name="refresh" size={14} />} Check for updates
+            </button>
+          )}
           {me && <SwitchMenu state={state} busy={working !== null} run={run} />}
         </div>
       </section>
@@ -94,6 +100,9 @@ export function Dashboard() {
       )}
 
       {state.update?.version && <UpdateBanner update={state.update} working={working} run={run} />}
+      {state.update && !state.update.version && state.update.status && (
+        <div className="banner ok"><Icon name="check" size={18} /><div><b>{state.update.status}</b></div></div>
+      )}
 
       {!me && <SignIn busy={working !== null} known={state.known} onSignIn={(u, p, r, s) => run('in', 'signIn', { username: u, password: p, remember: r, savePassword: s })}
         onContinue={(u) => run('switch', 'switchAccount', { username: u })} onForget={(u) => run('forget', 'forgetAccount', { username: u })} />}

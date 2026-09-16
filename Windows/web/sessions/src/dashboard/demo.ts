@@ -3,11 +3,18 @@ import type { DashState } from './types'
 // Sample data for looking at the Dashboard outside the app. Nothing here is real.
 export function demoDash(): DashState {
   const today = new Date().toISOString().slice(0, 10)
+  // "?coordinator" shows a coordinator's PC (connected to the server) with an update waiting.
+  const coordinator = typeof location !== 'undefined' && location.search.includes('coordinator')
   return {
-    server: { up: true, text: 'Running on this PC', detail: 'Port 8780', clientMode: false },
+    server: coordinator
+      ? { up: true, text: 'Connected to the server', detail: 'mohab-pc', clientMode: true }
+      : { up: true, text: 'Running on this PC', detail: 'Port 8780', clientMode: false },
+    ...(coordinator ? { update: { current: '1.26.916.2244', version: '1.26.916.2349', sizeMb: 169, status: '', progress: null, working: false } } : {}),
     status: '', busy: false, savedLogin: true,
     known: [{ username: 'admin', displayName: 'Admin', role: 'admin', hasSession: true, lastUsed: 'Tue 15 Sep' }, { username: 'sara.c', displayName: 'Sara', role: 'coordinator', hasSession: false, lastUsed: 'Sun 13 Sep' }],
-    me: { username: 'admin', displayName: 'Admin', role: 'admin', allGroups: true, groups: ['CAI5_AIS4_S7', 'CAI5_AIS4_S8'] },
+    me: coordinator
+      ? { username: 'sara.c', displayName: 'Sara', role: 'coordinator', allGroups: false, groups: ['CAI5_AIS4_S8'] }
+      : { username: 'admin', displayName: 'Admin', role: 'admin', allGroups: true, groups: ['CAI5_AIS4_S7', 'CAI5_AIS4_S8'] },
     lms: {
       active: 'main', onServer: true, canKeepPasswords: true,
       accounts: [

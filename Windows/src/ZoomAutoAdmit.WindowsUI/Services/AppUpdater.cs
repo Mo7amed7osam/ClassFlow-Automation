@@ -29,7 +29,9 @@ public sealed record AppUpdateOffer(Version Version, string Sha256, long Size);
 /// </summary>
 public sealed class AppUpdater
 {
-    private static readonly TimeSpan CheckEvery = TimeSpan.FromHours(3);
+    // Every ten minutes: a version published just after a three-hourly check stayed invisible to the
+    // coordinators for hours (2026-09-17). The check is one small request to the server.
+    private static readonly TimeSpan CheckEvery = TimeSpan.FromMinutes(10);
     /// <summary>A class opens 15 minutes before its time; this leaves room for the update itself.</summary>
     private static readonly TimeSpan ClassSoon = ScheduleTiming.StartLead + TimeSpan.FromMinutes(20);
     private const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\ZoomAutoAdmit";
@@ -100,7 +102,10 @@ public sealed class AppUpdater
             return "A Zoom meeting is open. Update after the class.";
         if (CommandLines("ZoomAutoAdmit.Inspector.exe").Any(c => c.Contains("meeting-start", StringComparison.OrdinalIgnoreCase)))
             return "A class is being opened or run right now. Update after the class.";
-        if (CommandLines("chrome.exe").Concat(CommandLines("msedge.exe")).Any(c => c.Contains(@"ZoomAutoAdmit\Profiles", StringComparison.OrdinalIgnoreCase)))
+        // Only a class's own browser: the LMS browsers (lms-…) and hidden ones (the Zoom report, My
+        // Recordings) are not a class, and blocked every update a coordinator tried (2026-09-17).
+        if (ZoomAutoAdmit.Core.Meetings.LiveMeetings.List().Any(meeting => meeting.Engine.Equals("Web", StringComparison.OrdinalIgnoreCase)) ||
+            CommandLines("chrome.exe").Concat(CommandLines("msedge.exe")).Any(IsClassBrowser))
             return "A class is running in the browser. Update after the class.";
         try
         {
@@ -183,6 +188,16 @@ public sealed class AppUpdater
     {
         lock (_gate) { _offer = offer; _status = status; _progress = progress; }
         Changed?.Invoke();
+    }
+
+    /// <summary>A browser on one of the app's class profiles, shown on screen: not an LMS profile, not hidden.</summary>
+    public static bool IsClassBrowser(string commandLine)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(commandLine, @"ZoomAutoAdmit\\Profiles\\([^\\""\s]+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!match.Success) return false;
+        if (match.Groups[1].Value.StartsWith("lms-", StringComparison.OrdinalIgnoreCase)) return false;
+        return !commandLine.Contains("--headless", StringComparison.OrdinalIgnoreCase);
     }
 
     private static List<string> CommandLines(string exe)
