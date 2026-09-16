@@ -227,7 +227,7 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
             account => account.AccountId,
             account => account.DisplayName,
             StringComparer.OrdinalIgnoreCase);
-        return _bootstrapper.SessionCoordinator.ActiveSessions.Select(active =>
+        var inThisApp = _bootstrapper.SessionCoordinator.ActiveSessions.Select(active =>
         {
             _sessions.TryGetValue(active.SessionId, out var meeting);
             return new SessionDisplayInfo(
@@ -236,8 +236,22 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
                 accountNames.GetValueOrDefault(active.AccountId, active.AccountId),
                 active.EngineType,
                 meeting?.State.ToString() ?? active.Status.ToString(),
-                active.StartTime);
-        }).ToArray();
+                // Stored in UTC; the page shows this PC's clock (19:31, not 16:31).
+                active.StartTime.ToLocalTime());
+        }).ToList();
+        // Meetings running in another process on this PC (a class a Windows task started) are shown too.
+        foreach (var live in ZoomAutoAdmit.Core.Meetings.LiveMeetings.List())
+        {
+            if (inThisApp.Any(session => session.SessionId == live.SessionId)) continue;
+            inThisApp.Add(new SessionDisplayInfo(
+                live.SessionId,
+                live.Group,
+                accountNames.GetValueOrDefault(live.Group, live.Group),
+                Enum.TryParse<SessionEngineType>(live.Engine, out var engine) ? engine : SessionEngineType.Desktop,
+                "Running (started outside the app)",
+                live.StartedAt.ToLocalTime()));
+        }
+        return inThisApp;
     }
 
     public Task<IReadOnlyList<MeetingSchedule>> GetSchedulesAsync(

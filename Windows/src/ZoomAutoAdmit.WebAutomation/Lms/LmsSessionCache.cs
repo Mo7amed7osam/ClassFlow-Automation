@@ -42,7 +42,8 @@ public sealed class LmsSessionCache(string? path = null)
             foreach (var s in sessions)
             {
                 var before = old.FirstOrDefault(e => Same(e.Session, s));
-                var session = listOnly && before != null
+                // A session a quick read opened anyway brings its own details, which replace the old ones.
+                var session = listOnly && before != null && s.DetailsReadAt == null
                     ? s with
                     {
                         PageUrl = before.Session.PageUrl, RecordLink = before.Session.RecordLink, LinkKind = before.Session.LinkKind,

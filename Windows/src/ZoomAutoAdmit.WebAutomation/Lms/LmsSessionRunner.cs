@@ -718,7 +718,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     /// </summary>
     public async Task<IReadOnlyList<LmsSessionInfo>> SurveyAsync(
         DateOnly from, DateOnly to, IReadOnlyCollection<string>? groups = null, bool openEach = true,
-        bool headed = false, CancellationToken cancellationToken = default)
+        bool headed = false, CancellationToken cancellationToken = default,
+        Func<string, DateOnly?, TimeOnly?, bool>? openWhen = null)
     {
         var account = credentials.Read() ?? throw new InvalidOperationException("No LMS sign-in is saved.");
         // Its own profile: a look at the list must never collide with the automation pressing a button.
@@ -767,7 +768,9 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         foreach (var item in listed)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!openEach)
+            // A quick read still opens the sessions it is asked to (the ones this app put material on),
+            // so something removed on the LMS shows at once without a full check.
+            if (!openEach && openWhen?.Invoke(item.Group, item.Date, item.Start) != true)
             {
                 result.Add(new(item.Group, item.Date, item.Start, item.Title, item.Status, null, "", "", "unknown", null, []));
                 continue;

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using ZoomAutoAdmit.Attendance;
 using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.Core.Sessions;
@@ -311,6 +311,115 @@ public sealed class SessionRolesTests
     }
 
     [Fact]
+    public async Task AnInstructorBackWithoutCoHostIsMadeCoHostAgain()
+    {
+        var store = new MemoryStore { Value = new SessionRoleDocument { Profiles = [Technical()] } };
+        var assigner = new FakeAssigner();
+        // Zoom's own row text: the tags say who is co-host.
+        var room = new FakeRows([("Ahmed Mohamed", "Ahmed Mohamed,(Guest), Computer audio muted,Video off")]);
+        assigner.OnAssign = name => room.Rows = [(name, name + ",(Co-host), Computer audio muted,Video off")];
+        var events = new MeetingLifecycleEvents();
+        await using var bridge = new SessionRoleBridge(events, _ => room, new FakeNames("CAI5_AIS4_S7 • 12 • Advanced Python"),
+            store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20), presenters: NoPresenterSource.Instance,
+            restoreEvery: TimeSpan.Zero);
+
+        await events.PublishAsync(Context("CAI5_AIS4_S7"), MeetingLifecycleEventKind.Active);
+        await WaitFor(() => assigner.Assigned.Count == 1);
+
+        // Now a co-host: nothing more is done.
+        await Task.Delay(120);
+        Assert.Single(assigner.Assigned);
+
+        // Their internet dropped: back in the meeting as a plain guest - made co-host again.
+        room.Rows = [("Ahmed Mohamed", "Ahmed Mohamed,(Guest), Computer audio muted,Video off")];
+        await WaitFor(() => assigner.Assigned.Count >= 2);
+        Assert.All(assigner.Assigned, name => Assert.Equal("Ahmed Mohamed", name));
+    }
+
+    [Fact]
+    public async Task AWebClassIsMadeCoHostThroughTheWebAssigner()
+    {
+        var store = new MemoryStore { Value = new SessionRoleDocument { Profiles = [Technical()] } };
+        var desktop = new FakeAssigner();
+        var web = new FakeAssigner();
+        // The web client's own row text (recorded live): the role sits in brackets after the name.
+        var room = new FakeRows([("Ahmed Mohamed", "Ahmed Mohamed (Guest),computer audio muted,video off")]);
+        web.OnAssign = name => room.Rows = [(name, name + " (Co-host, guest),computer audio muted,video off")];
+        var events = new MeetingLifecycleEvents();
+        await using var bridge = new SessionRoleBridge(events, _ => room, new FakeNames("CAI5_AIS4_S7 • 12 • Advanced Python"),
+            store, desktop, log: _ => { }, interval: TimeSpan.FromMilliseconds(20), presenters: NoPresenterSource.Instance,
+            restoreEvery: TimeSpan.Zero,
+            assignerFor: context => context.EngineType == SessionEngineType.Web ? web : desktop);
+
+        await events.PublishAsync(Context("CAI5_AIS4_S7", SessionEngineType.Web), MeetingLifecycleEventKind.Active);
+        await WaitFor(() => web.Assigned.Count == 1);
+
+        // Dropped and back as a plain guest on the web: made co-host again, still through the web.
+        room.Rows = [("Ahmed Mohamed", "Ahmed Mohamed (Guest),computer audio muted,video off")];
+        await WaitFor(() => web.Assigned.Count >= 2);
+        Assert.Empty(desktop.Assigned);
+    }
+
+    [Fact]
+    public async Task NobodyIsMadeCoHostAgainFromABareNameOrWhileTheyAreHost()
+    {
+        var store = new MemoryStore { Value = new SessionRoleDocument { Profiles = [Technical()] } };
+        var assigner = new FakeAssigner();
+        var room = new FakeRows([("Ahmed Mohamed", "Ahmed Mohamed,(Guest), Computer audio muted")]);
+        assigner.OnAssign = name => room.Rows = [(name, name + ",(Co-host), Computer audio muted,Video off")];
+        var events = new MeetingLifecycleEvents();
+        await using var bridge = new SessionRoleBridge(events, _ => room, new FakeNames("CAI5_AIS4_S7 • 12 • Advanced Python"),
+            store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20), presenters: NoPresenterSource.Instance,
+            restoreEvery: TimeSpan.Zero);
+
+        await events.PublishAsync(Context("CAI5_AIS4_S7"), MeetingLifecycleEventKind.Active);
+        await WaitFor(() => assigner.Assigned.Count == 1);
+
+        // A read that gives only the name cannot say they lost co-host.
+        room.Rows = [("Ahmed Mohamed", "Ahmed Mohamed")];
+        await Task.Delay(120);
+        // Zoom handed them the host role (the host left): never "demoted" to co-host.
+        room.Rows = [("Ahmed Mohamed", "Ahmed Mohamed,(Host), Computer audio unmuted")];
+        await Task.Delay(120);
+        Assert.Single(assigner.Assigned);
+    }
+
+    [Fact]
+    public async Task WithAutoCoHostOffNobodyIsMadeCoHostUntilItIsBackOn()
+    {
+        var store = new MemoryStore { Value = new SessionRoleDocument { Profiles = [Technical()] } };
+        var assigner = new FakeAssigner();
+        bool on = false;
+        var room = new FakeRows([("Ahmed Mohamed", "Ahmed Mohamed,(Guest), Computer audio muted")]);
+        assigner.OnAssign = name => room.Rows = [(name, name + ",(Co-host), Computer audio muted,Video off")];
+        var events = new MeetingLifecycleEvents();
+        await using var bridge = new SessionRoleBridge(events, _ => room, new FakeNames("CAI5_AIS4_S7 • 12 • Advanced Python"),
+            store, assigner, log: _ => { }, interval: TimeSpan.FromMilliseconds(20), presenters: NoPresenterSource.Instance,
+            restoreEvery: TimeSpan.Zero, autoCoHostOn: () => on);
+
+        await events.PublishAsync(Context("CAI5_AIS4_S7"), MeetingLifecycleEventKind.Active);
+        await Task.Delay(150);
+        Assert.Empty(assigner.Assigned);            // switched off: the instructor is left alone
+
+        on = true;
+        await WaitFor(() => assigner.Assigned.Count == 1);
+
+        // Taken off on purpose with the switch off: not made co-host again.
+        on = false;
+        room.Rows = [("Ahmed Mohamed", "Ahmed Mohamed,(Guest), Computer audio muted")];
+        await Task.Delay(150);
+        Assert.Single(assigner.Assigned);
+    }
+
+    private sealed class FakeRows(IReadOnlyList<(string Name, string Label)> rows) : IAttendanceParticipantSource
+    {
+        public IReadOnlyList<(string Name, string Label)> Rows = rows;
+        public AttendanceSource Source => AttendanceSource.Desktop;
+        public Task<ParticipantReadResult> ReadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ParticipantReadResult(Rows.Select(r => new ParticipantPresence(r.Name) { RowLabel = r.Label }).ToArray()));
+    }
+
+    [Fact]
     public async Task BridgeAssignsNothingWhenTheScheduleNameMatchesNoSessionType()
     {
         var store = new MemoryStore { Value = new SessionRoleDocument { Profiles = [Technical()] } };
@@ -416,10 +525,10 @@ public sealed class SessionRolesTests
         Assert.True(condition(), "The bridge did not reach the expected state in time.");
     }
 
-    private static MeetingLaunchContext Context(string accountId)
+    private static MeetingLaunchContext Context(string accountId, SessionEngineType engine = SessionEngineType.Desktop)
     {
         var scheduled = new ScheduledMeeting(new("https://zoom.us/j/12345678901"), accountId, DateTimeOffset.Now);
-        return new(new(Guid.NewGuid(), scheduled, DateTimeOffset.Now), new(accountId, accountId, "reference"), SessionEngineType.Desktop, accountId);
+        return new(new(Guid.NewGuid(), scheduled, DateTimeOffset.Now), new(accountId, accountId, "reference"), engine, accountId);
     }
 
     private sealed class FakeNames(string? name) : ISessionNameSource
@@ -438,9 +547,12 @@ public sealed class SessionRolesTests
     private sealed class FakeAssigner : ICoHostAssigner
     {
         public List<string> Assigned { get; } = [];
+        /// <summary>What Zoom does once someone is made co-host (a test updates the rows it reads).</summary>
+        public Action<string>? OnAssign;
         public CoHostOutcome Assign(string observedDisplayName, CancellationToken token = default)
         {
             lock (Assigned) Assigned.Add(observedDisplayName);
+            OnAssign?.Invoke(observedDisplayName);
             return new(true, observedDisplayName + " is now a co-host.");
         }
     }

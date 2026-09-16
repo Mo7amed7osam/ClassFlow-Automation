@@ -13,6 +13,9 @@ public static class MeetingStartCommand
         CliOptions options,
         CancellationToken cancellationToken = default)
     {
+        // A class started by a Windows task (or by hand from the command line) runs with no window:
+        // everything it logs also goes to Logs\meetings\<account>-<date>.log, so it can be followed.
+        using var logFile = MeetingLogFile.Start(options.AccountId);
         await using var bootstrapper = new WindowsRuntimeBootstrapper();
         MeetingSchedule? loadedSchedule = null;
 
@@ -99,7 +102,9 @@ public static class MeetingStartCommand
             }
             else
                 session = await bootstrapper.Orchestrator.RunAsync(
-                    new ScheduledMeeting(meetingUrl, options.AccountId, DateTimeOffset.UtcNow, GroupId: options.AccountId),
+                    new ScheduledMeeting(meetingUrl, options.AccountId, DateTimeOffset.UtcNow, GroupId: options.AccountId,
+                        // "--engine web" opens it in the browser; otherwise the account's own choice.
+                        PreferredEngine: options.Engine == "web" ? ZoomAutoAdmit.Core.Sessions.SessionEngineType.Web : null),
                     linkedCancellation.Token);
             if (session.State == MeetingState.Failed)
             {
@@ -131,5 +136,42 @@ public static class MeetingStartCommand
             if (session is { State: not MeetingState.Failed and not MeetingState.Ended })
                 await bootstrapper.Orchestrator.EndAsync(session, CancellationToken.None);
         }
+    }
+}
+
+/// <summary>Appends every log line of this process to a per-meeting file under Logs\meetings.</summary>
+internal sealed class MeetingLogFile : IDisposable
+{
+    private readonly object _sync = new();
+    private readonly StreamWriter _writer;
+
+    private MeetingLogFile(string path)
+    {
+        _writer = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
+        ConsoleLogger.EntryWritten += Write;
+    }
+
+    public static MeetingLogFile? Start(string? accountId)
+    {
+        try
+        {
+            string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZoomAutoAdmit", "Logs", "meetings");
+            Directory.CreateDirectory(folder);
+            string name = string.Concat((string.IsNullOrWhiteSpace(accountId) ? "meeting" : accountId).Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+            return new MeetingLogFile(Path.Combine(folder, $"{name}-{DateTime.Now:yyyyMMdd}.log"));
+        }
+        catch { return null; }
+    }
+
+    private void Write(LogEntry entry)
+    {
+        try { lock (_sync) _writer.WriteLine($"[{entry.Timestamp.ToLocalTime():yyyy-MM-dd HH:mm:ss}] [{entry.Level}] {entry.Message}"); }
+        catch { }
+    }
+
+    public void Dispose()
+    {
+        ConsoleLogger.EntryWritten -= Write;
+        try { _writer.Dispose(); } catch { }
     }
 }

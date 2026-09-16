@@ -169,6 +169,9 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
         bool pageMissingLogged = false;
 
         bool pausedLogged = false;
+        // Set once the meeting has been seen live: from then on, leaving it is either a dropped
+        // connection (joined again) or the class having ended (never joined again).
+        bool meetingSeen = false;
         var nextPanelCheck = DateTimeOffset.UtcNow;
         var nextLauncherCheck = DateTimeOffset.UtcNow;
         while (!linked.IsCancellationRequested)
@@ -193,6 +196,12 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
                 }
 
                 var surface = await _meetingController.FindActiveMeetingAsync(session);
+                if (surface == null && meetingSeen && await ZoomWebMeetingEnded.IsShownAsync(session.Context))
+                {
+                    ConsoleLogger.Info("WEB_MEETING_ENDED: Zoom says the meeting has ended; it is not joined again.");
+                    return;
+                }
+                if (surface != null) meetingSeen = true;
                 if (surface == null)
                 {
                     // Back on Zoom's "open the app" page (a reload, a rejoin): join from the browser again.

@@ -199,7 +199,12 @@ public sealed class LmsSessionsViewModel : ObservableObject
         try
         {
             var groups = (await _schedules.ListAsync()).Select(s => s.GroupName ?? s.AccountId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            var list = await Task.Run(() => _runner().SurveyAsync(from, to, groups, openEach: full));
+            // Check LMS opens only the sessions this app put material or an assignment on: a file deleted
+            // on the LMS shows on the card straight after, without a full check of every session.
+            var withMaterial = MaterialSettings.Load().Done.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            bool HasMaterial(string group, DateOnly? date, TimeOnly? start) =>
+                date is { } d && start is { } t && withMaterial.Contains(MaterialSettings.KeyOf(group, d, t));
+            var list = await Task.Run(() => _runner().SurveyAsync(from, to, groups, openEach: full, openWhen: HasMaterial));
             _cache.Merge(list, from, to, _accounts.Active().Email, listOnly: !full);
             Status = $"LMS read at {DateTime.Now:HH:mm}: {list.Count} session(s) from {from:dd MMM} to {to:dd MMM}.";
         }

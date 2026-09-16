@@ -9,7 +9,6 @@ namespace ZoomAutoAdmit.Inspector.Runtime;
 /// </summary>
 public sealed class ScheduleNameSource(WindowsMeetingScheduleStore store) : ISessionNameSource
 {
-    private static readonly TimeSpan Window = TimeSpan.FromMinutes(90);
 
     public string? Describe(string accountId, DateTimeOffset startTime)
     {
@@ -22,8 +21,8 @@ public sealed class ScheduleNameSource(WindowsMeetingScheduleStore store) : ISes
                 .Where(schedule => (schedule.GroupName ?? schedule.AccountId).Equals(accountId, StringComparison.OrdinalIgnoreCase))
                 .Select(schedule => (schedule, when: Occurrence(schedule, date)))
                 .Where(pair => pair.when.HasValue)
+                .Where(pair => ScheduleTiming.IsSameClass(pair.when!.Value.TimeOfDay, local.DateTime.TimeOfDay))
                 .Select(pair => (pair.schedule, gap: (pair.when!.Value - local.DateTime).Duration()))
-                .Where(pair => pair.gap <= Window)
                 .OrderBy(pair => pair.gap)
                 .ToArray();
             return candidates.Length == 0 ? null : candidates[0].schedule.Name;

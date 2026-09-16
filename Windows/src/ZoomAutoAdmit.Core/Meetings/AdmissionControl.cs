@@ -77,6 +77,54 @@ public static class AdmissionControl
         }
     }
 
+    private static bool _autoCoHost = true;
+    private static DateTimeOffset _coHostReadAt = DateTimeOffset.MinValue;
+    private static string CoHostSwitchPath => Path.Combine(Folder, "cohost-switch.json");
+    private sealed record CoHostSwitchFile(bool On);
+
+    /// <summary>
+    /// False while the operator has turned automatic co-host off - to try something, or because
+    /// they took co-host away on purpose. Nobody is then made co-host, or made co-host again, until
+    /// it is switched back on. This PC only, like the admit switch; on unless turned off.
+    /// </summary>
+    public static bool IsAutoCoHost
+    {
+        get
+        {
+            lock (Gate)
+            {
+                if (DateTimeOffset.UtcNow - _coHostReadAt < CacheFor) return _autoCoHost;
+                _coHostReadAt = DateTimeOffset.UtcNow;
+                try
+                {
+                    _autoCoHost = !File.Exists(CoHostSwitchPath) ||
+                                  (JsonSerializer.Deserialize<CoHostSwitchFile>(File.ReadAllText(CoHostSwitchPath))?.On ?? true);
+                }
+                catch { _autoCoHost = true; }
+                return _autoCoHost;
+            }
+        }
+    }
+
+    public static void SetAutoCoHost(bool on)
+    {
+        lock (Gate)
+        {
+            _autoCoHost = on;
+            _coHostReadAt = DateTimeOffset.UtcNow;
+            try
+            {
+                Directory.CreateDirectory(Folder);
+                File.WriteAllText(CoHostSwitchPath, JsonSerializer.Serialize(new CoHostSwitchFile(on)));
+                ConsoleLogger.Info($"[COHOST] Automatic co-host turned {(on ? "on" : "off")} by the operator.");
+            }
+            catch (Exception ex)
+            {
+                ConsoleLogger.Warn($"[COHOST] The co-host switch could not be saved; {ex.Message}");
+            }
+        }
+    }
+
     /// <summary>
     /// True while one "Admit all" press is preferred over admitting people one at a time.
     /// Preferred unless somebody turns it off, and read from disk so the engine in its own

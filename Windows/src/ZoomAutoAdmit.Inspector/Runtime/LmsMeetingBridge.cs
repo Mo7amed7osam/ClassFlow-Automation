@@ -35,6 +35,12 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
     private readonly object _sync = new();
     private readonly HashSet<Guid> _handled = [];
     private readonly List<Task> _pending = [];
+    /// <summary>The class each meeting was taken as (its snapped start), for the final attendance.</summary>
+    private readonly Dictionary<Guid, (string Group, DateOnly Day, TimeOnly Start)> _classes = [];
+    /// <summary>Stops each meeting's live marker.</summary>
+    private readonly Dictionary<Guid, CancellationTokenSource> _beats = [];
+    /// <summary>How long after a meeting ends its final correction runs (the last reads are saved first).</summary>
+    public static readonly TimeSpan FinalAttendanceAfter = TimeSpan.FromMinutes(2);
 
     /// <summary>The group's scheduled class nearest the moment the meeting went live (null: none that close).</summary>
     public delegate Task<TimeOnly?> ClassStart(string group, DateOnly day, TimeOnly live, CancellationToken token);
@@ -71,18 +77,56 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
 
     private Task OnLifecycleAsync(MeetingLifecycleEvent message)
     {
-        if (message.Kind != MeetingLifecycleEventKind.Active) return Task.CompletedTask;
         var session = message.Context.Session;
+        if (message.Kind == MeetingLifecycleEventKind.Ending)
+        {
+            lock (_sync)
+            {
+                if (_beats.Remove(session.SessionId, out var beat)) { beat.Cancel(); beat.Dispose(); }
+                LiveMeetings.Clear(session.SessionId);
+                if (_classes.Remove(session.SessionId, out var ended))
+                    _pending.Add(Task.Run(() => FinalAttendanceAsync(ended.Group, ended.Day, ended.Start)));
+            }
+            return Task.CompletedTask;
+        }
         lock (_sync)
         {
             if (!_handled.Add(session.SessionId)) return Task.CompletedTask;     // live once per meeting
+            // The meeting is running here: kept fresh every minute, so the app (and the steps that
+            // wait for the class to end) can see it whichever process runs it.
+            var beat = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
+            _beats[session.SessionId] = beat;
+            string engine = message.Context.EngineType.ToString();
+            var token = beat.Token;
+            // Not in _pending: it runs for the whole meeting, and DrainAsync waits only for the LMS work.
+            _ = Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    LiveMeetings.Beat(session.SessionId, session.GroupId, engine, session.StartTime);
+                    try { await Task.Delay(LiveMeetings.BeatEvery, token); } catch (OperationCanceledException) { break; }
+                }
+            });
             // Not awaited by the meeting: admission goes on while the dashboard is driven.
-            _pending.Add(Task.Run(() => HandleAsync(session.GroupId, session.StartTime, _stopping.Token, snapToClass: !session.HasScheduledStart)));
+            _pending.Add(Task.Run(() => HandleAsync(session.GroupId, session.StartTime, _stopping.Token,
+                snapToClass: !session.HasScheduledStart, sessionId: session.SessionId)));
         }
         return Task.CompletedTask;
     }
 
-    private async Task HandleAsync(string group, DateTimeOffset scheduledStart, CancellationToken token, bool snapToClass = true)
+    /// <summary>The meeting closed: its class's late-joiner correction runs once more, with everyone seen until the end.</summary>
+    private async Task FinalAttendanceAsync(string group, DateOnly day, TimeOnly start)
+    {
+        try
+        {
+            var due = DateTimeOffset.Now + FinalAttendanceAfter;
+            await _queue.ScheduleFinalAttendanceAsync(group, day, start, due);
+            _log($"The meeting of {group} ended; the {start.ToString("HH:mm")} class's attendance is corrected once more at {due.LocalDateTime.ToString("HH:mm")}.");
+        }
+        catch (Exception ex) { _log($"The final attendance for {group} could not be written down: {ex.Message}"); }
+    }
+
+    private async Task HandleAsync(string group, DateTimeOffset scheduledStart, CancellationToken token, bool snapToClass = true, Guid? sessionId = null)
     {
         if (string.IsNullOrWhiteSpace(group)) return;
         var local = scheduledStart.ToLocalTime();
@@ -104,6 +148,8 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { }
         }
+
+        if (sessionId is { } id) lock (_sync) _classes[id] = (group, day, start);
 
         // The central server is told the class started here, whatever Run Session does next.
         _activity.Write("class.opened", "done", $"{group}: the {start:HH\\:mm} class is live.", group, day);

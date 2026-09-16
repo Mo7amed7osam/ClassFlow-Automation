@@ -54,6 +54,8 @@ public sealed class ZoomCoHostAssigner : ICoHostAssigner
     {
         if (string.IsNullOrWhiteSpace(observedDisplayName)) return new(false, "No participant name supplied.");
         CoHostOutcome outcome = new(false, "The assignment did not run.");
+        // Never while the attendance walk is scrolling the same list (after the wait, it goes ahead).
+        using var gate = ParticipantsPanelGate.TryEnter(TimeSpan.FromSeconds(15), token);
         DesktopThread.RunOnInteractiveDesktop(() =>
         {
             using var automation = new UIA3Automation();

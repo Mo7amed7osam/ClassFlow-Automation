@@ -63,7 +63,8 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
         SessionRoles = new SessionRoleBridge(
             LifecycleEvents,
             attendanceSources ?? (context => sources.Create(context, mayOpenPanel: false)),
-            new ScheduleNameSource(ScheduleStore));
+            new ScheduleNameSource(ScheduleStore),
+            assignerFor: WebOrDesktopCoHost(() => webEngine.ActiveMeetingPage));
         // The LMS half of every class: Run Session when the meeting goes live, and the attendance
         // steps written down. Here so it works however the meeting was started (app or Windows task).
         LmsMeetingBridge.ClassStart classStart = async (group, day, live, token) =>
@@ -77,6 +78,14 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
             classStart: classStart,
             webPage: () => webEngine.ActiveMeetingPage);
         ConsoleLogger.Success("[BOOTSTRAP] Services initialized");
+    }
+
+    /// <summary>A web class is made co-host through the web page; a desktop class through the Zoom app.</summary>
+    private static Func<MeetingLaunchContext, ICoHostAssigner> WebOrDesktopCoHost(Func<Microsoft.Playwright.IPage?> webPage)
+    {
+        var desktop = new ZoomCoHostAssigner();
+        var web = new WebCoHostAssigner(webPage);
+        return context => context.EngineType == SessionEngineType.Web ? web : desktop;
     }
 
     public WindowsMeetingAccountManager AccountManager { get; }

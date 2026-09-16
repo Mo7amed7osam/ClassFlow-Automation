@@ -30,6 +30,21 @@ public static class ScheduleTiming
     public static readonly TimeSpan SameClassWindow = TimeSpan.FromMinutes(90);
 
     /// <summary>
+    /// How long after its start a class is still going on. A meeting opened again while the class runs
+    /// (the app restarted, the meeting dropped and Start was pressed at 20:32 for the 19:00 class) is
+    /// that class, not a new one.
+    /// </summary>
+    public static readonly TimeSpan ClassRunsFor = TimeSpan.FromHours(3) + TimeSpan.FromMinutes(15);
+
+    /// <summary>A meeting live at <paramref name="moment"/> belongs to the class starting at <paramref name="classStart"/>:
+    /// up to 90 minutes early, or any time while the class is still going on.</summary>
+    public static bool IsSameClass(TimeSpan classStart, TimeSpan moment)
+    {
+        var gap = moment - classStart;
+        return gap >= -SameClassWindow && gap <= ClassRunsFor;
+    }
+
+    /// <summary>
     /// The scheduled start of the group's class that day nearest a moment (a meeting opened by hand at
     /// 18:51 is the 19:00 class), or null when no class of the group is that close.
     /// </summary>
@@ -38,7 +53,7 @@ public static class ScheduleTiming
             .Where(s => group.Equals(s.GroupName, StringComparison.OrdinalIgnoreCase) || group.Equals(s.AccountId, StringComparison.OrdinalIgnoreCase))
             .Where(s => s.OccurrenceDate == day || (s.OccurrenceDate == null && s.Days.Includes(day.DayOfWeek)))
             .Select(s => new TimeOnly(s.Time.Hour, s.Time.Minute))
-            .Where(t => Math.Abs((t.ToTimeSpan() - moment.ToTimeSpan()).TotalMinutes) <= SameClassWindow.TotalMinutes)
+            .Where(t => IsSameClass(t.ToTimeSpan(), moment.ToTimeSpan()))
             .OrderBy(t => Math.Abs((t.ToTimeSpan() - moment.ToTimeSpan()).TotalMinutes))
             .Select(t => (TimeOnly?)t)
             .FirstOrDefault();

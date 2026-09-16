@@ -184,6 +184,37 @@ public sealed class LmsFollowUpQueue
         }, cancellationToken);
 
     /// <summary>
+    /// The class's meeting has ended: the late-joiner correction runs once more with everyone the
+    /// meeting saw until its last minute (added again when it was already done at 3 h), and the
+    /// steps after it are brought forward to the same moment. Complete Session is never added back.
+    /// </summary>
+    public Task<IReadOnlyList<LmsFollowUp>> ScheduleFinalAttendanceAsync(
+        string group, DateOnly date, TimeOnly start, DateTimeOffset due, CancellationToken cancellationToken = default) =>
+        UpdateAsync(items =>
+        {
+            bool IsClass(LmsFollowUp item) => item.Group.Equals(group, StringComparison.OrdinalIgnoreCase) &&
+                                              item.SessionDate == date && item.SessionStart == start;
+            var correct = Build(group, date, start, LmsFollowUpStep.CorrectAttendance, due);
+            if (items.FindIndex(item => item.Id == correct.Id) < 0) items.Add(correct);
+            for (int i = 0; i < items.Count; i++)
+                if (IsClass(items[i]) &&
+                    items[i].Step is LmsFollowUpStep.CorrectAttendance or LmsFollowUpStep.CompleteSession or LmsFollowUpStep.AttachZoomRecording &&
+                    items[i].DueAt > due)
+                    items[i] = items[i] with { DueAt = due };
+            return items;
+        }, cancellationToken);
+
+    /// <summary>Not due yet after all (its meeting is still running): due again later, attempts untouched.</summary>
+    public Task<IReadOnlyList<LmsFollowUp>> PostponeAsync(
+        LmsFollowUp item, DateTimeOffset until, string reason, CancellationToken cancellationToken = default) =>
+        UpdateAsync(items =>
+        {
+            int index = items.FindIndex(existing => existing.Id == item.Id);
+            if (index >= 0) items[index] = items[index] with { DueAt = until, LastError = reason };
+            return items;
+        }, cancellationToken);
+
+    /// <summary>
     /// Not done: it is due again shortly, with the reason on it. After enough attempts it stops
     /// being retried but stays in the file, so a class that never got its attendance is visible.
     /// </summary>

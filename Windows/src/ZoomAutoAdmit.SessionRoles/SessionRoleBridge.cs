@@ -56,12 +56,21 @@ public sealed class SessionRoleBridge : IAsyncDisposable
     private readonly ISessionNameSource _names;
     private readonly Func<MeetingLaunchContext, IAttendanceParticipantSource> _participants;
     private readonly ICoHostAssigner _assigner;
+    /// <summary>Picks the assigner for a meeting's engine (web or desktop); null means always _assigner.</summary>
+    private readonly Func<MeetingLaunchContext, ICoHostAssigner>? _assignerFor;
     private readonly IPresenterSource _presenters;
     private IRoleAiMatcher? _ai;
     private readonly Action<string> _log;
     private readonly TimeSpan _interval;
     private readonly TimeSpan _settle;
+    /// <summary>How soon the same person may be made co-host again after losing it.</summary>
+    private readonly TimeSpan _restoreEvery;
+    /// <summary>The operator's "Auto co-host" switch.</summary>
+    private readonly Func<bool> _autoCoHostOn;
     private bool _disposed;
+
+    private static readonly System.Text.RegularExpressions.Regex HostRole =
+        new(@"\(\s*host\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     public SessionRoleBridge(
         MeetingLifecycleEvents events,
@@ -71,8 +80,14 @@ public sealed class SessionRoleBridge : IAsyncDisposable
         ICoHostAssigner? assigner = null,
         Action<string>? log = null,
         TimeSpan? interval = null,
-        IPresenterSource? presenters = null)
+        IPresenterSource? presenters = null,
+        TimeSpan? restoreEvery = null,
+        Func<bool>? autoCoHostOn = null,
+        Func<MeetingLaunchContext, ICoHostAssigner>? assignerFor = null)
     {
+        _assignerFor = assignerFor;
+        _restoreEvery = restoreEvery ?? TimeSpan.FromMinutes(1);
+        _autoCoHostOn = autoCoHostOn ?? (() => AdmissionControl.IsAutoCoHost);
         _events = events;
         _participants = participants;
         _names = names;
@@ -132,22 +147,37 @@ public sealed class SessionRoleBridge : IAsyncDisposable
             var document = _store.Load();
             string? scheduleName = _names.Describe(session.GroupId, session.StartTime);
             var profile = SessionTypeResolver.Resolve(scheduleName, session.GroupId, document.Profiles);
+            // No profile yet (the class was not recognised, or its profile is added during the class):
+            // looked at again every heartbeat instead of giving up on the meeting for good.
             if (profile == null)
-            {
                 Log($"[ROLE] No profile applies to this meeting; group={session.GroupId}; name=\"{scheduleName ?? "(unknown)"}\". " +
-                    "Add a profile with no keywords and no accounts to cover every meeting.", session.SessionId);
-                return;
+                    "Add a profile with no keywords and no accounts to cover every meeting. Looking again every few minutes.", session.SessionId);
+            while (profile == null)
+            {
+                try { await Task.Delay(_interval, token); }
+                catch (OperationCanceledException) { return; }
+                document = _store.Load();
+                scheduleName = _names.Describe(session.GroupId, session.StartTime);
+                profile = SessionTypeResolver.Resolve(scheduleName, session.GroupId, document.Profiles);
+                if (profile != null)
+                    Log($"[ROLE] A profile applies now: \"{scheduleName ?? "(unknown)"}\"", session.SessionId);
             }
             bool everyMeeting = ReferenceEquals(profile, SessionTypeResolver.EveryMeetingProfile(document.Profiles));
             Log($"[ROLE] Profile loaded: {profile.SessionType}{(everyMeeting ? " (applies to every meeting)" : string.Empty)}; " +
                 $"instructors={profile.Instructors.Count()}; coHostCandidates={profile.CoHosts.Count()}", session.SessionId);
 
             var source = _participants(context);
+            var assigner = _assignerFor?.Invoke(context) ?? _assigner;
             var handled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             // The same failure again is not shown again; after three, that person is left to the host.
             var failures = new Dictionary<string, (string Message, int Count)>(StringComparer.OrdinalIgnoreCase);
             var rejected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             bool assignedAnyone = false, reportedNobody = false;
+            // Who this watch made co-host, to notice when one of them is back without it.
+            var madeCoHost = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);   // Zoom name -> person
+            var restoredAt = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+            var restoreFailures = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            bool coHostPausedLogged = false;
             while (!token.IsCancellationRequested)
             {
                 // Wait for an admission, or fall back to the heartbeat.
@@ -155,10 +185,58 @@ public sealed class SessionRoleBridge : IAsyncDisposable
                 catch (OperationCanceledException) { return; }
                 if (token.IsCancellationRequested) return;
                 if (_settle > TimeSpan.Zero) await Task.Delay(_settle, token);
-                IReadOnlyList<string> observed;
-                try { observed = (await source.ReadAsync(token)).Participants.Select(participant => participant.Name).ToArray(); }
+                IReadOnlyList<ParticipantPresence> rows;
+                try { rows = (await source.ReadAsync(token)).Participants; }
                 catch (OperationCanceledException) { return; }
                 catch (Exception ex) { Log($"[ROLE] Participant read failed; {ex.GetType().Name}: {ex.Message}", session.SessionId); continue; }
+                IReadOnlyList<string> observed = rows.Select(participant => participant.Name).ToArray();
+
+                // The operator turned automatic co-host off: nobody is made co-host, or made co-host
+                // again, until it is back on. Names are not marked as handled, so they are looked at
+                // again then.
+                if (!_autoCoHostOn())
+                {
+                    if (!coHostPausedLogged) { Log("[COHOST] Automatic co-host is off; leaving co-host to the host", session.SessionId); coHostPausedLogged = true; }
+                    continue;
+                }
+                if (coHostPausedLogged) { Log("[COHOST] Automatic co-host is on again", session.SessionId); coHostPausedLogged = false; }
+
+                // Someone made co-host here who is in the meeting without it now: their connection
+                // dropped and they came back, or it was taken off them. They are made co-host again
+                // (the user's rule), at most once a minute each, and left to the host after three
+                // failures. Only a row that shows Zoom's role tags is trusted to say "not co-host".
+                foreach (var row in rows)
+                {
+                    if (token.IsCancellationRequested) return;
+                    if (!madeCoHost.TryGetValue(row.Name, out var person) || !ShowsRoles(row.RowLabel)) continue;
+                    var parsed = ParticipantRow.Parse(row.RowLabel);
+                    if (parsed.IsMe || parsed.IsCoHost || HostRole.IsMatch(row.RowLabel!)) continue;
+                    if (restoredAt.TryGetValue(row.Name, out var last) && DateTimeOffset.UtcNow - last < _restoreEvery) continue;
+                    restoredAt[row.Name] = DateTimeOffset.UtcNow;
+                    Log($"[COHOST] {person} is in the meeting but no longer a co-host; making them co-host again", session.SessionId);
+                    CoHostOutcome again;
+                    try { again = assigner.Assign(row.Name, token); }
+                    catch (OperationCanceledException) { return; }
+                    catch (Exception ex) { again = new(false, $"{ex.GetType().Name}: {ex.Message}"); }
+                    if (again.Success)
+                    {
+                        restoreFailures.Remove(row.Name);
+                        AssignedCoHosts.Record(session.SessionId, row.Name);
+                        Log($"[COHOST] Co-host restored: {again.Message}", session.SessionId);
+                        Raise(new(SessionRoleNoticeKind.CoHostAssigned, "Co-host restored",
+                            $"{person} was back without co-host and was made co-host again.", session.SessionId));
+                        continue;
+                    }
+                    int failed = restoreFailures.GetValueOrDefault(row.Name) + 1;
+                    restoreFailures[row.Name] = failed;
+                    Log($"[COHOST] Could not make {person} co-host again ({failed}): {again.Message}", session.SessionId);
+                    if (failed >= 3)
+                    {
+                        madeCoHost.Remove(row.Name);
+                        Raise(new(SessionRoleNoticeKind.AssignmentFailed, "Make co-host by hand",
+                            $"{person} lost co-host and could not be made co-host again ({again.Message}).", session.SessionId));
+                    }
+                }
 
                 // Re-read the profile each pass so edits made during the meeting are picked up.
                 document = _store.Load();
@@ -191,12 +269,13 @@ public sealed class SessionRoleBridge : IAsyncDisposable
                     Log($"[COHOST] Participant matched: {match.Person.Name} (as \"{name}\", {match.Source}, {match.Confidence}%)", session.SessionId);
                     Log($"[COHOST] Assignment started for {match.Person.Name}", session.SessionId);
                     CoHostOutcome outcome;
-                    try { outcome = _assigner.Assign(name, token); }
+                    try { outcome = assigner.Assign(name, token); }
                     catch (OperationCanceledException) { return; }
                     catch (Exception ex) { outcome = new(false, $"{ex.GetType().Name}: {ex.Message}"); }
                     if (outcome.Success)
                     {
                         assignedAnyone = true;
+                        madeCoHost[name] = match.Person.Name;
                         // The end-of-class watch looks for this person: gone for five minutes after the
                         // three hours, the class is over.
                         AssignedCoHosts.Record(session.SessionId, name);
@@ -245,6 +324,14 @@ public sealed class SessionRoleBridge : IAsyncDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex) { Log($"[ROLE] Watcher stopped; {ex.GetType().Name}: {ex.Message}", session.SessionId); }
     }
+
+    /// <summary>
+    /// A participant row carrying Zoom's own tags (role, audio, video), as the Zoom app and the web
+    /// client write them - enough to tell that someone is not a co-host. A bare name is not.
+    /// </summary>
+    private static bool ShowsRoles(string? label) =>
+        !string.IsNullOrWhiteSpace(label) &&
+        (label.Contains('(') || label.Contains("audio", StringComparison.OrdinalIgnoreCase) || label.Contains("video", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Local rules pick the suspects; the AI only confirms one of them.</summary>
     /// <summary>The presenter is a hint only, so a failure to read it is not worth reporting.</summary>

@@ -17,6 +17,11 @@ public sealed class FlaUiWaitingRoomAdmitExecutor
     public bool TryAdmit(IntPtr meetingOrParticipantsHwnd, CancellationToken cancellationToken = default)
     {
         bool admitted = false;
+        // The attendance walk scrolls the same list; admission waits for it to finish (a few seconds).
+        // Admitting always matters more: after the wait it goes ahead regardless.
+        using var gate = ParticipantsPanelGate.TryEnter(TimeSpan.FromSeconds(15), cancellationToken);
+        if (gate == null && !cancellationToken.IsCancellationRequested)
+            ConsoleLogger.Warn("[WAITING_ROOM] The participants list stayed busy; admitting anyway.");
         try
         {
             DesktopThread.RunOnInteractiveDesktop(() =>

@@ -11,6 +11,9 @@ public sealed record ParticipantRow(bool IsMe, ParticipantAudio Audio)
     public bool IsHostMe { get; init; }
     /// <summary>Someone else who is a co-host (the instructor the app made co-host, usually).</summary>
     public bool IsCoHost { get; init; }
+    /// <summary>A row still "Joining..." (a rejoin that has not arrived): nobody in the room yet.</summary>
+    public bool IsJoining { get; init; }
+    private static readonly Regex Joining = new(@"\bjoining\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex HostMe = new(@"\(\s*host\s*,\s*me\s*\)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex CoHost = new(@"\(\s*co-?host\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     // "Unmuted" contains "muted", so it is looked for first.
@@ -33,7 +36,7 @@ public sealed record ParticipantRow(bool IsMe, ParticipantAudio Audio)
             : Muted.IsMatch(text) ? ParticipantAudio.Muted
             : Status.IsMatch(text) && !text.Contains("audio", StringComparison.OrdinalIgnoreCase) ? ParticipantAudio.NoAudio
             : ParticipantAudio.Unknown;
-        return new(me, audio) { IsHostMe = HostMe.IsMatch(text), IsCoHost = !me && CoHost.IsMatch(text) };
+        return new(me, audio) { IsHostMe = HostMe.IsMatch(text), IsCoHost = !me && CoHost.IsMatch(text), IsJoining = Joining.IsMatch(text) };
     }
 }
 
@@ -61,6 +64,10 @@ public static class AutoEndRule
     public static RoomState Classify(IReadOnlyList<ParticipantRow> rows, bool readComplete)
     {
         if (!readComplete || rows.Count == 0) return RoomState.Unreadable;
+        // A "Joining..." row has no mic to read and nobody behind it yet (the host's own rejoin left one
+        // on S8, 2026-09-16, and it kept a silent room of three from ending).
+        rows = [.. rows.Where(r => !r.IsJoining)];
+        if (rows.Count == 0) return RoomState.Unreadable;
         // Anyone talking, or anyone whose mic cannot be read, keeps the class going (the host's own row
         // without audio does not: the app joins without it).
         foreach (var r in rows)

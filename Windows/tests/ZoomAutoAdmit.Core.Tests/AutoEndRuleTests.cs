@@ -31,6 +31,8 @@ public sealed class AutoEndRuleTests
         Assert.Equal(RoomState.Busy, AutoEndRule.Classify(Rows(Host, Guest("A", talking: true)), true));
         Assert.Equal(RoomState.Busy, AutoEndRule.Classify(Rows(Host, "Someone"), true));                // mic unknown
         Assert.Equal(RoomState.Unreadable, AutoEndRule.Classify(Rows(Host, Guest("A")), readComplete: false));
+        // S8, 2026-09-16 22:00: the host's own rejoin left a "Joining..." row; it is nobody yet.
+        Assert.Equal(RoomState.SmallAndSilent, AutoEndRule.Classify(Rows(Host, Guest("A"), Guest("B"), "eyouth coordinator Joining..."), true));
     }
 
     [Theory]

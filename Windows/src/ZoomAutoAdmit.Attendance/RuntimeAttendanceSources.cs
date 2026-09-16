@@ -37,26 +37,21 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
 
     private sealed class WebSource(Func<IPage?> getPage) : IAttendanceParticipantSource
     {
-        private IPage? _page;
         public AttendanceSource Source => AttendanceSource.Web;
 
         public async Task<ParticipantReadResult> ReadAsync(CancellationToken token)
         {
-            _page ??= getPage() ?? throw new InvalidOperationException("Attendance primary meeting page unavailable.");
-            if (_page.IsClosed) throw new InvalidOperationException("Attendance primary meeting page closed.");
-            var matches = new List<ILocator>();
-            foreach (var frame in _page.Frames)
-            {
-                token.ThrowIfCancellationRequested();
-                foreach (var role in new[] { AriaRole.List, AriaRole.Listbox })
-                foreach (var list in await frame.GetByRole(role, new() { NameRegex = JoinedListName }).AllAsync())
-                    if (await list.IsVisibleAsync()) matches.Add(list);
-            }
-            if (matches.Count != 1)
+            // The meeting page is asked for on every read: it can be replaced while the class runs.
+            var page = getPage() ?? throw new InvalidOperationException("Attendance primary meeting page unavailable.");
+            if (page.IsClosed) throw new InvalidOperationException("Attendance primary meeting page closed.");
+            var found = await WebParticipantList.FindAsync(page, token);
+            if (found.List is not { } list)
                 throw new InvalidOperationException(
-                    $"Attendance requires one exposed Joined list; matched {matches.Count} across {_page.Frames.Count} frames. " +
-                    "Open the participants panel, or configure the runtime source binding for this Zoom layout.");
-            return await new WebAttendanceParticipantSource(_page, _ => matches[0]).ReadAsync(token);
+                    $"Attendance found no participants list across {page.Frames.Count} frames ({found.Seen}). " +
+                    "Open the participants panel.");
+            if (found.Seen.StartsWith("by its rows", StringComparison.Ordinal))
+                ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Info($"[ATTENDANCE] Participants list found {found.Seen}");
+            return await new WebAttendanceParticipantSource(page, _ => list).ReadAsync(token);
         }
     }
 
@@ -163,26 +158,29 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
         }
 
         /// <summary>
-        /// Every row label of a virtualized list, in order: scrolled to the top, then a page at a
-        /// time to the bottom, then back where it was. Without a scroll pattern, the rows on show.
+        /// Every row label of a virtualized list, in order: scrolled to the top, then down to the
+        /// bottom, then back where it was. Zoom's desktop list shows only the rows on screen and (on
+        /// Zoom Workplace 2026-09) offers no scroll pattern, so without one the list is walked with
+        /// mouse-wheel messages posted to the Zoom window itself: the pointer does not move, nothing
+        /// is brought to the front and nothing is pressed (verified live: 18 of 18 read, foreground
+        /// and cursor unchanged).
         /// </summary>
-        private static (List<string> Labels, bool ReachedEnd) ReadWholeList(FlaUI.Core.AutomationElements.AutomationElement list, CancellationToken token)
+        private static (List<string> Labels, bool ReachedEnd) ReadWholeList(
+            FlaUI.Core.AutomationElements.AutomationElement list, ZoomProcessCandidate process, CancellationToken token)
         {
             var labels = new List<string>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
-            int Take()
+            IReadOnlyList<string> Visible() => list.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem))
+                .Select(SafeName).Where(label => label.Length > 0).ToArray();
+            void Take()
             {
-                int added = 0;
-                foreach (var row in list.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem)))
-                {
-                    string label = SafeName(row);
-                    if (label.Length > 0 && seen.Add(label)) { labels.Add(label); added++; }
-                }
-                return added;
+                foreach (var label in Visible())
+                    if (seen.Add(label)) labels.Add(label);
             }
             FlaUI.Core.Patterns.IScrollPattern? scroll = null;
             try { if (list.Patterns.Scroll.IsSupported) scroll = list.Patterns.Scroll.Pattern; } catch { }
-            if (scroll == null || !scroll.VerticallyScrollable.ValueOrDefault) { Take(); return (labels, true); }
+            if (scroll == null) return WheelThroughList(list, process, Visible, Take, labels, token);
+            if (!scroll.VerticallyScrollable.ValueOrDefault) { Take(); return (labels, true); }
 
             double original = scroll.VerticalScrollPercent.ValueOrDefault;
             bool end = false;
@@ -203,6 +201,164 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
             catch { }
             finally { try { scroll.SetScrollPercent(-1, original); } catch { } }
             return (labels, end);
+        }
+
+        private const uint WmMouseWheel = 0x020A;
+        private const int WheelNotch = 120;
+        private const int MaxWheelMoves = 400;
+
+        private static (List<string> Labels, bool ReachedEnd) WheelThroughList(
+            FlaUI.Core.AutomationElements.AutomationElement list, ZoomProcessCandidate process,
+            Func<IReadOnlyList<string>> visible, Action take, List<string> labels, CancellationToken token)
+        {
+            take();
+            var rect = list.BoundingRectangle;
+            int x = rect.Left + rect.Width / 2, y = rect.Top + rect.Height / 2;
+            IntPtr window = ZoomWindowUnder(x, y, process);
+            // No window of this Zoom process holds the list: only the rows on show, and never a
+            // message to anything else.
+            if (window == IntPtr.Zero) return (labels, false);
+            IntPtr position = (IntPtr)(((y & 0xFFFF) << 16) | (x & 0xFFFF));
+
+            // One notch; true when the rows on show changed (the list moved).
+            bool Wheel(int delta)
+            {
+                string before = string.Join("\n", visible());
+                NativeMethods.PostMessage(window, WmMouseWheel, (IntPtr)unchecked((int)((delta & 0xFFFF) << 16)), position);
+                for (int wait = 0; wait < 6; wait++)
+                {
+                    Thread.Sleep(80);
+                    if (string.Join("\n", visible()) != before) return true;
+                }
+                return false;
+            }
+
+            int up = 0, down = 0;
+            bool end = false;
+            try
+            {
+                for (int still = 0; up < MaxWheelMoves && still < 2 && !token.IsCancellationRequested;)
+                {
+                    if (Wheel(WheelNotch)) { up++; still = 0; take(); } else still++;
+                }
+                for (int still = 0; down < MaxWheelMoves && !token.IsCancellationRequested;)
+                {
+                    if (Wheel(-WheelNotch)) { down++; still = 0; take(); }
+                    else if (++still >= 2) { end = true; break; }
+                }
+            }
+            catch { end = false; }
+            finally
+            {
+                // Back where the person left it.
+                try { for (int i = 0; i < down - up; i++) Wheel(WheelNotch); } catch { }
+            }
+            return (labels, end);
+        }
+
+        /// <summary>The window of this Zoom process that holds the point, or none.</summary>
+        private static IntPtr ZoomWindowUnder(int x, int y, ZoomProcessCandidate process)
+        {
+            var handles = new[] { ZoomWindowManager.FindParticipantsWindow(), ZoomWindowManager.FindMainZoomMeetingWindow() }
+                .Concat(process.Windows.Where(w => w.IsVisible).Select(w => w.Handle));
+            foreach (var handle in handles.Where(h => h != IntPtr.Zero).Distinct())
+            {
+                NativeMethods.GetWindowThreadProcessId(handle, out var owner);
+                if ((int)owner != process.ProcessId) continue;
+                if (!NativeMethods.GetWindowRect(handle, out var bounds)) continue;
+                if (x >= bounds.Left && x < bounds.Right && y >= bounds.Top && y < bounds.Bottom) return handle;
+            }
+            return IntPtr.Zero;
+        }
+
+        /// <summary>Zoom's own "Participants (18)" above the list: how many people are in the meeting.</summary>
+        private static int? PanelCount(UIA3Automation automation, ZoomProcessCandidate process)
+        {
+            try
+            {
+                var participantsWindow = ZoomWindowManager.FindParticipantsWindow();
+                FlaUI.Core.AutomationElements.AutomationElement[] roots = participantsWindow != IntPtr.Zero
+                    ? [automation.FromHandle(participantsWindow)]
+                    : process.Windows.Where(w => w.IsVisible).Select(w => automation.FromHandle(w.Handle)).ToArray();
+                foreach (var root in roots.Where(r => r != null))
+                {
+                    if (PanelTitle.Match(SafeName(root)) is { Success: true } title) return int.Parse(title.Groups[1].Value);
+                    foreach (var text in root.FindAllDescendants(cf => cf.ByControlType(ControlType.Text)))
+                        if (PanelTitle.Match(SafeName(text)) is { Success: true } match) return int.Parse(match.Groups[1].Value);
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static readonly Regex PanelTitle = new(@"^participants\s*\((\d+)\)$", RegexOptions.IgnoreCase);
+
+        private static readonly HashSet<int> PoppedOut = [];
+        private static DateTime _lastReturn = DateTime.MinValue;
+        private static readonly TimeSpan ReturnEvery = TimeSpan.FromMinutes(3);
+        private const uint WmSysCommand = 0x0112;
+        private static readonly IntPtr ScMinimize = (IntPtr)0xF020;
+
+        /// <summary>
+        /// A participants panel docked in the meeting window disappears when the meeting is shrunk to
+        /// Zoom's small floating window, and with it admission, attendance and co-host. Popped out
+        /// into its own window it stays readable (verified live, 2026-09-16: 17 of 17 read with the
+        /// meeting minimized). Zoom's own "Pop out" button, invoked once per Zoom process.
+        /// </summary>
+        private static bool TryPopOut(UIA3Automation automation, ZoomProcessCandidate process)
+        {
+            if (ZoomWindowManager.FindParticipantsWindow() != IntPtr.Zero) return false;
+            lock (PoppedOut) { if (!PoppedOut.Add(process.ProcessId)) return false; }
+            try
+            {
+                IntPtr meeting = ZoomWindowManager.FindMainZoomMeetingWindow();
+                if (meeting == IntPtr.Zero) return false;
+                var button = automation.FromHandle(meeting)
+                    .FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                    .FirstOrDefault(element => SafeName(element).Equals("Pop out", StringComparison.OrdinalIgnoreCase));
+                if (button == null || !button.Patterns.Invoke.IsSupported) return false;
+                button.Patterns.Invoke.Pattern.Invoke();
+                ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Info("[ATTENDANCE] Participants panel popped out, so it keeps working when the meeting is minimized.");
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// The meeting was shrunk to Zoom's small window with the panel docked, so nothing can be read.
+        /// Only while the person is away from the keyboard and mouse: "Return to meeting", pop the
+        /// panel out, shrink the meeting back and give the front back to whatever had it. At most
+        /// every few minutes.
+        /// </summary>
+        private static bool TryRecoverFromMiniWindow(UIA3Automation automation, ZoomProcessCandidate process)
+        {
+            if (ZoomWindowManager.FindParticipantsWindow() != IntPtr.Zero) return false;
+            if (DateTime.UtcNow - _lastReturn < ReturnEvery) return false;
+            if (!ZoomAutoAdmit.UIAutomation.Input.UserActivity.IsIdleFor(ForegroundWindowPreserver.RequiredIdle)) return false;
+            _lastReturn = DateTime.UtcNow;
+            try
+            {
+                var returnButton = process.Windows.Where(w => w.IsVisible)
+                    .Select(w => automation.FromHandle(w.Handle))
+                    .Where(root => root != null)
+                    .SelectMany(root => root.FindAllDescendants(cf => cf.ByControlType(ControlType.Button)))
+                    .FirstOrDefault(element => SafeName(element).Equals("Return to meeting", StringComparison.OrdinalIgnoreCase));
+                if (returnButton == null || !returnButton.Patterns.Invoke.IsSupported) return false;
+                IntPtr front = NativeMethods.GetForegroundWindow();
+                returnButton.Patterns.Invoke.Pattern.Invoke();
+                Thread.Sleep(1500);
+                lock (PoppedOut) PoppedOut.Remove(process.ProcessId);
+                bool popped = TryPopOut(automation, process);
+                Thread.Sleep(800);
+                IntPtr meeting = ZoomWindowManager.FindMainZoomMeetingWindow();
+                if (meeting != IntPtr.Zero) NativeMethods.PostMessage(meeting, WmSysCommand, ScMinimize, IntPtr.Zero);
+                Thread.Sleep(500);
+                if (front != IntPtr.Zero) NativeMethods.SetForegroundWindow(front);
+                ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Info(
+                    $"[ATTENDANCE] The meeting was minimized with the participants panel inside; reopened it briefly{(popped ? " and popped the panel out" : "")}.");
+                return true;
+            }
+            catch { return false; }
         }
 
         private static DateTime _lastAltU = DateTime.MinValue;
@@ -274,6 +430,11 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
                     Thread.Sleep(700);
                     (lists, visibleLists) = FindJoinedLists(automation, process);
                 }
+                if (lists.Length == 0 && mayOpenPanel && TryRecoverFromMiniWindow(automation, process))
+                {
+                    Thread.Sleep(700);
+                    (lists, visibleLists) = FindJoinedLists(automation, process);
+                }
                 if (lists.Length == 0 && mayOpenPanel && TryAltUOpen())
                 {
                     Thread.Sleep(700);
@@ -286,7 +447,23 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
                         $"Open the participants panel. Lists seen: {Describe(visibleLists)}");
                 // The whole list, like the extension reads it: Zoom only exposes the rows on screen,
                 // so the list is scrolled top to bottom and every page is read, then put back.
-                var (labels, reachedEnd) = ReadWholeList(lists[0], token);
+                // Docked in the meeting window: popped out once, so a minimized meeting still has a list.
+                if (mayOpenPanel && TryPopOut(automation, process))
+                {
+                    Thread.Sleep(900);
+                    var (popped, _) = FindJoinedLists(automation, process);
+                    if (popped.Length == 1) lists = popped;
+                }
+                // Admission reads the same list; it is never scrolled under an admission.
+                List<string> labels;
+                bool reachedEnd;
+                using (var gate = ParticipantsPanelGate.TryEnter(TimeSpan.FromSeconds(20), token))
+                {
+                    if (gate == null)
+                        throw new InvalidOperationException("The participants list was busy with an admission; read again next time.");
+                    (labels, reachedEnd) = ReadWholeList(lists[0], process, token);
+                }
+                int? panelCount = PanelCount(automation, process);
                 var names = new List<ParticipantPresence>();
                 // Rows arrive in visual order; a section header switches which list the rows below belong to.
                 // With no header at all (no waiting room) every row is a joined participant. When the
@@ -311,6 +488,8 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
                 if (names.Count == 0) throw new InvalidOperationException("Attendance UIA rows unavailable; not proof of empty attendance.");
                 // Complete when the list was read to its end and holds as many people as Zoom counts.
                 // Without a waiting room Zoom shows no section headers at all: the whole list is joined.
+                // Without section headers, Zoom's "Participants (n)" title is the count to reach.
+                joinedCount ??= hasJoinedHeader ? null : panelCount;
                 bool complete = reachedEnd && (joinedCount is not { } n || names.Count >= n);
                 result = new(names, complete, complete
                     ? $"The whole Joined list ({names.Count} of {joinedCount}), read page by page."

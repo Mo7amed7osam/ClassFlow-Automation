@@ -57,26 +57,32 @@ public sealed class AppAttendanceMatcher(
     }
 
     /// <summary>Matches one class now (the LMS upload asks for this when the last match is old).</summary>
-    public async Task<ExtensionAttendanceFeed.ClassResult?> MatchClassAsync(string group, DateTime classStart, CancellationToken token = default)
+    /// <param name="extraNames">Names seen elsewhere for this class (Zoom's participants report), matched with the recordings.</param>
+    public async Task<ExtensionAttendanceFeed.ClassResult?> MatchClassAsync(string group, DateTime classStart, CancellationToken token = default,
+        IEnumerable<string>? extraNames = null)
     {
         await _gate.WaitAsync(token);
-        try { return await MatchUnlockedAsync(group, classStart, token); }
+        try { return await MatchUnlockedAsync(group, classStart, token, extraNames); }
         finally { _gate.Release(); }
     }
 
-    private async Task<ExtensionAttendanceFeed.ClassResult?> MatchUnlockedAsync(string group, DateTime classStart, CancellationToken token)
+    private async Task<ExtensionAttendanceFeed.ClassResult?> MatchUnlockedAsync(string group, DateTime classStart, CancellationToken token,
+        IEnumerable<string>? extraNames = null)
     {
         // The class as it was recorded: a meeting opened by hand at 18:51 is recorded as 18:51 even
         // when its steps are the 19:00 class's, so the nearest recorded class of the group is used.
         var recorded = _feed.Since(classStart.AddHours(-2))
             .Where(s => s.Group.Equals(group, StringComparison.OrdinalIgnoreCase) &&
-                        Math.Abs((s.Start - classStart).TotalMinutes) <= ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduleTiming.SameClassWindow.TotalMinutes)
+                        s.Start.Date == classStart.Date &&
+                        ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduleTiming.IsSameClass(classStart.TimeOfDay, s.Start.TimeOfDay))
             .ToArray();
-        if (recorded.Length == 0) return null;
-        string classKey = recorded.MinBy(s => Math.Abs((s.Start - classStart).TotalMinutes))!.ClassKey;
+        var extra = (extraNames ?? []).Select(n => n.Trim()).Where(n => n.Length > 0).ToArray();
+        if (recorded.Length == 0 && extra.Length == 0) return null;
+        // Every recording of this class counts: a class reopened while it runs (the app restarted at
+        // 19:31, the meeting opened again on the web at 20:43) is recorded under each start, and
+        // taking only the nearest one uploaded 4 present from a 5-name recording (2026-09-16).
         var names = recorded
-            .Where(s => s.ClassKey.Equals(classKey, StringComparison.OrdinalIgnoreCase))
-            .SelectMany(s => s.Names).Select(n => n.Trim()).Where(n => n.Length > 0)
+            .SelectMany(s => s.Names).Concat(extra).Select(n => n.Trim()).Where(n => n.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (names.Length == 0) return null;
         var roster = (await _rosters.ListAsync(token)).FirstOrDefault(g => g.GroupId.Equals(group, StringComparison.OrdinalIgnoreCase));

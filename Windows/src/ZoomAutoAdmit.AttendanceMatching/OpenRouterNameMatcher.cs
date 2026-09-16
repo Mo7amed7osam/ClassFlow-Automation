@@ -46,34 +46,53 @@ public sealed class OpenRouterNameMatcher(HttpClient client, string model, Func<
         };
         var responseFormat = new { type = "json_schema", json_schema = new { name = "attendance_name_match", strict = true, schema } };
 
-        async Task<HttpResponseMessage> SendAsync(bool requireParameters)
+        // Free models on OpenRouter think before answering; with the thinking on, a small token limit
+        // was spent before the JSON came, and the match failed. Thinking is turned off, and the limit
+        // leaves room for a model that thinks anyway.
+        const int MaxTokens = 2000;
+        async Task<HttpResponseMessage> SendAsync(bool requireParameters, bool reasoningOff)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-            if (requireParameters)
-                request.Content = JsonContent.Create(new
-                {
-                    model, stream = false, max_tokens = 500,
-                    provider = new { require_parameters = true },
-                    messages, response_format = responseFormat
-                });
-            else
-                request.Content = JsonContent.Create(new
-                {
-                    model, stream = false, max_tokens = 500,
-                    messages, response_format = responseFormat
-                });
+            var body = new Dictionary<string, object?>
+            {
+                ["model"] = model, ["stream"] = false, ["max_tokens"] = MaxTokens,
+                ["messages"] = messages, ["response_format"] = responseFormat,
+            };
+            if (requireParameters) body["provider"] = new { require_parameters = true };
+            if (reasoningOff) body["reasoning"] = new { enabled = false };
+            request.Content = JsonContent.Create(body);
             return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
         }
 
-        var response = await SendAsync(requireParameters: true);
+        async Task<bool> MentionsReasoningAsync(HttpResponseMessage answer)
+        {
+            try
+            {
+                // Buffered, so the error can still be read in full if it is reported.
+                await answer.Content.LoadIntoBufferAsync(65536);
+                string text = await answer.Content.ReadAsStringAsync(token);
+                return text.Contains("reasoning", StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { return false; }
+        }
+
+        var response = await SendAsync(requireParameters: true, reasoningOff: true);
+        // A model that cannot stop thinking refuses "reasoning off" (400 naming it): asked again with it
+        // on. Any other 400 is the real answer and is reported as it is.
+        if (response.StatusCode == HttpStatusCode.BadRequest && await MentionsReasoningAsync(response))
+        {
+            response.Dispose();
+            token.ThrowIfCancellationRequested();
+            response = await SendAsync(requireParameters: true, reasoningOff: false);
+        }
         // OpenRouter answers 404 when no endpoint accepts every parameter we demand, which hides models that do work.
         // The retry drops only that demand: the answer below is still validated against the strict schema before it is used.
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             response.Dispose();
             token.ThrowIfCancellationRequested();
-            response = await SendAsync(requireParameters: false);
+            response = await SendAsync(requireParameters: false, reasoningOff: false);
         }
         using (response)
         {

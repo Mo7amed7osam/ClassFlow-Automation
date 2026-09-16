@@ -161,6 +161,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
     public string AdmissionStateText => IsAdmitting ? "Admitting" : "Paused";
+
+    /// <summary>
+    /// Automatic co-host, beside the admit switch: off while the operator takes co-host away on
+    /// purpose or tries something, so the app does not make anyone co-host (again) meanwhile.
+    /// </summary>
+    public bool IsAutoCoHost
+    {
+        get => AdmissionControl.IsAutoCoHost;
+        set
+        {
+            if (AdmissionControl.IsAutoCoHost == value) return;
+            AdmissionControl.SetAutoCoHost(value);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CoHostStateText));
+        }
+    }
+    public string CoHostStateText => IsAutoCoHost ? "Auto co-host" : "Co-host off";
     public string AdmissionBadgeText => IsAdmitting ? "WATCHING" : "PAUSED";
     /// <summary>Which engine the live meeting uses, or what the panel is waiting for.</summary>
     public string AdmissionEngineText => Dashboard.PrimarySession is { } session

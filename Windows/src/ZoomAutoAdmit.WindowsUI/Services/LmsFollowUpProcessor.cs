@@ -19,6 +19,71 @@ public sealed class LmsFollowUpProcessor
     private readonly RunAction _runAction;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    private readonly Func<LmsFollowUp, CancellationToken, Task<ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReport?>> _zoomReport;
+    /// <summary>Less than this in the meeting (all joins added up) is warned about on the class.</summary>
+    public static readonly TimeSpan ShortStay = TimeSpan.FromHours(1);
+    /// <summary>The warning for each class, added to its step's outcome (shown on the Sessions card).</summary>
+    private readonly Dictionary<string, string> _warnings = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string ClassKey(LmsFollowUp item) => $"{item.Group}|{item.SessionDate:yyyy-MM-dd}|{item.SessionStart:HH\\:mm}";
+
+    private string WithWarning(LmsFollowUp item, string message) =>
+        item.Step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance && _warnings.TryGetValue(ClassKey(item), out var warning)
+            ? $"{message} {warning}"
+            : message;
+
+    private async Task<IReadOnlyCollection<string>> ZoomReportNamesAsync(LmsFollowUp item, CancellationToken token)
+    {
+        if (item.Step != LmsFollowUpStep.CorrectAttendance || _isLive(item.Group)) return [];
+        try
+        {
+            var report = await _zoomReport(item, token);
+            if (report == null || report.People.Count == 0) return [];
+            var shortStays = report.People.Where(person => person.Minutes < ShortStay.TotalMinutes).ToArray();
+            if (shortStays.Length > 0)
+                _warnings[ClassKey(item)] = "Warning - less than an hour in the meeting (Zoom report): " +
+                    string.Join(", ", shortStays.OrderBy(person => person.Minutes).Select(person => $"{person.Name} ({person.Minutes} min)")) + ".";
+            else _warnings.Remove(ClassKey(item));
+            ConsoleLogger.Info($"[LMS] {item.Describe}: Zoom's participants report - {report.People.Count} people in {report.Instances} run(s)" +
+                               $"{(shortStays.Length > 0 ? $", {shortStays.Length} under an hour" : "")}.");
+            return [.. report.People.Select(person => person.Name)];
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"[LMS] {item.Describe}: Zoom's participants report could not be read ({ex.Message}); the snapshots are used alone.");
+            return [];
+        }
+    }
+
+    /// <summary>The class's Zoom link (from its recordings) and the group's own web profile, then the report.</summary>
+    private static async Task<ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReport?> ReadZoomReportAsync(
+        LmsFollowUp item, ExtensionAttendanceFeed feed, CancellationToken token)
+    {
+        var classStart = item.SessionDate.ToDateTime(item.SessionStart);
+        // Zoom keeps the report, but only a class of the last day is read automatically.
+        if (DateTime.Now - classStart > TimeSpan.FromHours(24)) return null;
+        string? url = feed.Since(classStart.AddHours(-2))
+            .Where(s => s.Group.Equals(item.Group, StringComparison.OrdinalIgnoreCase) && s.Start.Date == classStart.Date &&
+                        ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduleTiming.IsSameClass(classStart.TimeOfDay, s.Start.TimeOfDay))
+            .OrderByDescending(s => s.At)
+            .Select(s => s.MeetingUrl)
+            .FirstOrDefault(link => ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReportReader.MeetingNumber(link) != null);
+        if (url == null) return null;
+        var accounts = await new ZoomAutoAdmit.WindowsRuntime.WindowsMeetingAccountManager().ListConfiguredAsync(token);
+        string profile = accounts.FirstOrDefault(account => account.AccountId.Equals(item.Group, StringComparison.OrdinalIgnoreCase))?.WebProfileName
+                         ?? item.Group;
+        await using var held = await new ZoomAutoAdmit.WebAutomation.Recordings.ProfileOperationLock()
+            .TryAcquireAsync(profile, TimeSpan.FromMinutes(2), token);
+        if (held == null) throw new InvalidOperationException($"the '{profile}' browser profile is busy");
+        return await new ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReportReader().ReadAsync(profile, url, token);
+    }
+
+    /// <summary>Whether a meeting of the group is running on this PC now.</summary>
+    private readonly Func<string, bool> _isLive;
+    /// <summary>How long a step waits before looking again while its meeting runs.</summary>
+    public static readonly TimeSpan LiveWait = TimeSpan.FromMinutes(1);
+
     public LmsFollowUpProcessor(
         LmsFollowUpQueue queue,
         Func<LmsFollowUp, CancellationToken, Task<IReadOnlyCollection<string>>>? presentNames = null,
@@ -27,8 +92,13 @@ public sealed class LmsFollowUpProcessor
         IGroupRosterService? roster = null,
         IAiMatchingService? matching = null,
         Func<LmsSessionRunner>? runner = null,
-        AppAttendanceMatcher? appMatcher = null)
+        AppAttendanceMatcher? appMatcher = null,
+        Func<string, bool>? isLive = null,
+        Func<LmsFollowUp, CancellationToken, Task<ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReport?>>? zoomReport = null)
     {
+        var feed = new ExtensionAttendanceFeed();
+        _zoomReport = zoomReport ?? ((item, token) => ReadZoomReportAsync(item, feed, token));
+        _isLive = isLive ?? (group => ZoomAutoAdmit.Core.Meetings.LiveMeetings.IsLive(group));
         _queue = queue;
         var historyReader = history ?? new AttendanceHistoryReader();
         var rosterStore = roster ?? new GroupRosterStore(log: ConsoleLogger.Info);
@@ -36,7 +106,8 @@ public sealed class LmsFollowUpProcessor
         var matcher = appMatcher ?? new AppAttendanceMatcher(rosters: rosterStore, matching: matchingService);
         _presentNames = presentNames ?? (async (item, token) =>
         {
-            var window = ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduleTiming.SameClassWindow;
+            // A class reopened while it runs (20:32 for the 19:00 class) is still that class.
+            var window = ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduleTiming.ClassRunsFor;
             // What the Attendance page shows (with every confirmation made there) and what the app
             // matched by itself (the name rules, then the AI). A page someone finalized is taken as
             // it is; otherwise both lists together. Needs-review names are never uploaded as present.
@@ -48,8 +119,11 @@ public sealed class LmsFollowUpProcessor
                 return page.Present;
             }
             var app = ExtensionAttendanceFeed.ResultsNear(item.Group, item.SessionDate, item.SessionStart, window, app: true);
-            if (app == null || DateTimeOffset.Now - app.UpdatedAt > TimeSpan.FromMinutes(15))
-                app = await matcher.MatchClassAsync(item.Group, item.SessionDate.ToDateTime(item.SessionStart), token) ?? app;
+            // The late-joiner correction, once the meeting has ended: Zoom's own participants report
+            // too - anyone the snapshots missed is added, and anyone there under an hour is warned about.
+            var reportNames = await ZoomReportNamesAsync(item, token);
+            if (reportNames.Count > 0 || app == null || DateTimeOffset.Now - app.UpdatedAt > TimeSpan.FromMinutes(15))
+                app = await matcher.MatchClassAsync(item.Group, item.SessionDate.ToDateTime(item.SessionStart), token, reportNames) ?? app;
             var present = new List<string>(pageFresh ? page!.Present : []);
             foreach (var name in app?.Present ?? [])
                 if (!present.Contains(name, StringComparer.OrdinalIgnoreCase)) present.Add(name);
@@ -119,12 +193,22 @@ public sealed class LmsFollowUpProcessor
                 foreach (var item in session.OrderBy(item => item.Step))
                 {
                     if (chainBlocked && item.Step != LmsFollowUpStep.AttachZoomRecording) continue;
+                    // The late-joiner correction, Complete and the recording wait while the class's
+                    // meeting is still running on this PC: attendance is taken until the meeting closes.
+                    if (item.Step != LmsFollowUpStep.TakeAttendance && _isLive(item.Group))
+                    {
+                        if (!dryRun) await _queue.PostponeAsync(item, (now ?? DateTimeOffset.Now) + LiveWait,
+                            "The meeting is still running; this waits until it ends.", token);
+                        chainBlocked = true;
+                        continue;
+                    }
                     try
                     {
                         IReadOnlyCollection<string> present = item.Step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance
                             ? await _presentNames(item, token)
                             : [];
                         var outcome = await _runAction(item, present, dryRun, token);
+                        outcome = (outcome.IsSuccess, WithWarning(item, outcome.Message));
                         messages.Add(outcome.Message);
                         // Kept for the Sessions page: what each step did, or why it has not yet.
                         if (!dryRun) await _queue.RecordAsync(item, outcome.IsSuccess, outcome.Message, token);
@@ -180,6 +264,7 @@ public sealed class LmsFollowUpProcessor
                     ? await _presentNames(item, token)
                     : [];
                 outcome = await _runAction(item, present, false, token);
+                outcome = (outcome.IsSuccess, WithWarning(item, outcome.Message));
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { outcome = (false, $"{item.Describe}: {ex.Message}"); }
@@ -225,8 +310,8 @@ public sealed class LmsFollowUpProcessor
             var scheduled = meeting.ScheduledStart.ToLocalTime();
             // A class opened by hand is recorded at the minute it went live (18:51 for the 19:00 class).
             return DateOnly.FromDateTime(scheduled.Date) == item.SessionDate &&
-                   Math.Abs((TimeOnly.FromDateTime(scheduled.DateTime).ToTimeSpan() - item.SessionStart.ToTimeSpan()).TotalMinutes)
-                       <= ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduleTiming.SameClassWindow.TotalMinutes;
+                   ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduleTiming.IsSameClass(
+                       item.SessionStart.ToTimeSpan(), TimeOnly.FromDateTime(scheduled.DateTime).ToTimeSpan());
         }).ToArray();
         if (snapshots.Length == 0)
             throw new InvalidOperationException("No attendance snapshot exists for this group and scheduled session.");

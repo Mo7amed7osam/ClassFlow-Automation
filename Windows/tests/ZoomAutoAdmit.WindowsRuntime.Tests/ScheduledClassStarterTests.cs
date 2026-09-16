@@ -111,7 +111,11 @@ public sealed class ScheduledClassStarterTests : IDisposable
 
         Assert.Equal(new TimeOnly(19, 0), ScheduleTiming.ClassStartNear(schedules, "CAI5_AIS4_S7", day, new TimeOnly(18, 51)));
         Assert.Equal(new TimeOnly(19, 0), ScheduleTiming.ClassStartNear(schedules, "cai5_ais4_s7", day, new TimeOnly(19, 40)));
-        Assert.Null(ScheduleTiming.ClassStartNear(schedules, "CAI5_AIS4_S7", day, new TimeOnly(16, 45)));     // no class that close
+        // Opened again while the class is still going on (the meeting dropped, Start pressed at 20:32).
+        Assert.Equal(new TimeOnly(19, 0), ScheduleTiming.ClassStartNear(schedules, "CAI5_AIS4_S7", day, new TimeOnly(20, 32)));
+        Assert.Equal(new TimeOnly(14, 0), ScheduleTiming.ClassStartNear(schedules, "CAI5_AIS4_S7", day, new TimeOnly(16, 45)));
+        Assert.Null(ScheduleTiming.ClassStartNear(schedules, "CAI5_AIS4_S7", day, new TimeOnly(11, 0)));      // no class that close
+        Assert.Null(ScheduleTiming.ClassStartNear(schedules, "CAI5_AIS4_S7", day, new TimeOnly(23, 0)));      // that class is over
         Assert.Null(ScheduleTiming.ClassStartNear(schedules, "CAI5_AIS4_S7", day.AddDays(1), new TimeOnly(18, 51)));
     }
 
