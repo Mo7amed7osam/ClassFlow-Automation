@@ -137,3 +137,20 @@ def test_the_file_list_needs_a_signed_in_person(dash, tmp_path):  # noqa: ANN001
     shas = publish_files(tmp_path, "1.26.917.100", {"a.dll": b"current"})
     assert dash.get("/api/v1/app/manifest").status_code == 401
     assert dash.get(f"/api/v1/app/files/{shas['a.dll']}").status_code == 401
+
+
+def test_a_file_is_also_handed_out_compressed(dash, tmp_path):  # noqa: ANN001
+    import gzip
+    assert login(dash).status_code == 200
+    data = b"MZ" + b"library bytes " * 400
+    shas = publish_files(tmp_path, "1.26.917.100", {"a.dll": data})
+    packed = gzip.compress(data)
+    (tmp_path / "files" / (shas["a.dll"] + ".gz")).write_bytes(packed)
+    manifest = json.loads((tmp_path / "manifest-1.26.917.100.json").read_text(encoding="utf-8"))
+    manifest["files"][0]["download"] = len(packed)
+    (tmp_path / "manifest-1.26.917.100.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    listed = dash.get("/api/v1/app/manifest").json()
+    assert listed["files"][0]["download"] == len(packed) < len(data)
+    got = dash.get(f"/api/v1/app/files/{shas['a.dll']}.gz")
+    assert got.status_code == 200 and gzip.decompress(got.content) == data

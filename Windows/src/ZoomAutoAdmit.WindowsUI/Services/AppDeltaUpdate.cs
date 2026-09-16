@@ -6,12 +6,18 @@ using System.Text.Json;
 namespace ZoomAutoAdmit.WindowsUI.Services;
 
 /// <summary>One file of a published version, as the server's file list names it.</summary>
-public sealed record AppFile(string Path, string Sha256, long Size);
+/// <param name="Download">The compressed copy's size, when the server keeps one (<c>&lt;sha256&gt;.gz</c>).</param>
+public sealed record AppFile(string Path, string Sha256, long Size, long? Download = null)
+{
+    /// <summary>What fetching this file costs: its compressed size when there is one.</summary>
+    public long Transfer => Download ?? Size;
+}
 
 /// <summary>What updating to a version takes on this PC: its files, and the ones that differ here.</summary>
 public sealed record AppDeltaPlan(string Version, IReadOnlyList<AppFile> Files, IReadOnlyList<AppFile> Changed)
 {
-    public long ChangedSize => Changed.Sum(file => file.Size);
+    /// <summary>What the update downloads: the changed files, compressed where the server has them so.</summary>
+    public long ChangedSize => Changed.Sum(file => file.Transfer);
 }
 
 /// <summary>
@@ -46,7 +52,8 @@ public static class AppDeltaUpdate
         {
             string path = entry.GetProperty("path").GetString() ?? "";
             if (!IsInside(folder, path)) return null;
-            files.Add(new(path, entry.GetProperty("sha256").GetString()!.ToLowerInvariant(), entry.GetProperty("size").GetInt64()));
+            long? download = entry.TryGetProperty("download", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetInt64() : null;
+            files.Add(new(path, entry.GetProperty("sha256").GetString()!.ToLowerInvariant(), entry.GetProperty("size").GetInt64(), download));
         }
         if (files.Count == 0) return null;
 
@@ -56,7 +63,8 @@ public static class AppDeltaUpdate
 
     /// <summary>Builds the new version in &lt;folder&gt;.update and returns that folder.</summary>
     public static Task<string> StageAsync(CentralApiClient api, string folder, AppDeltaPlan plan, IProgress<long> downloaded, CancellationToken token) =>
-        StageAsync((file, stream, progress, t) => api.DownloadAsync($"api/v1/app/files/{file.Sha256}", stream, progress, t),
+        StageAsync((file, stream, progress, t) =>
+                api.DownloadAsync($"api/v1/app/files/{file.Sha256}{(file.Download != null ? ".gz" : "")}", stream, progress, t),
             folder, plan, downloaded, token);
 
     /// <summary>Builds the new version with any way of fetching a changed file (the server, or a test's folder).</summary>
@@ -79,9 +87,25 @@ public static class AppDeltaUpdate
                 continue;
             }
             long before = received;
-            await using (var stream = File.Create(target))
-                await fetch(file, stream, new Progress<long>(bytes => downloaded.Report(before + bytes)), token);
-            received += file.Size;
+            var fetched = new Progress<long>(bytes => downloaded.Report(before + bytes));
+            if (file.Download != null)
+            {
+                // Fetched compressed, unpacked into place.
+                string packed = target + ".gz";
+                await using (var stream = File.Create(packed))
+                    await fetch(file, stream, fetched, token);
+                await using (var input = File.OpenRead(packed))
+                await using (var gzip = new System.IO.Compression.GZipStream(input, System.IO.Compression.CompressionMode.Decompress))
+                await using (var output = File.Create(target))
+                    await gzip.CopyToAsync(output, token);
+                File.Delete(packed);
+            }
+            else
+            {
+                await using var stream = File.Create(target);
+                await fetch(file, stream, fetched, token);
+            }
+            received += file.Transfer;
             if (new FileInfo(target).Length != file.Size || await HashAsync(target, token) != file.Sha256)
                 throw new InvalidDataException($"{file.Path} arrived damaged.");
         }

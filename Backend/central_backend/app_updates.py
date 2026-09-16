@@ -116,7 +116,11 @@ def published_manifest(folder: Path) -> dict[str, Any] | None:
         path, sha, size = entry.get("path"), entry.get("sha256"), entry.get("size")
         if not _safe_relative(path) or not (isinstance(sha, str) and _SHA256.match(sha)) or not isinstance(size, int) or size < 0:
             return None
-        files.append({"path": path, "sha256": sha.lower(), "size": size})
+        download = entry.get("download")
+        item = {"path": path, "sha256": sha.lower(), "size": size}
+        if isinstance(download, int) and download > 0:
+            item["download"] = download
+        files.append(item)
     if not files:
         return None
     return {"version": version, "files": files}
@@ -151,18 +155,22 @@ async def manifest(request: Request, viewer: Viewer = Depends(current_viewer)) -
     return JSONResponse(found, headers={"Cache-Control": "no-store"})
 
 
-@router.get("/api/v1/app/files/{sha256}")
-async def app_file(sha256: str, request: Request, viewer: Viewer = Depends(current_viewer)) -> FileResponse:
-    """One file of the published version. Only a file the current manifest names is handed out."""
+@router.get("/api/v1/app/files/{name}")
+async def app_file(name: str, request: Request, viewer: Viewer = Depends(current_viewer)) -> FileResponse:
+    """One file of the published version, as it is (<sha256>) or compressed (<sha256>.gz). Only a
+    file the current manifest names is handed out."""
+    packed = name.endswith(".gz")
+    sha256 = name[:-3] if packed else name
     if not _SHA256.match(sha256):
         raise ApiError(404, "Not found", "No such file.")
     sha256 = sha256.lower()
     folder = _folder(request)
     found = published_manifest(folder)
     entry = next((f for f in found["files"] if f["sha256"] == sha256), None) if found else None
-    stored = folder / "files" / sha256
+    stored = folder / "files" / (sha256 + (".gz" if packed else ""))
     try:
-        ok = entry is not None and stored.is_file() and stored.stat().st_size == entry["size"]
+        expected = (entry or {}).get("download") if packed else (entry or {}).get("size")
+        ok = entry is not None and expected is not None and stored.is_file() and stored.stat().st_size == expected
     except OSError:
         ok = False
     if not ok:

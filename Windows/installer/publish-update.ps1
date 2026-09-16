@@ -57,7 +57,16 @@ if ((Test-Path $appExe) -and ((Get-Item $appExe).VersionInfo.FileVersion -eq $ve
             Copy-Item $file.FullName "$stored.partial" -Force
             Move-Item "$stored.partial" $stored -Force
         }
-        $files += [ordered]@{ path = $file.FullName.Substring($root.Length); sha256 = $hash; size = $file.Length }
+        # Compressed copy: what an app actually downloads (DLLs shrink to about half).
+        $packed = "$stored.gz"
+        if (-not (Test-Path $packed)) {
+            $in = [IO.File]::OpenRead($stored)
+            $out = [IO.File]::Create("$packed.partial")
+            $gzip = New-Object IO.Compression.GZipStream($out, [IO.Compression.CompressionLevel]::Optimal)
+            $in.CopyTo($gzip); $gzip.Dispose(); $out.Dispose(); $in.Dispose()
+            Move-Item "$packed.partial" $packed -Force
+        }
+        $files += [ordered]@{ path = $file.FullName.Substring($root.Length); sha256 = $hash; size = $file.Length; download = (Get-Item $packed).Length }
     }
     $manifestName = "manifest-$version.json"
     $manifestPath = Join-Path $Releases $manifestName
@@ -88,6 +97,6 @@ Get-ChildItem $Releases -Filter "ZoomAutoAdmit-Setup-*.exe" | Where-Object { $_.
 Get-ChildItem $Releases -Filter "manifest-*.json" | Where-Object { $_.Name -ne $manifestName } | ForEach-Object { Remove-Quietly $_ }
 if ($manifestName) {
     $keep = @{}; foreach ($f in $files) { $keep[$f.sha256] = $true }
-    Get-ChildItem (Join-Path $Releases "files") -File | Where-Object { -not $keep.ContainsKey($_.Name) } | ForEach-Object { Remove-Quietly $_ }
+    Get-ChildItem (Join-Path $Releases "files") -File | Where-Object { -not $keep.ContainsKey(($_.Name -replace '\.gz$', '')) } | ForEach-Object { Remove-Quietly $_ }
 }
 Write-Host "Published $version ($([math]::Round($latest.size / 1MB, 1)) MB installer) - every app will offer it." -ForegroundColor Green

@@ -1426,7 +1426,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     {
         await page.GotoAsync(LoginUrl, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
         cancellationToken.ThrowIfCancellationRequested();
-        ConsoleLogger.Info($"[LMS] Sign-in page opened: {page.Url}");
+        ConsoleLogger.Info($"[LMS] Sign-in page opened: {page.Url} (signing in as {account.Email})");
 
         // The dashboard draws its form after the page loads, so the field has to be waited for.
         // Checking whether it exists the instant the document arrives found nothing and skipped

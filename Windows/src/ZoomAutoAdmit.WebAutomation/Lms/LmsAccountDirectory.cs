@@ -47,7 +47,11 @@ public sealed class LmsAccountDirectory(string? path = null)
     public LmsAccountEntry Active()
     {
         var doc = Load();
-        return doc.Accounts.FirstOrDefault(a => a.Id == doc.Active) ?? doc.Accounts.FirstOrDefault() ?? Legacy(email: "");
+        // Only the account marked in use. Without one, a coordinator account - never an admin one:
+        // the super admin is kept for the admin's own work and never runs a group's class steps.
+        return doc.Accounts.FirstOrDefault(a => a.Id == doc.Active)
+               ?? doc.Accounts.FirstOrDefault(a => !a.Role.Equals("admin", StringComparison.OrdinalIgnoreCase))
+               ?? Legacy(email: "");
     }
 
     public void SetActive(string id)

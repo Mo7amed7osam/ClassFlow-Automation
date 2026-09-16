@@ -5,5 +5,9 @@
          platform (~556 MB) into every project output. 'win-x64' copies only the Windows one.
          Directory.Build.targets switches the copy off entirely for class libraries. -->
     <PlaywrightPlatform>win-x64</PlaywrightPlatform>
+    <!-- The same source builds the same bytes: an update then carries only the files whose code
+         changed. The commit id is not written into every assembly (it made all of them differ). -->
+    <Deterministic>true</Deterministic>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 </Project>

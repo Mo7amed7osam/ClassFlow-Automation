@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <!-- The release number (build-setup.ps1 passes AppVersion). Only this exe carries it, so the
+         libraries it references keep the same bytes from one release to the next. -->
+    <Version Condition="'$(AppVersion)' != ''">$(AppVersion)</Version>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>

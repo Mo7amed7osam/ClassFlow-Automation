@@ -39,7 +39,7 @@ try { cmd /c "npm run build 2>&1" | Out-Host; if ($LASTEXITCODE) { throw "The pa
 Write-Host "2/3  The app (self-contained, win-x64), version $Version" -ForegroundColor Cyan
 if (Test-Path $app) { [IO.Directory]::Delete($app, $true) }
 dotnet publish (Join-Path $windows "src\ZoomAutoAdmit.WindowsUI\ZoomAutoAdmit.WindowsUI.csproj") -c Release -r win-x64 --self-contained true `
-    -o $app -p:DebugType=None -p:DebugSymbols=false -p:SatelliteResourceLanguages=en -p:Version=$Version -nologo | Out-Host
+    -o $app -p:DebugType=None -p:DebugSymbols=false -p:SatelliteResourceLanguages=en -p:AppVersion=$Version -nologo | Out-Host
 if ($LASTEXITCODE) { throw "The app did not publish." }
 if (Test-Path $zip) { [IO.File]::Delete($zip) }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
