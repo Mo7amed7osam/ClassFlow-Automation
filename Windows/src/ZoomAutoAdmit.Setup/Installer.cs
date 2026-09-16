@@ -157,12 +157,23 @@ public static class Installer
 
         progress.Report((2, "Waiting for Zoom Auto Admit to close…"));
         var until = DateTime.UtcNow.AddSeconds(60);
-        while (RunningFrom(folder, "ZoomAutoAdmit.WindowsUI").Count > 0 && DateTime.UtcNow < until) Thread.Sleep(500);
-        // What is left (the agent, an admission monitor) is part of the app and is started again with
-        // it. Only copies running from this folder are closed: never another install on the PC.
-        foreach (var name in new[] { "ZoomAutoAdmit.WindowsUI", "ZoomAutoAdmit.Inspector" })
-            foreach (var process in RunningFrom(folder, name))
+        while (RunningFrom(folder).Any(p => p.ProcessName.Equals("ZoomAutoAdmit.WindowsUI", StringComparison.OrdinalIgnoreCase)) && DateTime.UtcNow < until)
+            Thread.Sleep(500);
+        // Everything still running from this folder is part of the app and is started again with it:
+        // the agent, an admission monitor, and the browser driver Playwright keeps in .playwright
+        // (node.exe). Windows will not move a folder while any program inside it runs - found when
+        // the first update was tried, with node.exe still open. Never another install on the PC.
+        for (int round = 0; round < 3; round++)
+        {
+            var left = RunningFrom(folder);
+            if (left.Count == 0) break;
+            foreach (var process in left)
+            {
+                Log($"closing {process.ProcessName} ({process.Id})");
                 try { process.Kill(entireProcessTree: true); process.WaitForExit(10000); } catch { }
+            }
+            Thread.Sleep(1000);
+        }
 
         string fresh = folder + ".update", previous = folder + ".previous";
         if (Directory.Exists(fresh)) DeleteWithRetry(fresh);
@@ -171,7 +182,13 @@ public static class Installer
         Extract(fresh, progress);
 
         progress.Report((89, "Switching to the new version…"));
-        MoveWithRetry(folder, previous);
+        try { MoveWithRetry(folder, previous); }
+        catch
+        {
+            // Nothing was swapped: the installed app is untouched. The unpacked copy is not needed.
+            try { DeleteWithRetry(fresh); } catch { }
+            throw;
+        }
         try { MoveWithRetry(fresh, folder); }
         catch
         {
@@ -186,11 +203,12 @@ public static class Installer
         Log("update finished");
     }
 
-    private static List<Process> RunningFrom(string folder, string name)
+    /// <summary>Every process whose program is a file inside <paramref name="folder"/>.</summary>
+    private static List<Process> RunningFrom(string folder)
     {
         string root = folder.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var found = new List<Process>();
-        foreach (var process in Process.GetProcessesByName(name))
+        foreach (var process in Process.GetProcesses())
         {
             try
             {

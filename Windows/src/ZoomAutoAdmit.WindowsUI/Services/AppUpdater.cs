@@ -135,6 +135,9 @@ public sealed class AppUpdater
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            // An earlier update's installer (170 MB each) is not kept: only the one being fetched stays.
+            foreach (var old in Directory.GetFiles(Path.GetDirectoryName(target)!).Where(f => !f.StartsWith(target, StringComparison.OrdinalIgnoreCase)))
+                try { File.Delete(old); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             string partial = target + ".partial";
             Set(offer, $"Downloading version {offer.Version}…", 0);
             await using (var file = File.Create(partial))
