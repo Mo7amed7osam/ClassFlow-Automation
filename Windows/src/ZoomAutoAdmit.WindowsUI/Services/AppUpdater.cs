@@ -12,7 +12,11 @@ using ZoomAutoAdmit.WindowsUI.Infrastructure;
 namespace ZoomAutoAdmit.WindowsUI.Services;
 
 /// <summary>A version of the app the server has published.</summary>
-public sealed record AppUpdateOffer(Version Version, string Sha256, long Size);
+public sealed record AppUpdateOffer(Version Version, string Sha256, long Size, AppDeltaPlan? Delta = null)
+{
+    /// <summary>What "Update now" downloads here: only the changed files when the server lists them.</summary>
+    public long DownloadSize => Delta?.ChangedSize ?? Size;
+}
 
 /// <summary>
 /// The app keeping itself up to date from the central server, so a fix reaches every coordinator
@@ -83,8 +87,14 @@ public sealed class AppUpdater
                 latest.GetProperty("sha256").GetString() is { Length: 64 } sha &&
                 latest.GetProperty("size").GetInt64() is > 0 and var size)
             {
-                Set(new AppUpdateOffer(version, sha.ToLowerInvariant(), size), $"Version {version} is ready (you have {Current}).", null);
-                WindowsUiRuntimeLog.Write("UPDATE", $"Version {version} is published; this copy is {Current}.");
+                // Only the files that differ here are fetched (worked out once per version).
+                var delta = Offer is { } known && known.Version == version && known.Delta != null
+                    ? known.Delta
+                    : await AppDeltaUpdate.PlanAsync(api, InstalledFolder()!, version, token);
+                var offer = new AppUpdateOffer(version, sha.ToLowerInvariant(), size, delta);
+                Set(offer, $"Version {version} is ready (you have {Current}).", null);
+                WindowsUiRuntimeLog.Write("UPDATE", $"Version {version} is published; this copy is {Current}; " +
+                    (delta != null ? $"{delta.Changed.Count} changed file(s), {delta.ChangedSize / 1048576.0:0.0} MB." : "full installer."));
             }
             else Set(null, force ? $"You have the latest version ({Current})." : "", null);
         }
@@ -136,6 +146,28 @@ public sealed class AppUpdater
         if (offer == null || folder == null) { Set(offer, "There is no update to install.", null); return false; }
         if (await WhyNotNowAsync(token) is { } wait) { Set(offer, wait, null); return false; }
         if (!await _busy.WaitAsync(0, token)) return false;
+        // The changed files only; anything wrong with that and the whole installer is used instead.
+        if (offer.Delta is { } plan)
+        {
+            try
+            {
+                Set(offer, $"Downloading the changes ({plan.Changed.Count} files)…", 0);
+                long total = Math.Max(1, plan.ChangedSize);
+                string staged = await AppDeltaUpdate.StageAsync(api, folder, plan, new Progress<long>(bytes =>
+                    Set(offer, $"Downloading the changes… {bytes / 1048576.0:0.0} of {total / 1048576.0:0.0} MB", Math.Min(1, bytes / (double)total))), token);
+                if (await WhyNotNowAsync(token) is { } lateDelta) { Set(offer, lateDelta, null); _busy.Release(); return false; }
+                WindowsUiRuntimeLog.Write("UPDATE", $"Installing version {offer.Version} over {Current} from {plan.Changed.Count} changed file(s).");
+                AppDeltaUpdate.StartSwap(folder, staged, offer.Version.ToString());
+                Set(offer, $"Installing version {offer.Version}… the app will open again by itself.", null);
+                _busy.Release();
+                return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                WindowsUiErrorLog.Write("The changed-files update failed; using the full installer.", ex);
+                try { if (Directory.Exists(folder + ".update")) Directory.Delete(folder + ".update", recursive: true); } catch { }
+            }
+        }
         string target = Path.Combine(Path.GetTempPath(), "ZoomAutoAdmit-Update", $"ZoomAutoAdmit-Setup-{offer.Version}.exe");
         try
         {

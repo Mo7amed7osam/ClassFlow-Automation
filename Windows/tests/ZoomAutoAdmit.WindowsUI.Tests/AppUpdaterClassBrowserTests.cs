@@ -15,4 +15,13 @@ public sealed class AppUpdaterClassBrowserTests
     [InlineData(@"chrome.exe --user-data-dir=C:\Other\Profile", false)]                                      // someone's own Chrome
     public void OnlyAClassBrowserHoldsAnUpdateBack(string commandLine, bool blocks) =>
         Assert.Equal(blocks, AppUpdater.IsClassBrowser(commandLine));
+
+    [Theory]
+    [InlineData("ZoomAutoAdmit.WindowsUI.dll", true)]
+    [InlineData(@"WebSessions\assets\dashboard.js", true)]
+    [InlineData(@"..\..\evil.dll", false)]              // never out of the app folder
+    [InlineData(@"C:\Windows\evil.dll", false)]
+    [InlineData("", false)]
+    public void TheServersFileListNeverWritesOutsideTheAppFolder(string path, bool inside) =>
+        Assert.Equal(inside, AppDeltaUpdate.IsInside(@"C:\Users\x\AppData\Local\Programs\Zoom Auto Admit", path));
 }

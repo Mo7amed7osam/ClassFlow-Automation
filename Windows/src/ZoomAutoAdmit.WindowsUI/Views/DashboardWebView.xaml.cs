@@ -288,7 +288,8 @@ public partial class DashboardWebView : UserControl
             {
                 current = AppUpdater.Current.ToString(),
                 version = main.Updater.Offer?.Version.ToString(),
-                sizeMb = main.Updater.Offer is { } offer ? Math.Round(offer.Size / 1048576.0) : 0,
+                // What pressing Update now downloads here: the changed files only, when the server lists them.
+                sizeMb = main.Updater.Offer is { } offer ? Math.Max(0.1, Math.Round(offer.DownloadSize / 1048576.0, 1)) : 0,
                 status = main.Updater.Status,
                 progress = main.Updater.Progress,
                 working = main.Updater.IsWorking,
