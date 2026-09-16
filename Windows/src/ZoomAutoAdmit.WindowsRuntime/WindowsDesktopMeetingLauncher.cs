@@ -101,7 +101,9 @@ public sealed class WindowsDesktopMeetingLauncher : IMeetingEngineRuntime, IAsyn
                     ConsoleLogger.Success("[AUTO_ADMIT] Windows monitor running");
                     try
                     {
-                        int exitCode = await _autoAdmitEngine.RunAsync(options, monitorCancellation.Token);
+                        // An error inside the monitor starts it again; it no longer ends the session.
+                        int exitCode = await MonitorSupervisor.RunAsync("Windows",
+                            token => _autoAdmitEngine.RunAsync(options, token), 0, monitorCancellation.Token);
                         if (!monitorCancellation.IsCancellationRequested)
                             ConsoleLogger.Error($"[AUTO_ADMIT] Windows monitor stopped unexpectedly; exitCode={exitCode}");
                         return exitCode;

@@ -163,27 +163,60 @@ public sealed class WindowsKeyboardAccountSwitcher
             Key(VirtualKeyShort.RETURN);
             Log("Enter pressed");
             Pause(5000);
+            // Zoom now reloads itself with the chosen account: for a while its window does not answer
+            // UI Automation at all (a UIA timeout), and it can come back as a new window. Only 7
+            // seconds were given before, which gave up on an account that opened fine a moment later
+            // and sent the class to the browser (2026-09-16, S8). Waited out now, up to 90 seconds.
             // Re-open using the same controlled interaction. A focused row alone is NOT proof
             // of the active account: require Zoom's explicit active label or checked state.
-            for (int attempt = 0; attempt < 3; attempt++)
+            var deadline = DateTime.UtcNow + AccountLoadTimeout;
+            string? waitingFor = null;
+            while (true)
             {
-                RequireZoomForeground();
-                if (FindPopup(SubmenuClass) == null)
+                try
                 {
-                    if (FindPopup(ProfileMenuClass) == null) OpenProfile();
-                    OpenSubmenu();
+                    var current = FindMain();
+                    if (current == IntPtr.Zero) throw new InvalidOperationException("Zoom's main window is not back yet.");
+                    if (current != main)
+                    {
+                        main = current;
+                        NativeMethods.GetWindowThreadProcessId(main, out uint newPid);
+                        processId = (int)newPid;
+                        Log($"Zoom came back as a new window: HWND=0x{main.ToInt64():X}, PID={processId}");
+                    }
+                    NativeMethods.ForceForegroundWindow(main);
+                    Pause(300);
+                    RequireZoomForeground();
+                    if (FindPopup(SubmenuClass) == null)
+                    {
+                        if (FindPopup(ProfileMenuClass) == null) OpenProfile();
+                        OpenSubmenu();
+                    }
+                    var items = MenuItems(WaitPopup(SubmenuClass));
+                    foreach (var item in items) Log($"Verification item: {item.Name}; LegacyState={LegacyState(item)}");
+                    if (items.Any(i => ContainsEmail(i.Name, email) && IsActiveAccount(i)))
+                    {
+                        Log("Verification result: Success - target email is marked as the current active account.");
+                        return;
+                    }
+                    waitingFor = "the account to be marked active";
                 }
-                var items = MenuItems(WaitPopup(SubmenuClass));
-                foreach (var item in items) Log($"Verification item: {item.Name}; LegacyState={LegacyState(item)}");
-                if (items.Any(i => ContainsEmail(i.Name, email) && IsActiveAccount(i)))
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) when (DateTime.UtcNow < deadline)
                 {
-                    Log("Verification result: Success - target email is marked as the current active account.");
-                    return;
+                    string reason = ex is TimeoutException || ex.InnerException is System.Runtime.InteropServices.COMException
+                        ? "Zoom is still loading the account (not answering yet)" : ex.Message;
+                    if (reason != waitingFor) { Log($"Waiting: {reason}"); waitingFor = reason; }
                 }
+                if (DateTime.UtcNow >= deadline)
+                    throw new InvalidOperationException(
+                        $"Enter sent, but the account was not shown as active within {AccountLoadTimeout.TotalSeconds:0} seconds ({waitingFor}). No second Enter sent.");
                 Pause(2000);
             }
-            throw new InvalidOperationException("Enter sent, but target email was not exposed as checked/active. No second Enter sent.");
         }
+
+        /// <summary>How long Zoom may take to reload itself with another account.</summary>
+        private static readonly TimeSpan AccountLoadTimeout = TimeSpan.FromSeconds(90);
 
         private void OpenProfile()
         {

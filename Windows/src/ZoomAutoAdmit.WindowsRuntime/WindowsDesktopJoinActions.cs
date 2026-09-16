@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Drawing;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
@@ -37,6 +37,53 @@ internal sealed class WindowsDesktopJoinActions(UIA3Automation automation) : IDe
         var root = automation.FromHandle(home);
         return root.IsEnabled && Find(root, ControlType.Button, "Join") != null
             ? DesktopLaunchState.Home : DesktopLaunchState.Unknown;
+    }
+
+    public void GoHome(CancellationToken cancellation)
+    {
+        var homes = new ZoomProcessDiscovery().FindCandidates(logInfo: false).SelectMany(c => c.Windows)
+            .Where(w => w.ClassName == HomeClass).ToArray();
+        if (homes.Length != 1) throw new InvalidOperationException("Zoom's main window was not found.");
+        home = homes[0].Handle;
+        NativeMethods.GetWindowThreadProcessId(home, out uint pid);
+        processId = (int)pid;
+
+        // The account switch leaves its profile menu open over the page; only that menu is closed.
+        if (ProfileMenuVisible())
+        {
+            NativeMethods.ForceForegroundWindow(home);
+            Wait(cancellation);
+            for (int attempt = 0; attempt < 3 && ProfileMenuVisible(); attempt++)
+            {
+                NativeMethods.GetWindowThreadProcessId(NativeMethods.GetForegroundWindow(), out uint front);
+                if (front != processId) break;
+                Keyboard.Type(VirtualKeyShort.ESCAPE);
+                Wait(cancellation);
+            }
+        }
+
+        var root = automation.FromHandle(home);
+        if (Find(root, ControlType.Button, "Join") != null) return;
+        // "Home 1 of 6" in Zoom Workplace's left navigation.
+        var tab = root.FindAllDescendants().FirstOrDefault(e =>
+            e.Properties.ControlType.ValueOrDefault == ControlType.TabItem &&
+            (e.Properties.Name.ValueOrDefault ?? "").TrimStart().StartsWith("Home", StringComparison.OrdinalIgnoreCase) &&
+            e.Properties.BoundingRectangle.ValueOrDefault.Width > 0)
+            ?? throw new InvalidOperationException("Zoom's Home tab was not found.");
+        if (tab.Patterns.SelectionItem.IsSupported) tab.Patterns.SelectionItem.Pattern.Select();
+        else if (tab.Patterns.Invoke.IsSupported) tab.Patterns.Invoke.Pattern.Invoke();
+        else { NativeMethods.ForceForegroundWindow(home); Wait(cancellation); Click(tab); }
+
+        for (int attempt = 0; attempt < 30; attempt++)
+        {
+            Wait(cancellation);
+            if (Find(automation.FromHandle(home), ControlType.Button, "Join") != null)
+            {
+                ConsoleLogger.Info("[MEETING_LINK] Zoom's Home page is open");
+                return;
+            }
+        }
+        throw new InvalidOperationException("Zoom's Home page did not show its Join button.");
     }
 
     public void OpenLink(Uri url) => Process.Start(new ProcessStartInfo(

@@ -254,6 +254,12 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
                 // meeting. The monitor keeps watching and tries again on the next pass.
                 ConsoleLogger.Warn($"WEB_POLL_FAILED: {FirstLine(ex.Message)}");
             }
+            catch (Exception ex) when (ex is not OperationCanceledException || !linked.IsCancellationRequested)
+            {
+                // Any other error in one pass used to end the whole monitor - silently - while the
+                // meeting went on with nobody admitted (2026-09-16). It is one bad pass too.
+                ConsoleLogger.Warn($"[AUTO_ADMIT] WEB_POLL_FAILED ({ex.GetType().Name}): {FirstLine(ex.Message)}");
+            }
 
             await DelayAsync(options.WebPollIntervalMilliseconds, linked.Token);
         }

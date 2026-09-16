@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 
 namespace ZoomAutoAdmit.WindowsRuntime.Tests;
 
@@ -69,12 +69,40 @@ public sealed class DesktopMeetingLaunchFlowTests
     }
 
     [Fact]
+    public void ZoomLeftOnAnotherPageIsTakenToHomeAndTheMeetingOpens()
+    {
+        // After an account switch Zoom can come up on Chat or Meetings, where there is no Join.
+        var actions = new Fake { State = DesktopLaunchState.Unknown, AfterOpen = DesktopLaunchState.Progress };
+        Assert.True(new DesktopMeetingLaunchFlow(actions, 1).Run(Url, CancellationToken.None).IsSuccess);
+        Assert.Equal(1, actions.GoHomeCount);
+        Assert.Equal(1, actions.OpenCount);
+    }
+
+    [Fact]
+    public void WhenHomeCannotBeOpenedNothingIsLaunched()
+    {
+        var actions = new Fake { State = DesktopLaunchState.Unknown, AfterGoHome = null };
+        Assert.False(new DesktopMeetingLaunchFlow(actions, 1).Run(Url, CancellationToken.None).IsSuccess);
+        Assert.Equal(0, actions.OpenCount);
+        Assert.Equal(0, actions.JoinCount);
+    }
+
+    [Fact]
+    public void AZoomAlreadyOnHomeIsLeftAlone()
+    {
+        var actions = new Fake { AfterOpen = DesktopLaunchState.Progress };
+        Assert.True(new DesktopMeetingLaunchFlow(actions, 1).Run(Url, CancellationToken.None).IsSuccess);
+        Assert.Equal(0, actions.GoHomeCount);
+    }
+
+    [Fact]
     public void ExistingJoinDialogPreventsNewLaunch()
     {
         var actions = new Fake { State = DesktopLaunchState.Progress };
         Assert.False(new DesktopMeetingLaunchFlow(actions, 1).Run(Url, CancellationToken.None).IsSuccess);
         Assert.Equal(0, actions.OpenCount);
         Assert.Equal(0, actions.JoinCount);
+        Assert.Equal(0, actions.GoHomeCount);            // an open dialog is never navigated away from
     }
 
     [Fact]
@@ -112,6 +140,16 @@ public sealed class DesktopMeetingLaunchFlowTests
         public string? JoinId;
         public Action? OnWait;
         public DesktopLaunchState ReadState() => ++ReadCount >= ProgressAtRead ? DesktopLaunchState.Progress : State;
+        /// <summary>What Zoom shows once Home is selected (null: Home cannot be opened).</summary>
+        public DesktopLaunchState? AfterGoHome = DesktopLaunchState.Home;
+        public int GoHomeCount;
+        public void GoHome(CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            GoHomeCount++;
+            if (AfterGoHome is not { } next) throw new InvalidOperationException("Home tab not found");
+            State = next;
+        }
         public void OpenLink(Uri url)
         {
             OpenCount++;

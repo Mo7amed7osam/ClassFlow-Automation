@@ -1,4 +1,4 @@
-using ZoomAutoAdmit.Core.Formatting;
+﻿using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.WebAutomation;
 
@@ -9,6 +9,8 @@ internal enum DesktopLaunchState { Home, Progress, Unknown }
 internal interface IDesktopMeetingLaunchActions
 {
     DesktopLaunchState ReadState();
+    /// <summary>Selects Zoom's Home page (the only one with Join) and waits for it to show.</summary>
+    void GoHome(CancellationToken cancellation);
     void OpenLink(Uri url);
     void JoinById(string meetingId, CancellationToken cancellation);
     void Wait(CancellationToken cancellation);
@@ -21,6 +23,16 @@ internal sealed class DesktopMeetingLaunchFlow(IDesktopMeetingLaunchActions acti
     {
         cancellation.ThrowIfCancellationRequested();
         string id = ExtractMeetingId(url);
+        if (actions.ReadState() == DesktopLaunchState.Unknown)
+        {
+            // Zoom opens on whatever page it was left on - Chat, Meetings, Hub - and only Home has
+            // Join, so a Zoom that was simply on another page used to count as "not idle" and the
+            // class moved to the browser (seen 2026-09-16, S8). Home is opened first.
+            ConsoleLogger.Info("[MEETING_LINK] Zoom is not on its Home page; opening Home first");
+            try { actions.GoHome(cancellation); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { ConsoleLogger.Warn($"[MEETING_LINK] Home could not be opened ({ex.Message})"); }
+        }
         if (actions.ReadState() != DesktopLaunchState.Home)
             return MeetingOperationResult.Failure("Zoom is not idle on its home screen. Close existing join/preview dialogs before starting another meeting.");
         try

@@ -181,7 +181,9 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
                     ConsoleLogger.Success("[AUTO_ADMIT] Web monitor running");
                     try
                     {
-                        await _engine.MonitorAsync(_options, monitorCancellation.Token);
+                        // An error inside the monitor starts it again; it no longer ends the session.
+                        await MonitorSupervisor.RunAsync("Web",
+                            token => _engine.MonitorAsync(_options, token), monitorCancellation.Token);
                         if (!monitorCancellation.IsCancellationRequested)
                             ConsoleLogger.Error("[AUTO_ADMIT] Web monitor stopped unexpectedly");
                     }
