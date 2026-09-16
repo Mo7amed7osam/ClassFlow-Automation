@@ -11,6 +11,10 @@
   removed afterwards. Each app asks the server now and then and offers "Update now" when the
   published version is newer than its own.
 
+  Older copies (before changed-files updates) are handed a small update instead of the installer:
+  UpdateBootstrap.cs compiled with the app's own files inside - see that file. -FullInstaller hands
+  them the installer instead. The full installer is what goes on Drive for new installs.
+
   With the installer goes its file list (manifest-<version>.json) and each of the app's files, kept
   once by content in releases\files\<sha256>. An app compares the list with its own files and
   fetches only the ones that changed - a few MB instead of the whole 170 MB installer.
@@ -18,9 +22,12 @@
 param(
     [string]$Installer = "",
     [string]$App = "",
+    # Hand older copies the full installer instead of the small update (the old way).
+    [switch]$FullInstaller,
     [string]$Releases = (Join-Path $env:LOCALAPPDATA "ZoomAutoAdmit\Central\releases")
 )
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $windows = Split-Path $PSScriptRoot -Parent
 
 if (-not $Installer) {
@@ -35,11 +42,12 @@ $version = $Matches[1]
 
 New-Item -ItemType Directory -Force $Releases | Out-Null
 $target = Join-Path $Releases $source.Name
-$partial = "$target.partial"
-Copy-Item $source.FullName $partial -Force
-$sha = (Get-FileHash $partial -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($sha -ne (Get-FileHash $source.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) { Remove-Item $partial -Force; throw "The copy does not match the installer." }
-Move-Item $partial $target -Force
+# The file list published before this one: a file that differs from it goes into the small update too.
+$before = @{}
+try {
+    $old = Get-Content (Join-Path $Releases "latest.json") -Raw | ConvertFrom-Json
+    if ($old.manifest) { foreach ($f in (Get-Content (Join-Path $Releases $old.manifest) -Raw | ConvertFrom-Json).files) { $before[$f.path] = $f.sha256 } }
+} catch { }
 
 # ---- the file list, only when the app folder is this installer's own build
 if (-not $App) { $App = Join-Path $windows "dist\setup-work\app" }
@@ -79,6 +87,48 @@ else {
     Write-Host "No app folder of version $version at $App - published as a full installer only." -ForegroundColor Yellow
 }
 
+# ---- what an older copy of the app downloads and runs with --update: the small update, or the installer
+$partial = "$target.partial"
+if ($manifestName -and -not $FullInstaller) {
+    # The app's own files (and anything else that changed since the last release), compressed, with the
+    # whole file list; compiled with Windows' own C# compiler so it runs on any Windows 10/11 as it is.
+    $work = Join-Path ([IO.Path]::GetTempPath()) ("ZoomAutoAdmit-small-update-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force $work | Out-Null
+    try {
+        $zipPath = Join-Path $work "payload.zip"
+        $zip = [IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
+        $lines = New-Object Text.StringBuilder
+        $carried = 0
+        foreach ($f in $files) {
+            [void]$lines.Append("$($f.path)`t$($f.sha256)`t$($f.size)`n")
+            $own = $f.path -like "ZoomAutoAdmit*" -or $f.path -like "WebSessions\*"
+            $changedSinceLast = $before.Count -gt 0 -and (-not $before.ContainsKey($f.path) -or $before[$f.path] -ne $f.sha256)
+            if ($own -or $changedSinceLast) {
+                [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $App $f.path), ($f.path -replace '\\', '/'), [IO.Compression.CompressionLevel]::Optimal)
+                $carried++
+            }
+        }
+        $listEntry = $zip.CreateEntry("files.tsv", [IO.Compression.CompressionLevel]::Optimal)
+        $writer = New-Object IO.StreamWriter($listEntry.Open(), [Text.UTF8Encoding]::new($false))
+        $writer.Write($lines.ToString()); $writer.Dispose()
+        $zip.Dispose()
+        [IO.File]::WriteAllText((Join-Path $work "Version.cs"), "[assembly: System.Reflection.AssemblyVersion(`"$version`")]")
+        $csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+        & $csc -nologo -target:winexe -optimize "-out:$partial" "-resource:$zipPath,payload.zip" `
+            -r:System.IO.Compression.dll -r:System.IO.Compression.FileSystem.dll `
+            (Join-Path $PSScriptRoot "UpdateBootstrap.cs") (Join-Path $work "Version.cs") | Out-Host
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $partial)) { throw "The small update could not be compiled." }
+        Write-Host "Small update for older copies: $carried files, $([math]::Round((Get-Item $partial).Length / 1MB, 2)) MB." -ForegroundColor Cyan
+    }
+    finally { Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue }
+}
+else {
+    Copy-Item $source.FullName $partial -Force
+    if ((Get-FileHash $partial -Algorithm SHA256).Hash -ne (Get-FileHash $source.FullName -Algorithm SHA256).Hash) { Remove-Item $partial -Force; throw "The copy does not match the installer." }
+}
+$sha = (Get-FileHash $partial -Algorithm SHA256).Hash.ToLowerInvariant()
+Move-Item $partial $target -Force
+
 $latest = [ordered]@{
     version     = $version
     fileName    = $source.Name
@@ -99,4 +149,4 @@ if ($manifestName) {
     $keep = @{}; foreach ($f in $files) { $keep[$f.sha256] = $true }
     Get-ChildItem (Join-Path $Releases "files") -File | Where-Object { -not $keep.ContainsKey(($_.Name -replace '\.gz$', '')) } | ForEach-Object { Remove-Quietly $_ }
 }
-Write-Host "Published $version ($([math]::Round($latest.size / 1MB, 1)) MB installer) - every app will offer it." -ForegroundColor Green
+Write-Host "Published $version ($([math]::Round($latest.size / 1MB, 2)) MB for older copies; newer ones fetch only the changed files) - every app will offer it." -ForegroundColor Green
