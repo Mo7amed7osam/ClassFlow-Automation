@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
@@ -23,7 +23,9 @@ public static class Installer
     private static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
     private static Assembly Me => typeof(Installer).Assembly;
 
-    public static string Version => Me.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "1.0.0";
+    public static string Version => Me.GetName().Version is { } v
+        ? (v.Revision > 0 ? $"{v.Major}.{v.Minor}.{v.Build}.{v.Revision}" : $"{v.Major}.{v.Minor}.{v.Build}")
+        : "1.0.0";
     public static string DefaultFolder => Path.Combine(LocalAppData, "Programs", Name);
     public static string DefaultServer =>
         Me.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "DefaultServer")?.Value ?? "";
@@ -78,22 +80,7 @@ public static class Installer
         }
         Directory.CreateDirectory(folder);
 
-        using (var payload = Me.GetManifestResourceStream("payload.zip") ?? throw new InvalidOperationException("This setup does not carry the app."))
-        using (var zip = new ZipArchive(payload, ZipArchiveMode.Read))
-        {
-            string root = folder.EndsWith(Path.DirectorySeparatorChar) ? folder : folder + Path.DirectorySeparatorChar;
-            int done = 0, total = zip.Entries.Count;
-            foreach (var entry in zip.Entries)
-            {
-                string target = Path.GetFullPath(Path.Combine(folder, entry.FullName));
-                if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;       // never outside the folder
-                if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\')) { Directory.CreateDirectory(target); continue; }
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                entry.ExtractToFile(target, overwrite: true);
-                if (++done % 20 == 0 || done == total)
-                    progress.Report((8 + done * 80 / Math.Max(1, total), $"Copying the app… {done} of {total} files"));
-            }
-        }
+        Extract(folder, progress);
 
         // A PC that never ran the app connects to the admin's server; one that did keeps its settings.
         if (!HasSettings() && !string.IsNullOrWhiteSpace(server))
@@ -104,6 +91,31 @@ public static class Installer
                 new JsonSerializerOptions { WriteIndented = true }));
         }
 
+        Register(folder, desktopShortcut, progress);
+    }
+
+    /// <summary>Unpacks the app carried in this setup into <paramref name="folder"/>.</summary>
+    private static void Extract(string folder, IProgress<(int Percent, string Text)> progress)
+    {
+        using var payload = Me.GetManifestResourceStream("payload.zip") ?? throw new InvalidOperationException("This setup does not carry the app.");
+        using var zip = new ZipArchive(payload, ZipArchiveMode.Read);
+        string root = folder.EndsWith(Path.DirectorySeparatorChar) ? folder : folder + Path.DirectorySeparatorChar;
+        int done = 0, total = zip.Entries.Count;
+        foreach (var entry in zip.Entries)
+        {
+            string target = Path.GetFullPath(Path.Combine(folder, entry.FullName));
+            if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;       // never outside the folder
+            if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\')) { Directory.CreateDirectory(target); continue; }
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            entry.ExtractToFile(target, overwrite: true);
+            if (++done % 20 == 0 || done == total)
+                progress.Report((8 + done * 80 / Math.Max(1, total), $"Copying the app… {done} of {total} files"));
+        }
+    }
+
+    /// <summary>Shortcuts and the entry in Windows' Apps list.</summary>
+    private static void Register(string folder, bool desktopShortcut, IProgress<(int Percent, string Text)> progress)
+    {
         progress.Report((93, "Making the shortcuts…"));
         string exe = Path.Combine(folder, Exe);
         MakeShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), $"{Name}.lnk"), exe, folder);
@@ -127,6 +139,87 @@ public static class Installer
             key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
         }
         progress.Report((100, "Done."));
+    }
+
+    /// <summary>
+    /// Replaces the installed app with the one in this setup, started by the app itself ("Update
+    /// now"). The app has already checked that no class is running or about to start, and has
+    /// closed itself. The new version is unpacked beside the old one first and only then swapped
+    /// in; if anything fails the old folder is put back, so a coordinator is never left with a
+    /// broken app and nobody around to fix it. The server address and every setting are kept.
+    /// </summary>
+    public static void Update(string folder, IProgress<(int Percent, string Text)> progress)
+    {
+        folder = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar);
+        if (!File.Exists(Path.Combine(folder, Exe)))
+            throw new InvalidOperationException($"{folder} does not hold the app, so there is nothing to update.");
+        Log($"update to {Version} in {folder}");
+
+        progress.Report((2, "Waiting for Zoom Auto Admit to close…"));
+        var until = DateTime.UtcNow.AddSeconds(60);
+        while (RunningFrom(folder, "ZoomAutoAdmit.WindowsUI").Count > 0 && DateTime.UtcNow < until) Thread.Sleep(500);
+        // What is left (the agent, an admission monitor) is part of the app and is started again with
+        // it. Only copies running from this folder are closed: never another install on the PC.
+        foreach (var name in new[] { "ZoomAutoAdmit.WindowsUI", "ZoomAutoAdmit.Inspector" })
+            foreach (var process in RunningFrom(folder, name))
+                try { process.Kill(entireProcessTree: true); process.WaitForExit(10000); } catch { }
+
+        string fresh = folder + ".update", previous = folder + ".previous";
+        if (Directory.Exists(fresh)) DeleteWithRetry(fresh);
+        if (Directory.Exists(previous)) DeleteWithRetry(previous);
+        Directory.CreateDirectory(fresh);
+        Extract(fresh, progress);
+
+        progress.Report((89, "Switching to the new version…"));
+        MoveWithRetry(folder, previous);
+        try { MoveWithRetry(fresh, folder); }
+        catch
+        {
+            Log("the new folder could not take the old one's place; putting the old version back");
+            try { MoveWithRetry(previous, folder); } catch (Exception back) { Log($"could not put it back: {back.Message}"); }
+            throw;
+        }
+
+        string desktop = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), $"{Name}.lnk");
+        Register(folder, desktopShortcut: File.Exists(desktop), progress);
+        try { DeleteWithRetry(previous); } catch (Exception ex) { Log($"the previous version was left in {previous}: {ex.Message}"); }
+        Log("update finished");
+    }
+
+    private static List<Process> RunningFrom(string folder, string name)
+    {
+        string root = folder.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var found = new List<Process>();
+        foreach (var process in Process.GetProcessesByName(name))
+        {
+            try
+            {
+                if (process.MainModule?.FileName is { } file && file.StartsWith(root, StringComparison.OrdinalIgnoreCase)) found.Add(process);
+            }
+            catch { }                                  // gone already, or not ours to look at
+        }
+        return found;
+    }
+
+    public static void Log(string line)
+    {
+        try
+        {
+            string logs = Path.Combine(LocalAppData, "ZoomAutoAdmit", "Logs");
+            Directory.CreateDirectory(logs);
+            File.AppendAllText(Path.Combine(logs, "update.log"), $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {line}{Environment.NewLine}");
+        }
+        catch { }
+    }
+
+    /// <summary>A folder whose files were in use a moment ago can refuse to move for a few seconds.</summary>
+    private static void MoveWithRetry(string from, string to)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try { Directory.Move(from, to); return; }
+            catch (Exception) when (attempt < 15) { Thread.Sleep(1000); }
+        }
     }
 
     public static void Launch(string folder)

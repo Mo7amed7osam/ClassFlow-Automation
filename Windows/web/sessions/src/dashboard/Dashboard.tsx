@@ -93,6 +93,8 @@ export function Dashboard() {
         </div>
       )}
 
+      {state.update?.version && <UpdateBanner update={state.update} working={working} run={run} />}
+
       {!me && <SignIn busy={working !== null} known={state.known} onSignIn={(u, p, r, s) => run('in', 'signIn', { username: u, password: p, remember: r, savePassword: s })}
         onContinue={(u) => run('switch', 'switchAccount', { username: u })} onForget={(u) => run('forget', 'forgetAccount', { username: u })} />}
 
@@ -121,6 +123,29 @@ export function Dashboard() {
       )}
 
       <Toasts toasts={toasts} dismiss={(id) => setToasts((all) => all.filter((t) => t.id !== id))} />
+    </div>
+  )
+}
+
+/**
+ * A newer version of the app is published on the central server. One press downloads it, checks
+ * it and installs it; the app closes and opens again by itself. The app refuses while a class is
+ * running or about to open, and says why.
+ */
+function UpdateBanner({ update, working, run }: { update: NonNullable<DashState['update']>; working: string | null; run: Run }) {
+  const busy = update.working || working === 'update'
+  const percent = update.progress == null ? null : Math.round(update.progress * 100)
+  return (
+    <div className="banner update">
+      <Icon name="download" size={18} />
+      <div>
+        <b>Version {update.version} is ready</b> <span>· you have {update.current} · {update.sizeMb} MB</span>
+        {update.status && <div className="update-status">{update.status}</div>}
+        {percent != null && <div className="bar update-bar"><i style={{ width: `${percent}%` }} /></div>}
+      </div>
+      <button type="button" className="btn primary" disabled={busy || working !== null} onClick={() => run('update', 'installUpdate')}>
+        {busy ? <span className="spinner light" /> : <Icon name="download" size={14} />} Update now
+      </button>
     </div>
   )
 }

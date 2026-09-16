@@ -16,6 +16,8 @@ export interface DashState {
   users: null | { id: string; username: string; displayName: string; role: string; status: string; lastLogin?: string | null; groups: { id: string; name: string }[] }[]
   groups: null | { id: string; name: string }[]
   allGroups: null | { id: string; name: string; displayName?: string | null; archived: boolean; recordings: number; lastSession?: string | null; pending: number; onLms: number; missing: number; coordinators: string[] }[]
+  /** The app's own update from the central server (absent in older builds). */
+  update?: { current: string; version: string | null; sizeMb: number; status: string; progress: number | null; working: boolean }
   pages: { sessions: number; recordings: number; coordinators: number; server: number }
 }
 

@@ -36,6 +36,8 @@ from .dashboard import router as dashboard_router
 from .dashboard import site_router
 from .dashboard_operations import router as dashboard_operations_router
 from .activity import dashboard_router as activity_dashboard_router
+from .app_updates import default_releases_dir
+from .app_updates import router as app_updates_router
 from .activity import router as activity_router
 from .attendance import dashboard_router as attendance_dashboard_router
 from .attendance import router as attendance_router
@@ -100,6 +102,7 @@ def create_app(
     dashboard_dist: Path | None = None,
     attendance_ai: AttendanceAi | None = None,
     secret_box: SecretBox | None = None,
+    releases_dir: Path | None = None,
 ) -> FastAPI:
     if configure_logs:
         configure_logging()
@@ -145,6 +148,8 @@ def create_app(
     app.state.settings = settings
     app.state.clock = clock
     app.state.auth_settings = auth_settings
+    # Where a published version of the Windows app waits for the copies that ask for it.
+    app.state.releases_dir = releases_dir or default_releases_dir()
     app.state.login_throttle = LoginThrottle(auth_settings.max_failures, timedelta(seconds=auth_settings.lockout_seconds))
     app.state.register_limit = RateLimit(auth_settings.registrations_per_hour, timedelta(hours=1))
     # The optional AI step of attendance matching (CENTRAL_AI_API_KEY); the key stays on the server.
@@ -174,6 +179,7 @@ def create_app(
     app.include_router(attendance_dashboard_router)
     app.include_router(activity_router)
     app.include_router(activity_dashboard_router)
+    app.include_router(app_updates_router)
     app.include_router(user_data_router)
 
     # The dashboard's web page, when it has been built (Dashboard/dist, or CENTRAL_DASHBOARD_DIST).

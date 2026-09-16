@@ -41,6 +41,7 @@ public partial class DashboardWebView : UserControl
             _main.LmsSessions.Changed += _bridge.Schedule;
             _main.LmsSessions.PropertyChanged += (_, _) => _bridge.Schedule();
             _main.RecordingsDashboard.PropertyChanged += (_, _) => _bridge.Schedule();
+            _main.Updater.Changed += _bridge.Schedule;
             await _bridge.InitializeAsync();
             Placeholder.Visibility = Visibility.Collapsed;
             await _main.Central.RefreshAsync();
@@ -192,6 +193,20 @@ public partial class DashboardWebView : UserControl
                 return Done(Flag(p, "archived") ? "Archived: it is hidden from lists but nothing is deleted." : "Active again.");
             // What every PC has done by itself and reported (POST api/v1/devices/activity). Asked for
             // only when the page shows it, so the Dashboard does not carry it on every refresh.
+            // The app's own update, from the central server.
+            case "checkUpdate":
+                await main.Updater.CheckAsync(new RecordingsDashboardSettingsStore().Load(), central.Api, force: true);
+                return new { ok = true, message = main.Updater.Status.Length > 0 ? main.Updater.Status : "Checked." };
+            case "installUpdate":
+            {
+                bool started = await main.Updater.InstallAsync(central.Api);
+                if (started)
+                {
+                    // The installer waits for this app to close, swaps the new version in and opens it again.
+                    _ = Dispatcher.InvokeAsync(async () => { await Task.Delay(1500); System.Windows.Application.Current.Shutdown(); });
+                }
+                return new { ok = started, message = main.Updater.Status };
+            }
             case "activity":
             {
                 try
@@ -269,6 +284,15 @@ public partial class DashboardWebView : UserControl
                 pending = g.Pending, onLms = g.OnLms, missing = g.MissingLink,
                 coordinators = (g.Coordinators ?? []).Select(c => c.DisplayName),
             }) : null,
+            update = new
+            {
+                current = AppUpdater.Current.ToString(),
+                version = main.Updater.Offer?.Version.ToString(),
+                sizeMb = main.Updater.Offer is { } offer ? Math.Round(offer.Size / 1048576.0) : 0,
+                status = main.Updater.Status,
+                progress = main.Updater.Progress,
+                working = main.Updater.IsWorking,
+            },
             pages = new { sessions = MainViewModel.SessionsPage, recordings = MainViewModel.CentralRecordingsPage, coordinators = MainViewModel.CoordinatorsPage, server = 14 },
         };
     }

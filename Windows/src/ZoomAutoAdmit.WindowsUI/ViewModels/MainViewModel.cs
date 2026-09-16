@@ -21,6 +21,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly RecordingsDashboardSettingsStore _dashboardSettings = new();
     private readonly LocalAgentHost _agentHost = new();
 
+    /// <summary>A newer version published on the central server, offered on the Dashboard.</summary>
+    public AppUpdater Updater { get; } = new();
+
     /// <summary>Pages in MainWindow's TabControl. A page added there must be reachable from the sidebar.</summary>
     public const int TabCount = 18;
     public const int DashboardPage = 17;
@@ -321,7 +324,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 // and joins the server by itself the first time it is signed in. Only in the app: a
                 // test's view model never starts a process. It does nothing while all is well.
                 if (System.Windows.Application.Current is App)
-                    _ = _agentHost.EnsureRunningAsync(_dashboardSettings.Load(), Central.Api);
+                {
+                    var settings = _dashboardSettings.Load();
+                    _ = _agentHost.EnsureRunningAsync(settings, Central.Api);
+                    // Asks the server every few hours whether a newer version of the app is published.
+                    _ = Updater.CheckAsync(settings, Central.Api);
+                }
                 await Lms.ProcessDueFollowUpAsync();
                 if (_disposed) return;
                 await LmsSessions.TickAsync();

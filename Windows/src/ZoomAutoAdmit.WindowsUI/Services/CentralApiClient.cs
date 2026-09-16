@@ -411,6 +411,31 @@ public sealed class CentralApiClient
         SendAsync<CentralLmsSecret>(HttpMethod.Post, $"api/v1/me/lms-accounts/{id}/secret", null, token);
 
     /// <summary>
+    /// A large file from the server (the app's own update) straight to disk, with the session this
+    /// app is signed in with. Its own client with no overall timeout: 170 MB over a home connection
+    /// takes longer than the 30 seconds an ordinary call is given.
+    /// </summary>
+    public async Task DownloadAsync(string path, System.IO.Stream destination, IProgress<long>? received = null, CancellationToken token = default)
+    {
+        if (Me == null) await EnsureSignedInAsync(token);
+        var http = Http();                                  // makes sure the cookies are loaded
+        using var download = new HttpClient(new HttpClientHandler { CookieContainer = _cookies!, UseCookies = true }, disposeHandler: true)
+        { BaseAddress = http.BaseAddress, Timeout = Timeout.InfiniteTimeSpan };
+        using var response = await download.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, token);
+        if (!response.IsSuccessStatusCode) throw await ErrorAsync(response, token);
+        await using var body = await response.Content.ReadAsStreamAsync(token);
+        var buffer = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await body.ReadAsync(buffer, token)) > 0)
+        {
+            await destination.WriteAsync(buffer.AsMemory(0, read), token);
+            total += read;
+            received?.Report(total);
+        }
+    }
+
+    /// <summary>
     /// A single-use token for this PC to register itself as a device, so that what it does here -
     /// the attendance above all - reaches the server by itself. Spent at once by the agent.
     /// </summary>

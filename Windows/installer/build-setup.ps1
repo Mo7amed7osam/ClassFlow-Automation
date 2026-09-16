@@ -1,8 +1,10 @@
-<#
+﻿<#
   Builds the installer people run: dist\installer\ZoomAutoAdmit-Setup-<version>.exe
 
     .\installer\build-setup.ps1                                  # the admin's server, today's version
     .\installer\build-setup.ps1 -Server https://other.ts.net/ -Version 1.2.0
+
+  Building publishes nothing. To offer a build to everyone's app, run publish-update.ps1.
 
   1. the React pages (web\sessions -> WindowsUI\WebSessions)
   2. the app, self-contained for 64-bit Windows (the PC needs no .NET)
@@ -14,8 +16,10 @@
 #>
 param(
     [string]$Server = "https://mohab-pc.tail5d9f33.ts.net/",
-    # 1.<year>.<month and day>, e.g. 1.26.915 on 15 Sep 2026 (each part must stay under 65535).
-    [string]$Version = ("1.{0}.{1}" -f (Get-Date -Format "yy"), [int](Get-Date -Format "MMdd"))
+    # 1.<year>.<month and day>.<hour and minute>, e.g. 1.26.916.1830 at 18:30 on 16 Sep 2026 (each
+    # part must stay under 65535). Every build is newer than the one before, so a copy of the app can
+    # tell a published update from the version it already has.
+    [string]$Version = ("1.{0}.{1}.{2}" -f (Get-Date -Format "yy"), [int](Get-Date -Format "MMdd"), [int](Get-Date -Format "HHmm"))
 )
 $ErrorActionPreference = "Stop"
 $windows = Split-Path $PSScriptRoot -Parent
