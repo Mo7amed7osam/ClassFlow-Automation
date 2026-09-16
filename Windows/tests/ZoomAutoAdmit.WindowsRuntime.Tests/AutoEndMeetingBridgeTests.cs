@@ -68,15 +68,16 @@ public sealed class AutoEndMeetingBridgeTests
     {
         var (ended, _) = await Run(t => t < ClassTime.AddHours(2.5) ? [Host, Guest("A"), Guest("B")] : [Host], TimeSpan.FromHours(5));
         var at = Assert.Single(ended);
-        Assert.InRange(at - ClassTime, TimeSpan.FromHours(3), TimeSpan.FromHours(3) + TimeSpan.FromMinutes(2));
+        Assert.InRange(at - ClassTime, TimeSpan.FromHours(3), TimeSpan.FromHours(3) + TimeSpan.FromMinutes(7));
     }
 
     [Fact]
     public async Task AFewMutedPeopleForFiveMinutesEndIt()
     {
         var (ended, _) = await Run(_ => [Host, Guest("A"), Guest("B"), Guest("C")], TimeSpan.FromHours(5));
-        // Quiet all along: the five minutes run from the three hours, so it ends at 3 h 05.
-        Assert.InRange(Assert.Single(ended) - ClassTime, TimeSpan.FromMinutes(185), TimeSpan.FromMinutes(186));
+        // Quiet all along: the five muted minutes run from the three hours (3 h 05), and the
+        // five-minute warning follows, so it ends at about 3 h 10.
+        Assert.InRange(Assert.Single(ended) - ClassTime, TimeSpan.FromMinutes(189), TimeSpan.FromMinutes(191));
     }
 
     [Fact]
@@ -94,7 +95,7 @@ public sealed class AutoEndMeetingBridgeTests
         // Muted from 3 h, but the teacher speaks at 3 h 04: the five minutes start again from there.
         var (ended, _) = await Run(t => t - ClassTime is var age && age > TimeSpan.FromMinutes(184) && age < TimeSpan.FromMinutes(185)
             ? [Host, Guest("A"), Guest("Teacher", talking: true)] : [Host, Guest("A"), Guest("Teacher")], TimeSpan.FromHours(5));
-        Assert.True(Assert.Single(ended) - ClassTime >= TimeSpan.FromMinutes(190));
+        Assert.True(Assert.Single(ended) - ClassTime >= TimeSpan.FromMinutes(194));
     }
 
     private static string Instructor(bool talking = false) => $"Mostafa Badr,(Co-host, guest), Computer audio {(talking ? "unmuted" : "muted")},Video on";
@@ -106,7 +107,7 @@ public sealed class AutoEndMeetingBridgeTests
         string[] students = [.. Enumerable.Range(1, 20).Select(i => Guest("Student " + i))];
         var (ended, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(190) ? [Host, Instructor(), .. students] : [Host, .. students], TimeSpan.FromHours(5));
         // Last seen at the 30-second read just before 3 h 10: five minutes after that.
-        Assert.InRange(Assert.Single(ended) - ClassTime, TimeSpan.FromMinutes(194), TimeSpan.FromMinutes(196));
+        Assert.InRange(Assert.Single(ended) - ClassTime, TimeSpan.FromMinutes(198), TimeSpan.FromMinutes(201));
     }
 
     [Fact]
@@ -125,10 +126,10 @@ public sealed class AutoEndMeetingBridgeTests
         // The Web list says who is who, not who is muted.
         const string webHost = "Mohab (Host, me)";
         var (alone, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(170) ? [webHost, "Rowida Amr"] : [webHost], TimeSpan.FromHours(5), SessionEngineType.Web);
-        Assert.InRange(Assert.Single(alone) - ClassTime, TimeSpan.FromHours(3), TimeSpan.FromMinutes(182));
+        Assert.InRange(Assert.Single(alone) - ClassTime, TimeSpan.FromHours(3), TimeSpan.FromMinutes(187));
         var (gone, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(200) ? [webHost, "Mostafa Badr", "Rowida Amr", "A", "B", "C", "D"] : [webHost, "Rowida Amr", "A", "B", "C", "D"],
             TimeSpan.FromHours(5), SessionEngineType.Web, assignedCoHost: "Mostafa Badr");
-        Assert.InRange(Assert.Single(gone) - ClassTime, TimeSpan.FromMinutes(204), TimeSpan.FromMinutes(206));
+        Assert.InRange(Assert.Single(gone) - ClassTime, TimeSpan.FromMinutes(208), TimeSpan.FromMinutes(211));
         var (small, _) = await Run(_ => [webHost, "Rowida Amr", "A"], TimeSpan.FromHours(4), SessionEngineType.Web);
         Assert.Empty(small);                                     // a small room is not ended on the Web: mics are unknown
     }
@@ -148,7 +149,7 @@ public sealed class AutoEndMeetingBridgeTests
             TimeSpan.FromHours(5), answer: PendingEndAnswer.EndNow);
         var at = Assert.Single(ended);
         // The room is judged over at 3 h 01; pressing End now ends it there and then, instead of
-        // a minute later when the countdown would have run out by itself.
+        // five minutes later when the countdown would have run out by itself.
         Assert.InRange(at - ClassTime, TimeSpan.FromMinutes(181), TimeSpan.FromMinutes(181) + TimeSpan.FromSeconds(30));
         Assert.Equal(ClassEndedHow.Program, Assert.Single(endings).How);
     }

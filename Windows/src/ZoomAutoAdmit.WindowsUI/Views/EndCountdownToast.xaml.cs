@@ -33,7 +33,10 @@ public partial class EndCountdownToast : Window
     {
         if (_answered) return;
         var left = notice.Left(DateTimeOffset.Now);
-        TitleText.Text = left > TimeSpan.Zero ? $"Ending this class in {left.TotalSeconds:0}s" : "Ending this class…";
+        // Minutes while there are minutes left, seconds when it gets close.
+        TitleText.Text = left <= TimeSpan.Zero ? "Ending this class…"
+            : left >= TimeSpan.FromMinutes(1) ? $"Ending this class in {left:m\\:ss}"
+            : $"Ending this class in {left.TotalSeconds:0}s";
         double done = _total.TotalSeconds <= 0 ? 1 : 1 - (left.TotalSeconds / _total.TotalSeconds);
         Bar.Width = Math.Clamp(done, 0, 1) * Math.Max(0, ActualWidth - 52);
     }

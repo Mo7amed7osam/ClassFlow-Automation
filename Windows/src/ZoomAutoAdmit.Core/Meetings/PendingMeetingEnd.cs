@@ -39,8 +39,11 @@ public sealed class PendingMeetingEnds
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
-    /// <summary>How long the countdown runs before the class is ended by itself.</summary>
-    public static readonly TimeSpan Warning = TimeSpan.FromMinutes(1);
+    /// <summary>
+    /// How long the countdown runs before the class is ended by itself. Long enough to notice it
+    /// and to say something about it - the user asked for five minutes' warning.
+    /// </summary>
+    public static readonly TimeSpan Warning = TimeSpan.FromMinutes(5);
 
     /// <summary>An announcement nobody withdrew (the watching process died) is ignored after this.</summary>
     public static readonly TimeSpan Stale = TimeSpan.FromMinutes(10);
