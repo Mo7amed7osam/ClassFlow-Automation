@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -43,6 +43,25 @@ public sealed record CentralUserList(List<CentralUser> Users, int Count);
 public sealed class CentralApiException(HttpStatusCode status, string message) : Exception(message)
 {
     public HttpStatusCode Status { get; } = status;
+
+    /// <summary>
+    /// What to tell a person when a call to the server failed. The central server runs on the
+    /// admin's PC, so "it cannot be reached" is ordinary - the PC is asleep or off - and must not
+    /// read like a broken certificate: with the PC asleep, Tailscale still answers the connection
+    /// but nobody completes the TLS handshake, which .NET reports as "The SSL connection could not
+    /// be established, see inner exception" (seen by a coordinator, 2026-09-16).
+    /// </summary>
+    public static string Explain(Exception error)
+    {
+        for (var e = error; e != null; e = e.InnerException)
+        {
+            if (e is CentralApiException api) return api.Message;
+            if (e is HttpRequestException or System.Security.Authentication.AuthenticationException or System.Net.Sockets.SocketException or TaskCanceledException or TimeoutException or System.IO.IOException)
+                return "The server can't be reached right now - the admin's PC is probably asleep or off. "
+                     + "Classes still run on this PC as usual; try again in a few minutes.";
+        }
+        return error.Message;
+    }
 }
 
 /// <summary>The sign-in to the central server, kept by Windows (like the LMS one), never in a file.</summary>
@@ -112,13 +131,13 @@ public sealed class CentralApiClient
     };
     private readonly Func<Uri?> _baseUri;
     private readonly CentralLoginStore _logins;
-    // "Keep me signed in": the session lives in the server's database (30 days, ended there when the
+    // "Keep me signed in": the session lives in the server's database (120 days, ended there when the
     // account is disabled or its password changes); this PC keeps only that session's cookie, one per
     // account that signed in here, so the Dashboard can offer them to pick from.
     private static readonly DatabasePasswordStore Legacy = new("ZoomAutoAdmit/Central/Session");
     private static DatabasePasswordStore SessionOf(string username) => new($"ZoomAutoAdmit/Central/Session/{username.ToLowerInvariant()}");
     // "Remember the password": kept by Windows (Credential Manager, this Windows user only), one per
-    // account, so Continue signs in again by itself once the 30-day session has ended.
+    // account, so Continue signs in again by itself once the 120-day session has ended.
     private static CentralLoginStore PasswordOf(string username) => new($"ZoomAutoAdmit/Central/Password/{username.ToLowerInvariant()}");
     private static (string Username, string Password)? SavedPassword(string? username)
     {
@@ -187,7 +206,7 @@ public sealed class CentralApiClient
         return await SignInWithSavedPasswordAsync(username, token);
     }
 
-    /// <summary>A fresh 30-day session from the account's saved password; a password the server refuses is removed.</summary>
+    /// <summary>A fresh 120-day session from the account's saved password; a password the server refuses is removed.</summary>
     private async Task<CentralMe?> SignInWithSavedPasswordAsync(string? username, CancellationToken token)
     {
         if (SavedPassword(username) is not { } saved) return null;

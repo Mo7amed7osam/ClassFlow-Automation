@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Windows.Input;
 using ZoomAutoAdmit.WindowsUI.Infrastructure;
@@ -146,7 +146,7 @@ public sealed class CentralViewModel : ObservableObject
             IsBusy = true;
             me = await _api.SignInAsync(Username, password, remember, savePassword);
         }
-        catch (Exception ex) { Status = ex.Message; return; }
+        catch (Exception ex) { Status = CentralApiException.Explain(ex); return; }
         finally { IsBusy = false; }
         ShowMe(me);
         // Not busy any more: RefreshAsync skips itself while busy, which left the accounts, groups and
@@ -216,7 +216,7 @@ public sealed class CentralViewModel : ObservableObject
                 OnPropertyChanged(name);
             Status = $"Updated {DateTime.Now:HH:mm}: {page.Total} recording(s){(me.IsAdmin ? $", {Users.Count} account(s)" : "")}.";
         }
-        catch (Exception ex) { Status = ex.Message; }
+        catch (Exception ex) { Status = CentralApiException.Explain(ex); }
         finally { IsBusy = false; }
     }
 
@@ -252,7 +252,7 @@ public sealed class CentralViewModel : ObservableObject
     private async Task RunAsync(Func<Task<string>> action)
     {
         try { Status = await action(); }
-        catch (Exception ex) { Status = ex.Message; }
+        catch (Exception ex) { Status = CentralApiException.Explain(ex); }
         await RefreshAsync();
     }
 }

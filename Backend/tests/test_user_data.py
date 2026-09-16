@@ -140,7 +140,7 @@ def test_keep_me_signed_in_is_a_long_session_in_the_database(dash, clock):  # no
     remembered = dash.post("/api/v1/auth/login", headers=DASH, json={"username": "admin", "password": ADMIN_PASSWORD, "remember": True})
     assert remembered.json()["remembered"] is True
     rows = run_sql(dash.app.state.settings.database_url, "SELECT expires_at - created_at AS life FROM admin_sessions ORDER BY expires_at")
-    assert [r["life"] for r in rows] == [timedelta(hours=8), timedelta(days=30)]
+    assert [r["life"] for r in rows] == [timedelta(hours=8), timedelta(days=120)]
     assert plain.json()["remembered"] is False
     # Nine days later only the remembered session still works.
     clock.advance(timedelta(days=9).total_seconds())

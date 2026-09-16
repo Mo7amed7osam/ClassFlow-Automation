@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using System.Windows;
 using ZoomAutoAdmit.WindowsUI.Infrastructure;
@@ -88,7 +88,7 @@ public partial class WelcomeWindow : Window
             _main.LmsSessions.ReloadAccounts();
             return message;
         }
-        catch (Exception ex) { return $"Your LMS accounts could not be read from the server: {ex.Message}"; }
+        catch (Exception ex) { return $"Your LMS accounts could not be read from the server: {Services.CentralApiException.Explain(ex)}"; }
     }
 
     private async Task<object?> HandleAsync(string method, JsonElement p)

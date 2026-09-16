@@ -144,7 +144,7 @@ function KnownAccounts({ known, busy, onContinue, onPick, onForget }: { known: K
         return (
         <div key={k.username} className="known-card" style={{ '--hue': groupHue(k.username) } as React.CSSProperties}>
           <button type="button" className="known-main" disabled={busy} onClick={() => (ready ? onContinue(k.username) : onPick(k.username))}
-            title={k.hasSession ? 'Its 30-day session is still open.' : k.hasPassword ? 'Its password is saved on this PC (Windows Credential Manager).' : 'Type its password once.'}>
+            title={k.hasSession ? 'Its 120-day session is still open.' : k.hasPassword ? 'Its password is saved on this PC (Windows Credential Manager).' : 'Type its password once.'}>
             <span className="avatar">{(k.displayName || k.username).slice(0, 1).toUpperCase()}</span>
             <span className="known-who"><b>{k.displayName}</b><span>{k.username} · <span className={`role-tag ${k.role}`}>{k.role}</span></span></span>
             <span className={`known-go${ready ? ' live' : ''}`}>{ready ? 'Continue' : 'Password'}</span>
@@ -175,8 +175,8 @@ function SignIn({ busy, known, onSignIn, onContinue, onForget }: { busy: boolean
       {other && <>
       <label className="field"><span>Username</span><input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} /></label>
       <label className="field"><span>Password</span><input id="dash-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
-      <label className="check"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Keep me signed in for 30 days</label>
-      <label className="check"><input type="checkbox" checked={savePassword} onChange={(e) => setSavePassword(e.target.checked)} /> Remember the password on this PC (Windows Credential Manager), so Continue works after the 30 days too</label>
+      <label className="check"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Keep me signed in for 120 days</label>
+      <label className="check"><input type="checkbox" checked={savePassword} onChange={(e) => setSavePassword(e.target.checked)} /> Remember the password on this PC (Windows Credential Manager), so Continue works after the 120 days too</label>
       <button type="submit" className="btn primary" disabled={busy || !username || !password}>{busy ? <span className="spinner light" /> : <Icon name="bolt" size={14} />} Sign in</button>
       </>}
     </form>

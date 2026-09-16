@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Threading;
@@ -85,7 +85,7 @@ public sealed class WebPageBridge
             if (id != null) Push(new { id, result = result ?? true });
             Schedule();
         }
-        catch (Exception ex) { if (id != null) Push(new { id, error = ex.Message }); }
+        catch (Exception ex) { if (id != null) Push(new { id, error = Services.CentralApiException.Explain(ex) }); }
     }
 
     private bool Ready() { _ready = true; Schedule(); return true; }

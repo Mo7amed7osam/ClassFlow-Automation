@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using ZoomAutoAdmit.WindowsUI.Infrastructure;
@@ -68,7 +68,7 @@ public partial class DashboardWebView : UserControl
             main.LmsSessions.ReloadAccounts();
             return message;
         }
-        catch (Exception ex) { return $"Your LMS accounts could not be read from the server: {ex.Message}"; }
+        catch (Exception ex) { return $"Your LMS accounts could not be read from the server: {Services.CentralApiException.Explain(ex)}"; }
     }
 
     private async Task<object?> HandleAsync(string method, JsonElement p)
@@ -202,7 +202,7 @@ public partial class DashboardWebView : UserControl
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    return new { ok = false, message = ex.Message };
+                    return new { ok = false, message = Services.CentralApiException.Explain(ex) };
                 }
             }
             case "startServer":

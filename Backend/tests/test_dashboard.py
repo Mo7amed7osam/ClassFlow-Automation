@@ -201,8 +201,11 @@ def test_auth_settings_come_from_the_environment():
     defaults = AuthSettings.from_env({})
     assert (defaults.session_hours, defaults.allow_registration, defaults.legacy_admin_variable_set) == (8, True, False)
     assert AuthSettings.from_env({"CENTRAL_ADMIN_USERS": "admin:x"}).legacy_admin_variable_set
+    # "Keep me signed in" lasts 120 days: a coordinator's PC needs the server only now and then.
+    assert defaults.remember_days == 120
+    assert AuthSettings.from_env({"CENTRAL_REMEMBER_DAYS": "150"}).remember_days == 150
     for broken in ({"CENTRAL_SESSION_HOURS": "1000"}, {"CENTRAL_SESSION_HOURS": "soon"},
-                   {"CENTRAL_ALLOW_REGISTRATION": "maybe"}):
+                   {"CENTRAL_ALLOW_REGISTRATION": "maybe"}, {"CENTRAL_REMEMBER_DAYS": "365"}):
         with pytest.raises(ConfigurationError):
             AuthSettings.from_env(broken)
 

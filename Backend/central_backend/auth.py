@@ -144,8 +144,10 @@ def parse_legacy_admin_users(value: str | None) -> tuple[dict[str, str], list[st
 class AuthSettings:
     session_hours: float = 8.0
     # "Keep me signed in": how long such a session lasts (the session lives in the database and
-    # ends at once when the account is disabled or its password changes).
-    remember_days: float = 30.0
+    # ends at once when the account is disabled or its password changes). 120 days, the user's
+    # choice: a coordinator's PC works on its own, and needs the server only for the first sign-in
+    # and the recordings - not every month.
+    remember_days: float = 120.0
     allow_registration: bool = True
     max_failures: int = 5
     lockout_seconds: int = 900
@@ -165,14 +167,14 @@ class AuthSettings:
             if not 0.25 <= hours <= 72:
                 raise ConfigurationError(f"{SESSION_HOURS_VARIABLE} must be between 0.25 and 72 hours.")
         days_text = (env.get(REMEMBER_DAYS_VARIABLE) or "").strip()
-        days = 30.0
+        days = 120.0
         if days_text:
             try:
                 days = float(days_text)
             except ValueError:
                 days = -1
-            if not 1 <= days <= 90:
-                raise ConfigurationError(f"{REMEMBER_DAYS_VARIABLE} must be between 1 and 90 days.")
+            if not 1 <= days <= 180:
+                raise ConfigurationError(f"{REMEMBER_DAYS_VARIABLE} must be between 1 and 180 days.")
         registration = (env.get(ALLOW_REGISTRATION_VARIABLE) or "true").strip().lower()
         if registration not in {"true", "false"}:
             raise ConfigurationError(f"{ALLOW_REGISTRATION_VARIABLE} must be true or false.")
