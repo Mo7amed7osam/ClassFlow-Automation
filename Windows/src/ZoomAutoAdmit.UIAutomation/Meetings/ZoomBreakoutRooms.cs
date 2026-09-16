@@ -14,9 +14,11 @@ namespace ZoomAutoAdmit.UIAutomation.Meetings;
 /// shows only the people who are not in one, so the host can be "alone" with twenty students a
 /// click away. Nothing is ever ended while rooms are open.
 ///
-/// Zoom only shows "Close All Rooms" (and "Broadcast…") while rooms are actually open - creating
-/// them offers "Open All Rooms" instead - so that control is the signal. Read through the
-/// accessibility tree only: no mouse, no keys, nothing is pressed.
+/// Zoom only shows "Close all rooms" while rooms are actually open - rooms that are merely
+/// prepared offer "Open All Rooms" instead - and it puts the panel in a window of its own titled
+/// "Breakout rooms - In progress". Both were read from a real meeting with five rooms open
+/// (2026-09-16), and a window of its own is why this works even though the meeting's toolbar
+/// auto-hides. Read through the accessibility tree only: no mouse, no keys, nothing is pressed.
 /// </summary>
 public static class ZoomBreakoutRooms
 {
