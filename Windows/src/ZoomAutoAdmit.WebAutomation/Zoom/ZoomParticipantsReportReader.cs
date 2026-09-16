@@ -9,8 +9,8 @@ namespace ZoomAutoAdmit.WebAutomation.Zoom;
 /// <summary>One person in Zoom's participants report: every join of the same name added up.</summary>
 public sealed record ZoomReportPerson(string Name, int Minutes);
 
-/// <param name="EndedAt">When Zoom says the class's last run ended, in the Zoom account's own clock.</param>
-public sealed record ZoomParticipantsReport(IReadOnlyList<ZoomReportPerson> People, int Instances, int Rows, DateTime? EndedAt = null);
+/// <param name="EndedAt">When Zoom says the class's last run ended, on this PC's clock.</param>
+public sealed record ZoomParticipantsReport(IReadOnlyList<ZoomReportPerson> People, int Instances, int Rows, DateTimeOffset? EndedAt = null);
 
 /// <summary>
 /// Reads Zoom's own participants report for a meeting that has just ended, on the group's signed-in
@@ -23,17 +23,32 @@ public sealed record ZoomParticipantsReport(IReadOnlyList<ZoomReportPerson> Peop
 public sealed class ZoomParticipantsReportReader
 {
     public const string ReportUrl = "https://zoom.us/account/my/report";
-    /// <summary>Runs of the same meeting that ended within this long before the last one are the same class.</summary>
-    public static readonly TimeSpan SameClassRuns = TimeSpan.FromHours(5);
     private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(45);
 
     private readonly ZoomProfileManager _profiles;
 
     public ZoomParticipantsReportReader(ZoomProfileManager? profiles = null) => _profiles = profiles ?? new ZoomProfileManager();
 
+    /// <summary>
+    /// The Zoom account's clock, which the report's times are written in: the configured one, else
+    /// Pacific time (the eyouth accounts' zone - a class at 18:45 in Cairo reads 08:45 AM).
+    /// </summary>
+    public static TimeZoneInfo ReportZone() =>
+        ZoomRecordingLinkReader.ConfiguredZoomTimeZone() ?? TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
+
+    /// <summary>
+    /// The class's participants, or null when the report has no run of its meeting from the class's
+    /// time yet. Zoom lists a meeting only once it has ended, so null means the class is still going
+    /// (or has not started).
+    /// </summary>
     /// <param name="meetingUrl">The class's Zoom link; only its meeting number is used.</param>
-    public async Task<ZoomParticipantsReport> ReadAsync(string profileName, string meetingUrl, CancellationToken cancellationToken = default)
+    /// <param name="classStart">The class's scheduled start on this PC's clock.</param>
+    public async Task<ZoomParticipantsReport?> ReadAsync(string profileName, string meetingUrl, DateTime classStart,
+        CancellationToken cancellationToken = default, TimeZoneInfo? zoomZone = null)
     {
+        var zone = zoomZone ?? ReportZone();
+        DateTimeOffset Local(DateTime reportTime) =>
+            new(TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(reportTime, DateTimeKind.Unspecified), zone, TimeZoneInfo.Local));
         string meetingId = MeetingNumber(meetingUrl) ?? throw new ArgumentException("The Zoom link has no meeting number.", nameof(meetingUrl));
         var plan = new ZoomBrowserLaunchPlan(_profiles.GetOrCreate(profileName), Headless: true);
         await using var session = await new ZoomBrowserLauncher().LaunchAsync(plan, cancellationToken);
@@ -64,13 +79,12 @@ public sealed class ZoomParticipantsReportReader
             }
             if (runs.Count == 0) await Task.Delay(1000, cancellationToken);
         }
-        if (runs.Count == 0)
-            throw new InvalidOperationException($"Zoom's usage report lists no run of meeting {meetingId} (it can take a few minutes after the meeting ends).");
-
-        // The class: the last run, and any run of the same meeting that ended shortly before it (a
-        // meeting that was ended and started again during the class).
-        var lastEnd = runs.Max(run => run.End);
-        var classRuns = runs.Where(run => run.End >= lastEnd - SameClassRuns).ToArray();
+        // The class: every run of its meeting that started from an hour and a half before the class's
+        // time until the class was over (a meeting ended and started again during the class too).
+        // Another day's class on the same meeting number is not this one.
+        var classRuns = runs.Where(run => IsThisClass(Local(run.Start).DateTime, classStart)).ToArray();
+        if (classRuns.Length == 0) return null;
+        var lastEnd = Local(classRuns.Max(run => run.End));
         var rows = new List<string[]>();
         string[] header = [];
         foreach (var run in classRuns)
@@ -95,6 +109,13 @@ public sealed class ZoomParticipantsReportReader
             await Task.Delay(800, cancellationToken);
         }
         return new(Summarize(header, rows), classRuns.Length, rows.Count, lastEnd);
+    }
+
+    /// <summary>A run that started from 90 minutes before the class's time until 3 h 15 after it.</summary>
+    public static bool IsThisClass(DateTime runStartLocal, DateTime classStart)
+    {
+        var gap = runStartLocal - classStart;
+        return gap >= -TimeSpan.FromMinutes(90) && gap <= TimeSpan.FromHours(3.25);
     }
 
     /// <summary>One entry per name: the waiting room left out, every join's minutes added up.</summary>

@@ -41,15 +41,11 @@ public sealed class LmsFollowUpProcessor
             if (report == null || report.People.Count == 0) return [];
             // A meeting in Zoom's usage report has ended: the class card's "Ended" step says so, even
             // when nothing on this PC saw it close (closed from a phone, or the app was not running).
-            var zone = ZoomAutoAdmit.WebAutomation.Zoom.ZoomRecordingLinkReader.ConfiguredZoomTimeZone();
-            var endedAt = report.EndedAt is { } end && zone != null
-                ? new DateTimeOffset(TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(end, DateTimeKind.Unspecified), zone, TimeZoneInfo.Local))
-                : DateTimeOffset.Now;
             new ZoomAutoAdmit.Core.Meetings.ClassEndings().Record(new ZoomAutoAdmit.Core.Meetings.ClassEnding
             {
-                Group = item.Group, Date = item.SessionDate, Start = item.SessionStart, At = endedAt,
+                Group = item.Group, Date = item.SessionDate, Start = item.SessionStart, At = report.EndedAt ?? DateTimeOffset.Now,
                 How = ZoomAutoAdmit.Core.Meetings.ClassEndedHow.Elsewhere,
-                Message = "Zoom's usage report lists the meeting as ended.",
+                Message = $"Zoom's usage report shows the meeting ended at {(report.EndedAt ?? DateTimeOffset.Now).LocalDateTime:HH:mm}.",
             });
             var shortStays = report.People.Where(person => person.Minutes < ShortStay.TotalMinutes).ToArray();
             if (shortStays.Length > 0)
@@ -61,6 +57,10 @@ public sealed class LmsFollowUpProcessor
             return [.. report.People.Select(person => person.Name)];
         }
         catch (OperationCanceledException) { throw; }
+        catch (MeetingNotInReportException) when (DateTime.Now < item.SessionDate.ToDateTime(item.SessionStart) + WaitForReportUntil)
+        {
+            throw;       // the meeting is still going somewhere: the correction waits (see ProcessDueAsync)
+        }
         catch (Exception ex)
         {
             ConsoleLogger.Warn($"[LMS] {item.Describe}: Zoom's participants report could not be read ({ex.Message}); the snapshots are used alone.");
@@ -88,8 +88,16 @@ public sealed class LmsFollowUpProcessor
         await using var held = await new ZoomAutoAdmit.WebAutomation.Recordings.ProfileOperationLock()
             .TryAcquireAsync(profile, TimeSpan.FromMinutes(2), token);
         if (held == null) throw new InvalidOperationException($"the '{profile}' browser profile is busy");
-        return await new ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReportReader().ReadAsync(profile, url, token);
+        var report = await new ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReportReader().ReadAsync(profile, url, classStart, token);
+        // Zoom lists a meeting only once it has ended: nothing for the class yet means it is still going.
+        return report ?? throw new MeetingNotInReportException();
     }
+
+    /// <summary>How long after the class's time the correction waits for its meeting to appear in Zoom's report.</summary>
+    public static readonly TimeSpan WaitForReportUntil = TimeSpan.FromHours(6);
+
+    /// <summary>Zoom's report has no run of the class's meeting yet: it has not ended.</summary>
+    public sealed class MeetingNotInReportException() : Exception("Zoom's usage report does not list the meeting yet, so it has not ended.");
 
     /// <summary>Whether a meeting of the group is running on this PC now.</summary>
     private readonly Func<string, bool> _isLive;
@@ -216,9 +224,19 @@ public sealed class LmsFollowUpProcessor
                     }
                     try
                     {
-                        IReadOnlyCollection<string> present = item.Step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance
-                            ? await _presentNames(item, token)
-                            : [];
+                        IReadOnlyCollection<string> present;
+                        try
+                        {
+                            present = item.Step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance
+                                ? await _presentNames(item, token)
+                                : [];
+                        }
+                        catch (MeetingNotInReportException ex)
+                        {
+                            if (!dryRun) await _queue.PostponeAsync(item, (now ?? DateTimeOffset.Now) + LiveWait, ex.Message, token);
+                            chainBlocked = true;
+                            continue;
+                        }
                         var outcome = await _runAction(item, present, dryRun, token);
                         outcome = (outcome.IsSuccess, WithWarning(item, outcome.Message));
                         messages.Add(outcome.Message);
