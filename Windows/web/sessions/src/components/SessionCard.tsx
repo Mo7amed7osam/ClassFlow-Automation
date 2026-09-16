@@ -3,7 +3,7 @@ import type { Action, Row, Step, StepKey } from '../types'
 import { ACTIONS, availableActions, dayNumber, groupHue, month, primaryAction, relative, shortGroup, startOf, weekday, workingKey } from '../logic'
 import { Icon } from './Icon'
 
-const STEP_ICON: Record<StepKey, string> = { zoom: 'video', run: 'play', attendance: 'people', correct: 'late', complete: 'flag', record: 'film', drive: 'drive', material: 'sheet', assignment: 'calendar' }
+const STEP_ICON: Record<StepKey, string> = { zoom: 'video', run: 'play', attendance: 'people', correct: 'late', complete: 'flag', ended: 'stop', record: 'film', drive: 'drive', material: 'sheet', assignment: 'calendar' }
 const STATE_ICON: Record<Step['state'], string> = { done: 'check', lms: 'check', partial: 'half', due: 'clock', retry: 'retry', failed: 'x', future: 'dot', none: 'dot' }
 const STEP_ACTIONS: Partial<Record<StepKey, Action[]>> = {
   run: ['run'], attendance: ['attendance'], correct: ['correct'], complete: ['complete'], record: ['recording', 'zoomRecording', 'link'], drive: ['recording', 'sheet', 'link'],

@@ -1,3 +1,4 @@
+using ZoomAutoAdmit.Core.Central;
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.WebAutomation.Lms;
@@ -38,11 +39,16 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
     /// <summary>The group's scheduled class nearest the moment the meeting went live (null: none that close).</summary>
     public delegate Task<TimeOnly?> ClassStart(string group, DateOnly day, TimeOnly live, CancellationToken token);
     private readonly ClassStart? _classStart;
+    /// <summary>What this PC did, for the central server. A test's own queue keeps its notes beside it.</summary>
+    private readonly ActivityLog _activity;
 
     public LmsMeetingBridge(MeetingLifecycleEvents events, RunSession? runSession = null, LmsFollowUpQueue? queue = null,
         Func<bool>? hasLogin = null, Action<string>? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null,
-        ClassStart? classStart = null)
+        ClassStart? classStart = null, ActivityLog? activity = null)
     {
+        _activity = activity ?? (queue is null
+            ? new ActivityLog()
+            : new ActivityLog(Path.Combine(Path.GetDirectoryName(queue.FilePath)!, "activity")));
         _events = events;
         _classStart = classStart;
         // Headless: an unattended class must not have a browser window pop over the Zoom window
@@ -98,6 +104,9 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { }
         }
+
+        // The central server is told the class started here, whatever Run Session does next.
+        _activity.Write("class.opened", "done", $"{group}: the {start:HH\\:mm} class is live.", group, day);
 
         // Written down first: whatever happens to Run Session, the attendance steps are owed.
         try

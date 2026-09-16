@@ -4,7 +4,7 @@ import { Icon } from '../components/Icon'
 import { Toasts, type Toast } from '../components/Dialogs'
 import { DaysPicker, rangeOf, type DayRange } from '../components/DaysPicker'
 import { groupHue, shortGroup } from '../logic'
-import type { DashState } from './types'
+import type { Activity, DashState } from './types'
 import { demoDash } from './demo'
 
 type Result = { ok: boolean; message: string }
@@ -103,6 +103,8 @@ export function Dashboard() {
           {state.recordings && <RecordingsCard state={state} />}
         </div>
       )}
+
+      {me && !coordinatorsView && <ActivityPanel />}
 
       {admin && state.users && state.groups && <Coordinators state={state} working={working} run={run} />}
       {coordinatorsView && admin && state.allGroups && <Groups state={state} working={working} run={run} />}
@@ -292,6 +294,70 @@ function LmsCard({ state, working, run }: { state: DashState; working: string | 
           <label className="field wide"><span>LMS password {state.lms.onServer ? '(kept encrypted in the database)' : '(kept on this PC until you sign in)'}</span><input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
           <div className="row-actions wide"><button type="submit" className="btn primary" disabled={!email || !password || working !== null}>Save and use</button></div>
         </form>
+      )}
+    </section>
+  )
+}
+
+/**
+ * What every PC did on its own and told the server afterwards: the classes it opened, the LMS steps
+ * it finished, the classes it ended. Each PC works without the server; this is how the server knows.
+ * Asked for only when it is opened, so the Dashboard's own refresh stays light.
+ */
+function ActivityPanel() {
+  const [items, setItems] = useState<Activity[] | null>(null)
+  const [problem, setProblem] = useState('')
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const answer = await call<{ ok: boolean; items?: Activity[]; message?: string }>('activity')
+      if (answer.ok) { setItems(answer.items ?? []); setProblem('') }
+      else { setItems([]); setProblem(answer.message ?? 'The server did not answer.') }
+    } catch (e) {
+      setItems([]); setProblem((e as Error).message)
+    } finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { if (open && items === null) void load() }, [open, items, load])
+
+  const when = (at: string) => {
+    const date = new Date(at)
+    return Number.isNaN(date.getTime()) ? at : date.toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+  }
+
+  return (
+    <section className="panel">
+      <header className="panel-head">
+        <h2><Icon name="bolt" size={18} /> What the PCs did</h2>
+        <div className="row-actions">
+          {open && <button type="button" className="btn small ghost" disabled={loading} onClick={() => void load()}>
+            {loading ? <span className="spinner" /> : <Icon name="refresh" size={13} />} Refresh
+          </button>}
+          <button type="button" className="btn small ghost" onClick={() => setOpen((o) => !o)}>{open ? 'Hide' : 'Show'}</button>
+        </div>
+      </header>
+      {!open && <p className="muted">Every PC runs its classes on its own and reports what it did. Open to see it.</p>}
+      {open && loading && items === null && <p className="muted">Asking the server…</p>}
+      {open && problem && <p className="muted">{problem}</p>}
+      {open && items !== null && items.length === 0 && !problem && (
+        <p className="muted">Nothing reported yet. A PC reports once it has joined the server and done something.</p>
+      )}
+      {open && items !== null && items.length > 0 && (
+        <ul className="activity">
+          {items.map((item) => (
+            <li key={item.id} className={item.outcome === 'failed' ? 'bad' : undefined}>
+              <time>{when(item.at)}</time>
+              {item.group
+                ? <span className="chip g" style={{ '--hue': groupHue(item.group) } as React.CSSProperties}>{shortGroup(item.group)}</span>
+                : <span className="chip g">—</span>}
+              <span className="what">{item.summary || item.kind}</span>
+              <em>{item.device ?? 'a PC'}</em>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   )

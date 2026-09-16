@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using ZoomAutoAdmit.Core.Central;
 
 namespace ZoomAutoAdmit.WebAutomation.Lms;
 
@@ -80,11 +81,19 @@ public sealed class LmsFollowUpQueue
 
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ActivityLog _activity;
 
-    public LmsFollowUpQueue(string? path = null) =>
+    public LmsFollowUpQueue(string? path = null, ActivityLog? activity = null)
+    {
         _path = path ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ZoomAutoAdmit", "Lms", "follow-up.json");
+        // A queue given its own file is a test's or a tool's: its notes stay beside it, never in the
+        // folder the agent sends from.
+        _activity = activity ?? (path is null
+            ? new ActivityLog()
+            : new ActivityLog(Path.Combine(Path.GetDirectoryName(_path)!, "activity")));
+    }
 
     public string FilePath => _path;
 
@@ -97,6 +106,9 @@ public sealed class LmsFollowUpQueue
 
     public async Task RecordAsync(LmsFollowUp item, bool succeeded, string message, CancellationToken cancellationToken = default)
     {
+        // The same note goes to the central server: this PC does its classes on its own, and this is
+        // how the server is told what was done. Written here, sent by the agent whenever it answers.
+        _activity.Write($"lms.{item.Step}", succeeded ? "done" : "failed", message, item.Group, item.SessionDate);
         await _gate.WaitAsync(cancellationToken);
         try
         {

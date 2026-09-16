@@ -421,3 +421,41 @@ def test_cancel_refuses_unknown_recordings_and_recordings_without_a_job(dash):
     response = cancel(dash, rid)
     assert response.status_code == 409 and response.json()["details"]["reason"] == "noOpenJob"
     assert audit_rows(dash, rid) == []
+
+
+# =========================================================================== a PC joins by itself
+
+
+def test_a_signed_in_person_can_enroll_their_own_pc_and_register_it(dash):  # noqa: ANN001
+    """Without this a coordinator's PC waits for a hand-made token and sends nothing at all."""
+    assert login(dash).status_code == 200
+    response = dash.post("/api/v1/me/devices/enroll", json={"name": "Mona's laptop"}, headers=DASH)
+    assert response.status_code == 200, response.text
+    token = response.json()["enrollmentToken"]
+
+    registered = dash.post("/api/v1/agents/register", json={
+        "enrollmentToken": token,
+        "installationId": str(uuid.uuid4()),
+        "name": "Mona's laptop",
+        "version": "1.0.0",
+        "capabilities": ["recording_processing", "lms"],
+    })
+    assert registered.status_code == 201, registered.text
+    assert registered.json()["deviceToken"].startswith("zaad_")
+
+    # Single use: the same token cannot enrol a second PC.
+    again = dash.post("/api/v1/agents/register", json={
+        "enrollmentToken": token,
+        "installationId": str(uuid.uuid4()),
+        "name": "Another PC",
+        "version": "1.0.0",
+        "capabilities": [],
+    })
+    assert again.status_code == 401, again.text
+
+
+def test_enrolling_a_pc_needs_a_dashboard_session(dash):  # noqa: ANN001
+    assert dash.post("/api/v1/me/devices/enroll", json={}, headers=DASH).status_code == 401
+    assert login(dash).status_code == 200
+    # The n8n key is not a dashboard session, and the dashboard header is still required.
+    assert dash.post("/api/v1/me/devices/enroll", json={}, headers=client_headers()).status_code == 403

@@ -116,6 +116,9 @@ public static class CentralAgentCommand
             using var attendanceHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
             var uploading = new AttendanceUploader(settings.BackendUrl, new CredentialManagerDeviceTokenStore(), attendanceHttp,
                 log: RecordingWorkflow.ToConsole).RunAsync(uploads.Token);
+            // And what this PC did by itself: the classes it opened and the LMS steps it finished.
+            var reporting = new ActivityUploader(settings.BackendUrl, new CredentialManagerDeviceTokenStore(), attendanceHttp,
+                write: RecordingWorkflow.ToConsole).RunAsync(uploads.Token);
             try
             {
                 ConsoleLogger.Info($"[AGENT] Connecting to {settings.BackendUrl.Host} as {identity.Name}. Press Ctrl+C to stop.");
@@ -131,7 +134,9 @@ public static class CentralAgentCommand
             {
                 Console.CancelKeyPress -= onCancel;
                 uploads.Cancel();
-                await uploading;     // ends at once when cancelled; a file half-sent is sent again next time
+                // Both end at once when cancelled; anything half-sent is sent again next time.
+                await uploading;
+                await reporting;
             }
         }
         finally

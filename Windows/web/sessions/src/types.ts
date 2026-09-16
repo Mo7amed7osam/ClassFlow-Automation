@@ -1,6 +1,6 @@
 // What the app sends (SessionsWebView.BuildState). Kept in step with that method by hand.
 
-export type StepKey = 'zoom' | 'run' | 'attendance' | 'correct' | 'complete' | 'record' | 'drive' | 'material' | 'assignment'
+export type StepKey = 'zoom' | 'run' | 'attendance' | 'correct' | 'complete' | 'ended' | 'record' | 'drive' | 'material' | 'assignment'
 export type StepStateName = 'done' | 'lms' | 'partial' | 'due' | 'retry' | 'failed' | 'future' | 'none'
 
 export interface Step {

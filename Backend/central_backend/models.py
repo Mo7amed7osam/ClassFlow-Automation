@@ -426,8 +426,42 @@ class AppSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+ACTIVITY_OUTCOMES = ("done", "failed", "skipped")
+
+
+class DeviceActivity(Base):
+    """
+    What a PC did on its own: a class opened, an LMS step finished, a class ended. Every PC works
+    by itself and writes these down locally, so nothing waits on the network; its agent sends them
+    when the server answers. Re-sending the same client_event_id changes nothing, so a device that
+    was away for a day can simply send everything again.
+    """
+
+    __tablename__ = "device_activity"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False)
+    client_event_id: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    happened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    group_name: Mapped[str | None] = mapped_column(String(100))
+    session_date: Mapped[date | None] = mapped_column(Date)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False, server_default=text("''"))
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_device_activity_device", "device_id", "happened_at"),
+        Index("ix_device_activity_class", "group_name", "session_date"),
+        CheckConstraint("outcome IN ('done', 'failed', 'skipped')", name="ck_device_activity_outcome"),
+    )
+
+
 __all__ = [
+    "ACTIVITY_OUTCOMES",
     "AppSetting",
+    "DeviceActivity",
     "LmsAccount",
     "ATTENDANCE_RECORD_STATUSES",
     "ATTENDANCE_SESSION_STATUSES",

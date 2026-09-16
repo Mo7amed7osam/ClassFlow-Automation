@@ -15,6 +15,12 @@ public class ParticipantRowParsingTests
     [InlineData("Ahmed, Mohamed, Computer audio muted", "Ahmed")]
     [InlineData("Plain Name", "Plain Name")]
     [InlineData("  Padded Name ,(Guest)", "Padded Name")]
+    // The web client's own wording, read live on 2026-09-16: the role has no comma before it.
+    [InlineData("eyouth coordinator (Host, me),computer audio muted,video off,Recording to the cloud", "eyouth coordinator")]
+    [InlineData("Mostafa Badr (Co-host),computer audio muted", "Mostafa Badr")]
+    [InlineData("Sara (Guest)", "Sara")]
+    // A name of its own with brackets is not a role and stays whole.
+    [InlineData("Mohamed (Team A),video off", "Mohamed (Team A)")]
     public void RowLabelYieldsOnlyTheDisplayName(string label, string expected) =>
         Assert.Equal(expected, RuntimeAttendanceSources.CleanParticipantName(label));
 }

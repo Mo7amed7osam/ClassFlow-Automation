@@ -126,6 +126,8 @@ public sealed class CentralApiClient
         try { return PasswordOf(username).Read(); } catch { return null; }
     }
     private readonly CentralKnownAccounts _known = new();
+    // Who this PC is signed in as, kept here so it still knows while the server cannot be reached.
+    private readonly CentralIdentityCache _identity = new();
     private DatabasePasswordStore? _session => _known.Current is { } user ? SessionOf(user) : null;
     private HttpClient? _http;
     private CookieContainer? _cookies;
@@ -180,7 +182,7 @@ public sealed class CentralApiClient
     {
         _known.SetCurrent(username);
         Me = null; _http?.Dispose(); _http = null;
-        try { Me = await GetDirectAsync<CentralMe>("api/v1/auth/me", token); _known.Touch(Me); return Me; }
+        try { Me = await GetDirectAsync<CentralMe>("api/v1/auth/me", token); _known.Touch(Me); _identity.Save(Me); return Me; }
         catch (CentralApiException ex) when (ex.Status == HttpStatusCode.Unauthorized) { try { SessionOf(username).Delete(); } catch { } }
         return await SignInWithSavedPasswordAsync(username, token);
     }
@@ -203,6 +205,7 @@ public sealed class CentralApiClient
         if (string.Equals(_known.Current, username, StringComparison.OrdinalIgnoreCase)) Forget();
         try { SessionOf(username).Delete(); } catch { }
         try { PasswordOf(username).Delete(); } catch { }
+        _identity.Forget(username);
         _known.Remove(username);
     }
 
@@ -225,6 +228,7 @@ public sealed class CentralApiClient
         if (savePassword) PasswordOf(who).Save(who, password); else try { PasswordOf(who).Delete(); } catch { }
         Me = await GetDirectAsync<CentralMe>("api/v1/auth/me", token);
         _known.Touch(Me);
+        _identity.Save(Me);
         return Me;
     }
 
@@ -243,6 +247,7 @@ public sealed class CentralApiClient
         catch { }
         try { _logins.Delete(); } catch { }
         try { _session?.Delete(); } catch { }
+        if (_known.Current is { } signedOut) _identity.Forget(signedOut);
         _known.SetCurrent(null);
         Me = null; _http?.Dispose(); _http = null;
     }
@@ -259,9 +264,18 @@ public sealed class CentralApiClient
             Me = await GetDirectAsync<CentralMe>("api/v1/auth/me", token);
             if (SafeRead(Legacy) is { } old) { SessionOf(Me.Username).Save(old); try { Legacy.Delete(); } catch { } }
             _known.Touch(Me);
+            _identity.Save(Me);
             return Me;
         }
         catch (CentralApiException ex) when (ex.Status == HttpStatusCode.Unauthorized) { try { _session?.Delete(); } catch { } }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // The server cannot be reached; this PC does not stop working and the person does not
+            // become someone else. Who they are is what the server last said, until that session
+            // would have run out - it is asked again as soon as the server answers.
+            if (_identity.Read(_known.Current) is { } remembered) { Me = remembered; return Me; }
+            throw;
+        }
         if (await SignInWithSavedPasswordAsync(_known.Current, token) is { } me) return me;
         var saved = _logins.Read();
         if (saved == null) return null;
@@ -376,6 +390,14 @@ public sealed class CentralApiClient
     /// <summary>The account's email and password, for this app to sign in to the LMS with. Never logged.</summary>
     public Task<CentralLmsSecret> LmsSecretAsync(string id, CancellationToken token = default) =>
         SendAsync<CentralLmsSecret>(HttpMethod.Post, $"api/v1/me/lms-accounts/{id}/secret", null, token);
+
+    /// <summary>
+    /// A single-use token for this PC to register itself as a device, so that what it does here -
+    /// the attendance above all - reaches the server by itself. Spent at once by the agent.
+    /// </summary>
+    public async Task<string> EnrollThisPcAsync(string name, CancellationToken token = default) =>
+        (await SendAsync<JsonElement>(HttpMethod.Post, "api/v1/me/devices/enroll", new { name }, token))
+            .GetProperty("enrollmentToken").GetString() ?? throw new CentralApiException(0, "The server sent no enrollment token.");
 
     public async Task<JsonElement?> SettingAsync(string key, CancellationToken token = default)
     {

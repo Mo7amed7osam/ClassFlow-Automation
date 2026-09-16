@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Threading;
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Inspector.Runtime;
@@ -13,6 +13,7 @@ public partial class App : Application
 {
     private WindowsUiService? _service;
     private MainViewModel? _viewModel;
+    private Services.PendingEndNotifier? _pendingEnds;
     private int _errorDialogActive;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -96,6 +97,10 @@ public partial class App : Application
                 Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show(title, message, "#2ED9A0"); } catch { } });
             WindowsUiRuntimeLog.Write("VIEWMODELS", "Main view model graph created.");
             // The app opens on the Dashboard: who is signed in, their LMS account, every session.
+            // The minute before a finished class is ended for everyone is counted down on the desktop,
+            // with the two answers a person might want. It watches whichever process is ending it.
+            _pendingEnds = new Services.PendingEndNotifier();
+            _pendingEnds.Start();
             _viewModel.SelectedTabIndex = MainViewModel.DashboardPage;
             window.DataContext = _viewModel;
             await _viewModel.InitializeAsync();
@@ -123,6 +128,7 @@ public partial class App : Application
     {
         try
         {
+            _pendingEnds?.Dispose();
             _viewModel?.Dispose();
             if (_service != null) await _service.DisposeAsync();
         }

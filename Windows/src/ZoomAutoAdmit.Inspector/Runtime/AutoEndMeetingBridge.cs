@@ -1,5 +1,6 @@
-using Microsoft.Playwright;
+﻿using Microsoft.Playwright;
 using ZoomAutoAdmit.Attendance;
+using ZoomAutoAdmit.Core.Central;
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.Core.Sessions;
@@ -36,6 +37,12 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
     private readonly Func<MeetingLaunchContext, bool> _meetingOpen;
     private readonly LmsMeetingBridge.ClassStart? _classStart;
     private readonly Action<string> _log;
+    /// <summary>What this PC did, for the central server.</summary>
+    private readonly ActivityLog _activity;
+    /// <summary>The countdown a person can answer, wherever the app happens to be running.</summary>
+    private readonly PendingMeetingEnds _ends;
+    /// <summary>When each class ended and how, for the class card.</summary>
+    private readonly ClassEndings _endings;
     private readonly TimeSpan _interval;
     private readonly Func<DateTimeOffset> _now;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
@@ -53,8 +60,15 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
         TimeSpan? interval = null,
         Func<DateTimeOffset>? now = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
-        Func<IPage?>? webPage = null)
+        Func<IPage?>? webPage = null,
+        ActivityLog? activity = null,
+        PendingMeetingEnds? ends = null,
+        ClassEndings? endings = null)
     {
+        // A test passes its own log; nothing is written to the folder the agent sends from.
+        _activity = activity ?? new ActivityLog();
+        _ends = ends ?? new PendingMeetingEnds();
+        _endings = endings ?? new ClassEndings();
         _events = events;
         _participants = participants;
         _end = end ?? ((context, token) => context.EngineType == SessionEngineType.Web
@@ -106,12 +120,19 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
                 await _classStart(session.GroupId, DateOnly.FromDateTime(classStart.DateTime), TimeOnly.FromDateTime(classStart.DateTime), token) is { } scheduled)
                 classStart = new DateTimeOffset(DateOnly.FromDateTime(classStart.DateTime).ToDateTime(scheduled), classStart.Offset);
 
-            // Asleep until shortly before the three hours.
+            // Waiting for the three hours - and watching for the meeting being closed somewhere
+            // else meanwhile (from a phone, say). Twice in a row, so one unlucky look is not an end.
             var wake = classStart + AutoEndRule.EndAfter - WakeBefore;
+            int missing = 0;
             while (_now() < wake)
             {
                 var left = wake - _now();
-                await _delay(left < TimeSpan.FromMinutes(10) ? left : TimeSpan.FromMinutes(10), token);
+                await _delay(left < _interval ? left : _interval, token);
+                if (_now() >= wake) break;
+                if (_meetingOpen(context)) { missing = 0; continue; }
+                if (++missing < 2) continue;
+                EndedElsewhere(session, classStart);
+                return;
             }
 
             var tracker = new AutoEndTracker();
@@ -121,7 +142,7 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
             while (!token.IsCancellationRequested)
             {
                 if (!Enabled) { await _delay(_interval, token); continue; }
-                if (!_meetingOpen(context)) { _log($"{session.GroupId}: the meeting is over; stopped watching."); return; }
+                if (!_meetingOpen(context)) { EndedElsewhere(session, classStart); return; }
                 var room = await ReadRoomAsync(context, token);
 
                 // The instructor: whoever the app made co-host here, or anyone Zoom shows as co-host.
@@ -144,14 +165,36 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
                 if (decision.Action == AutoEndAction.EndForAll)
                 {
                     if (!room.Rows.Any(r => r.IsHostMe)) { _log($"{session.GroupId}: this account is not the meeting's host, so it is left open."); return; }
-                    // One more look right before: someone may have just unmuted, joined or come back.
-                    var again = await ReadRoomAsync(context, token);
-                    bool stillOver = again.Complete && !again.Rows.Any(r => r.Audio == ParticipantAudio.Unmuted) &&
-                                     (again.State == room.State || !CoHostPresent(again, session.SessionId) && coHostGone != null);
-                    if (!stillOver) { await _delay(_interval, token); continue; }
+                    // A minute's warning first, wherever anyone is watching: they can end it at once,
+                    // or keep the class and end it themselves. Nobody answering ends it as before.
+                    var answer = await WaitForAnswerAsync(session, decision.Reason, classStart, token);
+                    if (answer == PendingEndAnswer.EndManually)
+                    {
+                        _ends.Withdraw(session.SessionId);
+                        _log($"{session.GroupId}: someone is ending this class themselves; stopped watching.");
+                        _activity.Write("class.end.cancelled", "skipped",
+                            $"{decision.Reason}: someone chose to end this class themselves.", session.GroupId,
+                            DateOnly.FromDateTime(classStart.LocalDateTime));
+                        Record(session, classStart, ClassEndedHow.ByHand, "Left open: someone said they would end it themselves.");
+                        return;
+                    }
+                    if (answer != PendingEndAnswer.EndNow)
+                    {
+                        // One more look right before: someone may have just unmuted, joined or come back.
+                        var again = await ReadRoomAsync(context, token);
+                        bool stillOver = again.Complete && !again.Rows.Any(r => r.Audio == ParticipantAudio.Unmuted) &&
+                                         (again.State == room.State || !CoHostPresent(again, session.SessionId) && coHostGone != null);
+                        if (!stillOver) { _ends.Withdraw(session.SessionId); await _delay(_interval, token); continue; }
+                    }
                     _log($"{session.GroupId}: ending the meeting for everyone ({decision.Reason}).");
                     var (ended, message) = await _end(context, token);
+                    _ends.Withdraw(session.SessionId);
                     _log($"{session.GroupId}: {message}");
+                    if (ended) Record(session, classStart, ClassEndedHow.Program, $"{decision.Reason}. {message}");
+                    // The central server is told the class was ended here, and why.
+                    _activity.Write("class.ended", ended ? "done" : "failed",
+                        $"{decision.Reason}: {message}", session.GroupId,
+                        DateOnly.FromDateTime(classStart.LocalDateTime));
                     if (ended) return;
                 }
                 await _delay(_interval, token);
@@ -159,6 +202,51 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { _log($"{context.Session.GroupId}: the end-of-class watch stopped ({ex.GetType().Name}: {ex.Message})."); }
+    }
+
+    /// <summary>The meeting is gone and this program did not end it: someone closed it elsewhere.</summary>
+    private void EndedElsewhere(MeetingSession session, DateTimeOffset classStart)
+    {
+        _ends.Withdraw(session.SessionId);
+        _log($"{session.GroupId}: the meeting is over (closed somewhere else); stopped watching.");
+        _activity.Write("class.ended", "done", "The meeting was closed somewhere else.", session.GroupId,
+            DateOnly.FromDateTime(classStart.LocalDateTime), at: _now());
+        Record(session, classStart, ClassEndedHow.Elsewhere, "Closed somewhere else (not by this program).");
+    }
+
+    private void Record(MeetingSession session, DateTimeOffset classStart, ClassEndedHow how, string message) =>
+        _endings.Record(new ClassEnding
+        {
+            Group = session.GroupId,
+            Date = DateOnly.FromDateTime(classStart.LocalDateTime),
+            Start = new TimeOnly(classStart.LocalDateTime.Hour, classStart.LocalDateTime.Minute),
+            At = _now(),
+            How = how,
+            Message = message,
+        });
+
+    /// <summary>
+    /// Counts the minute down where anyone can see it and waits for an answer. Nobody watching
+    /// (a class a Windows task opened, with the app closed) simply means the minute passes.
+    /// </summary>
+    private async Task<PendingEndAnswer> WaitForAnswerAsync(MeetingSession session, string reason, DateTimeOffset classStart, CancellationToken token)
+    {
+        var endsAt = _now() + PendingMeetingEnds.Warning;
+        _ends.Announce(new PendingMeetingEndNotice
+        {
+            SessionId = session.SessionId,
+            Group = session.GroupId,
+            ClassStart = classStart,
+            Reason = reason,
+            EndsAt = endsAt,
+        });
+        _log($"{session.GroupId}: {reason}; ending it in {PendingMeetingEnds.Warning.TotalSeconds:0} seconds unless someone says otherwise.");
+        while (_now() < endsAt)
+        {
+            if (_ends.Read(session.SessionId) is var said && said != PendingEndAnswer.NoAnswer) return said;
+            await _delay(TimeSpan.FromSeconds(1), token);
+        }
+        return _ends.Read(session.SessionId);
     }
 
     private static bool CoHostPresent(Room room, Guid sessionId)

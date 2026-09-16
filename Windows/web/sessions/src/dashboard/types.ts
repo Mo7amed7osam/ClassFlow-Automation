@@ -18,3 +18,17 @@ export interface DashState {
   allGroups: null | { id: string; name: string; displayName?: string | null; archived: boolean; recordings: number; lastSession?: string | null; pending: number; onLms: number; missing: number; coordinators: string[] }[]
   pages: { sessions: number; recordings: number; coordinators: number; server: number }
 }
+
+/** One thing a PC did and reported (GET api/v1/dashboard/activity). */
+export interface Activity {
+  id: number
+  device: string | null
+  deviceId: string
+  at: string
+  kind: string
+  outcome: 'done' | 'failed' | 'skipped'
+  group: string | null
+  date: string | null
+  summary: string
+  detail: Record<string, unknown> | null
+}

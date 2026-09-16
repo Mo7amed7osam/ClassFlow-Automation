@@ -18,6 +18,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private DispatcherTimer? _refreshTimer;
     private bool _refreshing, _disposed;
     private DateTimeOffset _lastLmsFollowUpCheck = DateTimeOffset.MinValue;
+    private readonly RecordingsDashboardSettingsStore _dashboardSettings = new();
+    private readonly LocalAgentHost _agentHost = new();
 
     /// <summary>Pages in MainWindow's TabControl. A page added there must be reachable from the sidebar.</summary>
     public const int TabCount = 18;
@@ -315,6 +317,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 // (not awaited: an AI round can take a minute, and the page must keep refreshing).
                 // Only in the app itself: a test's view model never sends real names to the AI.
                 if (System.Windows.Application.Current is App) _ = AttendanceMatcher.TickAsync(DateTime.Now);
+                // This PC's own agent carries its attendance and job results to the central server,
+                // and joins the server by itself the first time it is signed in. Only in the app: a
+                // test's view model never starts a process. It does nothing while all is well.
+                if (System.Windows.Application.Current is App)
+                    _ = _agentHost.EnsureRunningAsync(_dashboardSettings.Load(), Central.Api);
                 await Lms.ProcessDueFollowUpAsync();
                 if (_disposed) return;
                 await LmsSessions.TickAsync();
@@ -349,6 +356,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _service.MeetingBecameLive -= OnMeetingBecameLive;
         StartMeeting.AccountsChanged -= OnStartMeetingAccountsChanged;
         Accounts.AccountsChanged -= OnAccountsChanged;
+        _agentHost.Dispose();
         Logs.Dispose();
         Dashboard.Dispose();
         Schedules.Dispose();

@@ -100,10 +100,11 @@ public sealed class ZoomWebMeetingLocator : IZoomWebMeetingLocator
         return false;
     }
 
-    // Controls a guest never has: the host ends the meeting (a guest only leaves), and only the host
-    // has Host tools / Security.
+    // Only the host ends the meeting; everyone else, a co-host included, merely leaves. Host tools
+    // and the security options are NOT proof: a co-host has them too (seen live, 2026-09-16, where a
+    // second session of the same account joined as co-host and still showed both).
     private static readonly Regex HostOnlyPattern = new(
-        @"^End(?:\s+Meeting)?$|^Host\s+tools$|security\s+options|^Security$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        @"^End(?:\s+Meeting)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>The profile is in the meeting as its host, not as a guest.</summary>
     public static async Task<bool> IsHostAsync(IFrame frame)

@@ -190,6 +190,21 @@ public partial class DashboardWebView : UserControl
                 await central.Api.ArchiveGroupAsync(Text(p, "id"), Flag(p, "archived"));
                 await central.RefreshAsync();
                 return Done(Flag(p, "archived") ? "Archived: it is hidden from lists but nothing is deleted." : "Active again.");
+            // What every PC has done by itself and reported (POST api/v1/devices/activity). Asked for
+            // only when the page shows it, so the Dashboard does not carry it on every refresh.
+            case "activity":
+            {
+                try
+                {
+                    var answer = await central.Api.GetAsync<System.Text.Json.JsonElement>(
+                        "api/v1/dashboard/activity?limit=200");
+                    return new { ok = true, items = answer.GetProperty("items") };
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    return new { ok = false, message = ex.Message };
+                }
+            }
             case "startServer":
                 await main.RecordingsDashboard.StartAsync();
                 await Task.Delay(1500);

@@ -83,6 +83,8 @@ public sealed class ZoomWebMeetingController
                 // nobody signed in) must not be remembered as ready, or it would stay a guest.
                 if (!session.Profile.HasReusableSession)
                 {
+                    // The host proof is the End button, which an auto-hidden toolbar does not show.
+                    await ZoomWebToolbar.WakeAsync(surface.Page, cancellationToken);
                     if (await ZoomWebMeetingLocator.IsHostAsync(surface.Frame))
                         session.Profile = profileManager.MarkSessionReady(session.Profile);
                     else ConsoleLogger.Warn($"WEB_JOINED_AS_GUEST: profile '{session.Profile.Name}' is in the meeting but not as its host; sign it in to Zoom.");

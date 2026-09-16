@@ -4,6 +4,7 @@ on the recordings of their own groups (anything else is answered as if it did no
     PATCH /api/v1/dashboard/recordings/{id}          edit a recording (the recordings module's own rules)
     POST  /api/v1/dashboard/recordings/{id}/attach   put its Drive link on the LMS, through a job
     POST  /api/v1/dashboard/recordings/{id}/cancel   stop that job while it still waits in the queue
+    POST  /api/v1/me/devices/enroll                  a token for this PC to register itself as a device
 
 All need the dashboard session and the X-Dashboard-Request: 1 header; the n8n API key does not
 work here and never reaches the browser. Nothing is re-implemented: an edit goes through
@@ -21,12 +22,12 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +36,7 @@ from .access import Viewer, current_viewer
 from .auth import require_dashboard_header
 from .api import ApiError, _json
 from .dashboard import parse_id, recording_item
+from .devices import create_enrollment_token
 from .jobs import cancel_job, create_job
 from .models import ACTIVE_JOB_STATUSES, AdminAuditLog, Job, Recording
 from .observability import emit, link_preview
@@ -216,3 +218,36 @@ async def cancel_recording_job(recording_id: str, request: Request, viewer: View
         audit(session, viewer, "recording.cancel", key, {"jobId": str(job.id)}, now)
         response = {"recordingId": str(key), "jobId": str(job.id), "status": "cancelled"}
     return _no_store(response)
+
+
+# ----------------------------------------------------------------------------- this PC joins
+
+
+class EnrollBody(BaseModel):
+    """What to call this PC in the device list. Unknown fields are refused."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(default="", max_length=100)
+
+
+ENROLLMENT_TTL = timedelta(minutes=15)
+
+
+@router.post("/api/v1/me/devices/enroll")
+async def enroll_this_pc(request: Request, body: EnrollBody | None = None,
+                         viewer: Viewer = Depends(current_viewer)) -> JSONResponse:
+    """
+    A signed-in person's own PC joins by itself.
+
+    It hands out one short-lived, single-use enrollment token, which the app spends at once on
+    POST /api/v1/agents/register. Until this existed every PC waited for an operator to make a
+    token by hand, and a PC that never got one sent nothing at all - no attendance, no results.
+    The token is only ever given to the person asking, for their own PC, and grants no more than
+    registering a device does.
+    """
+    state = request.app.state
+    label = (body.name.strip() if body and body.name else "") or viewer.user.username
+    async with state.sessionmaker() as session, session.begin():
+        token = await create_enrollment_token(session, f"{viewer.user.username}: {label}", ENROLLMENT_TTL, state.clock())
+    emit("device.self_enrollment", username=viewer.user.username, label=label)
+    return _no_store({"enrollmentToken": token, "expiresInSeconds": int(ENROLLMENT_TTL.total_seconds())})

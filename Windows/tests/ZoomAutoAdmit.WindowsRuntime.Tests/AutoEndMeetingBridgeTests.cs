@@ -1,4 +1,4 @@
-using ZoomAutoAdmit.Attendance;
+﻿using ZoomAutoAdmit.Attendance;
 using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.Core.Sessions;
 using ZoomAutoAdmit.Inspector.Runtime;
@@ -20,24 +20,47 @@ public sealed class AutoEndMeetingBridgeTests
             Task.FromResult(new ParticipantReadResult([.. rowsAt(clock()).Select(l => new ParticipantPresence(l) { RowLabel = l })], true));
     }
 
-    private static async Task<(List<DateTimeOffset> Ended, bool Open)> Run(Func<DateTimeOffset, string[]> rowsAt, TimeSpan until,
-        SessionEngineType engine = SessionEngineType.Desktop, string? assignedCoHost = null)
+    private static Task<(List<DateTimeOffset> Ended, bool Open)> Run(Func<DateTimeOffset, string[]> rowsAt, TimeSpan until,
+        SessionEngineType engine = SessionEngineType.Desktop, string? assignedCoHost = null) =>
+        RunAsync(rowsAt, until, engine, assignedCoHost).ContinueWith(t => (t.Result.Ended, t.Result.Open), TaskScheduler.Default);
+
+    /// <param name="answer">What a person watching the countdown presses, as soon as it appears.</param>
+    private static async Task<(List<DateTimeOffset> Ended, bool Open, IReadOnlyList<ClassEnding> Endings)> RunAsync(
+        Func<DateTimeOffset, string[]> rowsAt, TimeSpan until, SessionEngineType engine = SessionEngineType.Desktop,
+        string? assignedCoHost = null, PendingEndAnswer? answer = null)
     {
         var now = ClassTime.AddHours(1);
         var ended = new List<DateTimeOffset>();
         bool open = true;
         var events = new MeetingLifecycleEvents();
+        // Its own folders: a test never announces a countdown to the app running on this PC, and
+        // never writes into the real record of how classes ended.
+        string scratch = Path.Combine(Path.GetTempPath(), $"auto-end-{Guid.NewGuid():N}");
+        var ends = new PendingMeetingEnds(Path.Combine(scratch, "ending"));
+        var endings = new ClassEndings(Path.Combine(scratch, "endings.json"));
         await using var bridge = new AutoEndMeetingBridge(events, _ => new Room(rowsAt, () => now),
             end: (_, _) => { ended.Add(now); open = false; return Task.FromResult((true, "ended")); },
             meetingOpen: _ => open && now < ClassTime + until,
             log: _ => { }, interval: TimeSpan.FromSeconds(30), now: () => now,
-            delay: (d, _) => { now += d; return Task.CompletedTask; });
+            delay: (d, _) =>
+            {
+                now += d;
+                // Whoever is watching presses their answer the moment the countdown shows up.
+                if (answer is { } said)
+                    foreach (var waiting in ends.Waiting(now)) ends.Answer(waiting.SessionId, said);
+                return Task.CompletedTask;
+            },
+            activity: new ZoomAutoAdmit.Core.Central.ActivityLog(Path.Combine(scratch, "activity")),
+            ends: ends,
+            endings: endings);
         var meeting = new ScheduledMeeting(new Uri("https://zoom.us/j/12345678901"), "S7", DateTimeOffset.UtcNow, GroupId: "CAI5_AIS4_S7", ScheduledStartTime: ClassTime);
         var session = new MeetingSession(Guid.NewGuid(), meeting, DateTimeOffset.UtcNow);
         if (assignedCoHost != null) AssignedCoHosts.Record(session.SessionId, assignedCoHost);
         await events.PublishAsync(new MeetingLaunchContext(session, new("S7", "S7", "ref"), engine, null), MeetingLifecycleEventKind.Active);
         await bridge.DrainAsync();
-        return (ended, open);
+        var written = endings.All();
+        try { if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true); } catch (IOException) { }
+        return (ended, open, written);
     }
 
     [Fact]
@@ -116,4 +139,40 @@ public sealed class AutoEndMeetingBridgeTests
         var (ended, _) = await Run(_ => ["Helper,(Co-host, me), Computer audio muted,Video off"], TimeSpan.FromHours(5));
         Assert.Empty(ended);
     }
+    // ---------------------------------------------------------------- the minute before it ends
+
+    [Fact]
+    public async Task PressingEndNowDoesNotWaitTheMinuteOut()
+    {
+        var (ended, _, endings) = await RunAsync(t => t < ClassTime.AddHours(2.5) ? [Host, Guest("A")] : [Host],
+            TimeSpan.FromHours(5), answer: PendingEndAnswer.EndNow);
+        var at = Assert.Single(ended);
+        // The room is judged over at 3 h 01; pressing End now ends it there and then, instead of
+        // a minute later when the countdown would have run out by itself.
+        Assert.InRange(at - ClassTime, TimeSpan.FromMinutes(181), TimeSpan.FromMinutes(181) + TimeSpan.FromSeconds(30));
+        Assert.Equal(ClassEndedHow.Program, Assert.Single(endings).How);
+    }
+
+    [Fact]
+    public async Task SayingYouWillEndItYourselfLeavesTheClassOpen()
+    {
+        var (ended, open, endings) = await RunAsync(t => t < ClassTime.AddHours(2.5) ? [Host, Guest("A")] : [Host],
+            TimeSpan.FromHours(5), answer: PendingEndAnswer.EndManually);
+        Assert.Empty(ended);
+        Assert.True(open);
+        Assert.Equal(ClassEndedHow.ByHand, Assert.Single(endings).How);
+    }
+
+    [Fact]
+    public async Task AMeetingClosedSomewhereElseIsNoticedAndWrittenDown()
+    {
+        // Closed an hour and a half in - from a phone, say - long before the three hours.
+        var (ended, _, endings) = await RunAsync(_ => [Host, Guest("A")], TimeSpan.FromMinutes(90));
+        Assert.Empty(ended);
+        var noticed = Assert.Single(endings);
+        Assert.Equal(ClassEndedHow.Elsewhere, noticed.How);
+        Assert.Equal("CAI5_AIS4_S7", noticed.Group);
+        Assert.Equal(new TimeOnly(19, 0), noticed.Start);
+    }
+
 }

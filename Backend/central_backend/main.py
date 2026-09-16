@@ -35,6 +35,8 @@ from .auth import router as auth_router
 from .dashboard import router as dashboard_router
 from .dashboard import site_router
 from .dashboard_operations import router as dashboard_operations_router
+from .activity import dashboard_router as activity_dashboard_router
+from .activity import router as activity_router
 from .attendance import dashboard_router as attendance_dashboard_router
 from .attendance import router as attendance_router
 from .attendance_ai import AttendanceAi, ChatCompletionsAi
@@ -170,6 +172,8 @@ def create_app(
     app.include_router(dashboard_operations_router)
     app.include_router(attendance_router)
     app.include_router(attendance_dashboard_router)
+    app.include_router(activity_router)
+    app.include_router(activity_dashboard_router)
     app.include_router(user_data_router)
 
     # The dashboard's web page, when it has been built (Dashboard/dist, or CENTRAL_DASHBOARD_DIST).

@@ -305,6 +305,9 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
             if (await ZoomWaitingRoomDom.HasWaitingRoomHeaderAsync(surface.Frame)) return;
             foreach (var close in await surface.Frame.GetByRole(AriaRole.Button, new() { NameRegex = CloseParticipants }).AllAsync())
                 if (await close.IsVisibleAsync()) return;
+            // With nobody moving a mouse the toolbar hides itself, and its Participants button is
+            // then invisible - the panel would silently never reopen (seen live, 2026-09-16).
+            await ZoomWebToolbar.WakeAsync(surface.Page);
             foreach (var open in await surface.Frame.GetByRole(AriaRole.Button, new() { NameRegex = OpenParticipants }).AllAsync())
             {
                 if (!await open.IsVisibleAsync()) continue;

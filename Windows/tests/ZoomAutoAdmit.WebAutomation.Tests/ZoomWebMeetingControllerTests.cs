@@ -75,6 +75,18 @@ public class ZoomWebMeetingControllerTests
     }
 
     /// <summary>A meeting frame that shows the host's "End" button, or only what a guest has.</summary>
+    /// <summary>A page whose pointer can be moved: the controller wakes Zoom's auto-hiding toolbar.</summary>
+    private static Mock<IPage> MeetingPage(string url)
+    {
+        var page = new Mock<IPage>();
+        page.SetupGet(item => item.IsClosed).Returns(false);
+        page.SetupGet(item => item.Url).Returns(url);
+        var mouse = new Mock<IMouse>();
+        mouse.Setup(m => m.MoveAsync(It.IsAny<float>(), It.IsAny<float>(), It.IsAny<MouseMoveOptions>())).Returns(Task.CompletedTask);
+        page.SetupGet(item => item.Mouse).Returns(mouse.Object);
+        return page;
+    }
+
     private static Mock<IFrame> MeetingFrame(bool host)
     {
         var frame = new Mock<IFrame>();
@@ -93,9 +105,7 @@ public class ZoomWebMeetingControllerTests
         try
         {
             const string meetingUrl = "https://example.zoom.us/j/123456789";
-            var page = new Mock<IPage>();
-            page.SetupGet(item => item.IsClosed).Returns(false);
-            page.SetupGet(item => item.Url).Returns(meetingUrl);
+            var page = MeetingPage(meetingUrl);
             var context = new Mock<IBrowserContext>();
             context.SetupGet(item => item.Pages).Returns([page.Object]);
             var profileManager = new ZoomProfileManager(profilesRoot);
@@ -120,9 +130,7 @@ public class ZoomWebMeetingControllerTests
         try
         {
             const string meetingUrl = "https://example.zoom.us/j/123456789";
-            var page = new Mock<IPage>();
-            page.SetupGet(item => item.IsClosed).Returns(false);
-            page.SetupGet(item => item.Url).Returns(meetingUrl);
+            var page = MeetingPage(meetingUrl);
             var frame = MeetingFrame(host: true);
             var context = new Mock<IBrowserContext>();
             context.SetupGet(item => item.Pages).Returns([page.Object]);

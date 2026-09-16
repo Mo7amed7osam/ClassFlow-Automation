@@ -1,7 +1,8 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows.Input;
 using ZoomAutoAdmit.Core.Formatting;
+using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.WebAutomation.Lms;
 using ZoomAutoAdmit.WebAutomation.Recordings;
 using ZoomAutoAdmit.WindowsRuntime.Scheduling;
@@ -67,6 +68,8 @@ public sealed class LmsSessionsViewModel : ObservableObject
     private readonly LmsSessionCache _cache;
     private readonly LmsAccountDirectory _accounts;
     private readonly Func<LmsSessionRunner> _runner;
+    /// <summary>When each class's meeting ended, and how - including one closed from a phone.</summary>
+    private readonly ClassEndings _endings;
     private string _status = "";
     private bool _isBusy;
     private LmsAccountEntry? _selectedAccount;
@@ -74,8 +77,10 @@ public sealed class LmsSessionsViewModel : ObservableObject
     private DateTimeOffset _lastAutoCheck = DateTimeOffset.MinValue;
 
     public LmsSessionsViewModel(WindowsMeetingScheduleStore? schedules = null, LmsFollowUpQueue? queue = null,
-        LmsSessionCache? cache = null, LmsAccountDirectory? accounts = null, Func<LmsSessionRunner>? runner = null)
+        LmsSessionCache? cache = null, LmsAccountDirectory? accounts = null, Func<LmsSessionRunner>? runner = null,
+        ClassEndings? endings = null)
     {
+        _endings = endings ?? new ClassEndings();
         _schedules = schedules ?? new WindowsMeetingScheduleStore();
         _queue = queue ?? new LmsFollowUpQueue();
         _cache = cache ?? new LmsSessionCache();
@@ -339,6 +344,16 @@ public sealed class LmsSessionsViewModel : ObservableObject
                     State("correct", "Late joiners", LmsFollowUpStep.CorrectAttendance, false, classStart + LmsFollowUpQueue.CorrectAttendanceAfter > now),
                     State("complete", "Complete", LmsFollowUpStep.CompleteSession, finished, classStart + LmsFollowUpQueue.CorrectAttendanceAfter > now),
                 };
+                // How the meeting ended. The program ends a finished class itself, but it is just as
+                // often closed from a phone - which it notices rather than guesses at.
+                var ending = _endings.For(group, date, start);
+                steps.Add(ending switch
+                {
+                    { How: ClassEndedHow.Program } e => new StepState("ended", "Ended", "done", $"Ended {e.At.LocalDateTime:HH:mm}", e.Message),
+                    { How: ClassEndedHow.Elsewhere } e => new StepState("ended", "Ended", "done", $"Closed {e.At.LocalDateTime:HH:mm}", e.Message),
+                    { How: ClassEndedHow.ByHand } e => new StepState("ended", "Ended", "due", "Yours to end", e.Message),
+                    _ => new StepState("ended", "Ended", past ? "none" : "future", past ? "Still open" : "After class"),
+                });
                 // The record link, in two steps: the Zoom recording soon after class, then the Drive
                 // copy that replaces it. A link the app wrote counts even when the last LMS read was a
                 // quick list read, which does not look at links.

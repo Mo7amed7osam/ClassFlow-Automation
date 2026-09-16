@@ -17,8 +17,10 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
     // Confirmed from a live Windows meeting: the panel exposes one list named
     // "Participant list, use arrow key to navigate…" whose ListItems are section headers
     // ("Waiting room (1), Expanded" / "Joined (2), Expanded") followed by the people in them.
+    // The Zoom app names it "Participant list, use arrow key to navigate…"; the web client names it
+    // "Participants list" (verified live, 2026-09-16) - the missing "s" cost every web read.
     private static readonly Regex JoinedListName = new(
-        @"^participant list\b|^(joined|in[- ]meeting)(\s+participants)?(\s+list)?(\s*\(\d+\))?$", RegexOptions.IgnoreCase);
+        @"^participants? list\b|^(joined|in[- ]meeting)(\s+participants)?(\s+list)?(\s*\(\d+\))?$", RegexOptions.IgnoreCase);
     private static readonly Regex SectionHeader = new(
         @"^(waiting room|joined|in[- ]meeting)\s*\(\d+\)", RegexOptions.IgnoreCase);
     private static readonly Regex WaitingHeader = new(@"^waiting room", RegexOptions.IgnoreCase);
@@ -66,9 +68,15 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
     {
         int marker = label.IndexOf(",(", StringComparison.Ordinal);
         if (marker > 0) return label[..marker].Trim();
+        // The web client writes the role without that comma - "eyouth coordinator (Host, me),computer
+        // audio muted…" - so cutting at the first comma would keep "(Host" in the name.
+        if (RoleSuffix.Match(label) is { Success: true } role) return label[..role.Index].Trim();
         int comma = label.IndexOf(',');
         return (comma > 0 ? label[..comma] : label).Trim();
     }
+
+    /// <summary>Where a row's role tail begins. Only Zoom's own role words, never a name's brackets.</summary>
+    private static readonly Regex RoleSuffix = new(@"\s*\((host|co-?host|guest|me)\b", RegexOptions.IgnoreCase);
 
     private static string SafeName(FlaUI.Core.AutomationElements.AutomationElement element)
     {
