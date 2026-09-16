@@ -39,6 +39,18 @@ public sealed class LmsFollowUpProcessor
         {
             var report = await _zoomReport(item, token);
             if (report == null || report.People.Count == 0) return [];
+            // A meeting in Zoom's usage report has ended: the class card's "Ended" step says so, even
+            // when nothing on this PC saw it close (closed from a phone, or the app was not running).
+            var zone = ZoomAutoAdmit.WebAutomation.Zoom.ZoomRecordingLinkReader.ConfiguredZoomTimeZone();
+            var endedAt = report.EndedAt is { } end && zone != null
+                ? new DateTimeOffset(TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(end, DateTimeKind.Unspecified), zone, TimeZoneInfo.Local))
+                : DateTimeOffset.Now;
+            new ZoomAutoAdmit.Core.Meetings.ClassEndings().Record(new ZoomAutoAdmit.Core.Meetings.ClassEnding
+            {
+                Group = item.Group, Date = item.SessionDate, Start = item.SessionStart, At = endedAt,
+                How = ZoomAutoAdmit.Core.Meetings.ClassEndedHow.Elsewhere,
+                Message = "Zoom's usage report lists the meeting as ended.",
+            });
             var shortStays = report.People.Where(person => person.Minutes < ShortStay.TotalMinutes).ToArray();
             if (shortStays.Length > 0)
                 _warnings[ClassKey(item)] = "Warning - less than an hour in the meeting (Zoom report): " +

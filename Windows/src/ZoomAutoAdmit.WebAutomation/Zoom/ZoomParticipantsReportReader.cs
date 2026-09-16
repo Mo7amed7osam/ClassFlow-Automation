@@ -9,7 +9,8 @@ namespace ZoomAutoAdmit.WebAutomation.Zoom;
 /// <summary>One person in Zoom's participants report: every join of the same name added up.</summary>
 public sealed record ZoomReportPerson(string Name, int Minutes);
 
-public sealed record ZoomParticipantsReport(IReadOnlyList<ZoomReportPerson> People, int Instances, int Rows);
+/// <param name="EndedAt">When Zoom says the class's last run ended, in the Zoom account's own clock.</param>
+public sealed record ZoomParticipantsReport(IReadOnlyList<ZoomReportPerson> People, int Instances, int Rows, DateTime? EndedAt = null);
 
 /// <summary>
 /// Reads Zoom's own participants report for a meeting that has just ended, on the group's signed-in
@@ -93,7 +94,7 @@ public sealed class ZoomParticipantsReportReader
             await page.Keyboard.PressAsync("Escape");
             await Task.Delay(800, cancellationToken);
         }
-        return new(Summarize(header, rows), classRuns.Length, rows.Count);
+        return new(Summarize(header, rows), classRuns.Length, rows.Count, lastEnd);
     }
 
     /// <summary>One entry per name: the waiting room left out, every join's minutes added up.</summary>
