@@ -27,7 +27,7 @@ public sealed class AutoEndMeetingBridgeTests
     /// <param name="answer">What a person watching the countdown presses, as soon as it appears.</param>
     private static async Task<(List<DateTimeOffset> Ended, bool Open, IReadOnlyList<ClassEnding> Endings)> RunAsync(
         Func<DateTimeOffset, string[]> rowsAt, TimeSpan until, SessionEngineType engine = SessionEngineType.Desktop,
-        string? assignedCoHost = null, PendingEndAnswer? answer = null)
+        string? assignedCoHost = null, PendingEndAnswer? answer = null, Func<DateTimeOffset, bool>? breakoutRoomsOpen = null)
     {
         var now = ClassTime.AddHours(1);
         var ended = new List<DateTimeOffset>();
@@ -41,6 +41,7 @@ public sealed class AutoEndMeetingBridgeTests
         await using var bridge = new AutoEndMeetingBridge(events, _ => new Room(rowsAt, () => now),
             end: (_, _) => { ended.Add(now); open = false; return Task.FromResult((true, "ended")); },
             meetingOpen: _ => open && now < ClassTime + until,
+            breakoutRoomsOpen: _ => Task.FromResult(breakoutRoomsOpen?.Invoke(now) ?? false),
             log: _ => { }, interval: TimeSpan.FromSeconds(30), now: () => now,
             delay: (d, _) =>
             {
@@ -174,6 +175,25 @@ public sealed class AutoEndMeetingBridgeTests
         Assert.Equal(ClassEndedHow.Elsewhere, noticed.How);
         Assert.Equal("CAI5_AIS4_S7", noticed.Group);
         Assert.Equal(new TimeOnly(19, 0), noticed.Start);
+    }
+
+    [Fact]
+    public async Task NothingIsEndedWhileBreakoutRoomsAreOpen()
+    {
+        // The host looks alone because everyone is inside a room.
+        var (ended, open, endings) = await RunAsync(_ => [Host], TimeSpan.FromHours(5), breakoutRoomsOpen: _ => true);
+        Assert.Empty(ended);
+        Assert.True(open);
+        // It was still open when the watch stopped; the program never ended it.
+        Assert.DoesNotContain(endings, e => e.How == ClassEndedHow.Program);
+    }
+
+    [Fact]
+    public async Task OnceTheRoomsAreClosedTheClassIsEndedAsUsual()
+    {
+        var closed = ClassTime.AddHours(4);
+        var (ended, _, _) = await RunAsync(_ => [Host], TimeSpan.FromHours(6), breakoutRoomsOpen: t => t < closed);
+        Assert.InRange(Assert.Single(ended) - ClassTime, TimeSpan.FromHours(4), TimeSpan.FromHours(4) + TimeSpan.FromMinutes(7));
     }
 
 }

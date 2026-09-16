@@ -18,6 +18,8 @@ public sealed class PendingEndNotifier : IDisposable
 {
     private readonly PendingMeetingEnds _ends;
     private readonly Dictionary<Guid, EndCountdownToast> _shown = [];
+    /// <summary>Countdowns someone has hidden or answered: not put back on the desktop.</summary>
+    private readonly HashSet<Guid> _done = [];
     private readonly DispatcherTimer _timer;
 
     public PendingEndNotifier(PendingMeetingEnds? ends = null)
@@ -37,10 +39,13 @@ public sealed class PendingEndNotifier : IDisposable
 
         foreach (var notice in waiting)
         {
+            if (_done.Contains(notice.SessionId)) continue;
             if (_shown.TryGetValue(notice.SessionId, out var open)) { open.Tick(notice); continue; }
             try
             {
                 var toast = new EndCountdownToast(notice, _ends);
+                // Closed by the person, or by itself once answered: it is not shown again.
+                toast.Closed += (_, _) => { _shown.Remove(toast.SessionId); _done.Add(toast.SessionId); };
                 _shown[notice.SessionId] = toast;
                 toast.Show();
             }
@@ -55,6 +60,7 @@ public sealed class PendingEndNotifier : IDisposable
         {
             if (_shown.Remove(session, out var toast)) { try { toast.Close(); } catch (InvalidOperationException) { } }
         }
+        _done.RemoveWhere(id => waiting.All(n => n.SessionId != id));
     }
 
     public void Dispose()

@@ -6,6 +6,9 @@
     <Border.Effect><DropShadowEffect Color="#000000" Opacity="0.45" BlurRadius="24" ShadowDepth="6" Direction="270"/></Border.Effect>
     <DockPanel>
       <Border DockPanel.Dock="Left" Width="4" CornerRadius="2" Background="#F5A524" Margin="0,2,12,2"/>
+      <Button DockPanel.Dock="Right" Content="&#x2715;" Click="CloseClicked" Background="Transparent" BorderThickness="0"
+              Foreground="#9AA6BD" Padding="6,0" VerticalAlignment="Top" Cursor="Hand" FontSize="12"
+              ToolTip="Hide this. The class is not changed."/>
       <StackPanel>
         <TextBlock x:Name="TitleText" Foreground="#E8EDF7" FontWeight="Bold" FontSize="14" TextWrapping="Wrap"/>
         <TextBlock x:Name="MessageText" Foreground="#9AA6BD" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,0"/>

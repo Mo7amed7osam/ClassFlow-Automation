@@ -35,6 +35,8 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
     private readonly Func<MeetingLaunchContext, IAttendanceParticipantSource> _participants;
     private readonly EndMeeting _end;
     private readonly Func<MeetingLaunchContext, bool> _meetingOpen;
+    /// <summary>Whether breakout rooms are open: a class is never ended while anyone may be inside one.</summary>
+    private readonly Func<MeetingLaunchContext, Task<bool>> _breakoutRoomsOpen;
     private readonly LmsMeetingBridge.ClassStart? _classStart;
     private readonly Action<string> _log;
     /// <summary>What this PC did, for the central server.</summary>
@@ -61,6 +63,7 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
         Func<DateTimeOffset>? now = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
         Func<IPage?>? webPage = null,
+        Func<MeetingLaunchContext, Task<bool>>? breakoutRoomsOpen = null,
         ActivityLog? activity = null,
         PendingMeetingEnds? ends = null,
         ClassEndings? endings = null)
@@ -77,6 +80,9 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
         _meetingOpen = meetingOpen ?? (context => context.EngineType == SessionEngineType.Web
             ? webPage?.Invoke() is { IsClosed: false }
             : ZoomDesktopMeetingEnder.MeetingWindow() != IntPtr.Zero);
+        _breakoutRoomsOpen = breakoutRoomsOpen ?? (context => context.EngineType == SessionEngineType.Web
+            ? ZoomWebBreakoutRooms.AreOpenAsync(webPage?.Invoke())
+            : Task.Run(ZoomBreakoutRooms.AreOpen));
         _classStart = classStart;
         _log = log ?? (message => { WindowsSchedulerLog.Write("MEETING", message); ConsoleLogger.Info($"[AUTO_END] {message}"); });
         _interval = interval ?? TimeSpan.FromSeconds(30);
@@ -159,6 +165,11 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
                     var byCoHost = CoHostAbsenceRule.Decide(since, sawCoHost, coHostGone, room.Rows.Any(r => r.Audio == ParticipantAudio.Unmuted), room.Complete);
                     if (byCoHost.Action == AutoEndAction.EndForAll || coHostGone != null) decision = byCoHost;
                 }
+                // Everyone may simply be inside a breakout room: the main list leaves them out, so a
+                // room that looks empty is not one. Only asked once the room otherwise looks over.
+                if (decision.Action == AutoEndAction.EndForAll && await _breakoutRoomsOpen(context))
+                    decision = new AutoEndDecision(AutoEndAction.Wait, "breakout rooms are open");
+
                 string summary = $"{Describe(room)} - {decision.Reason}";
                 if (summary != lastLogged) { _log($"{session.GroupId} {classStart:HH:mm}: {summary}."); lastLogged = summary; }
 
@@ -180,10 +191,12 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
                     }
                     if (answer != PendingEndAnswer.EndNow)
                     {
-                        // One more look right before: someone may have just unmuted, joined or come back.
+                        // One more look right before: someone may have just unmuted, joined, come back,
+                        // or opened breakout rooms during the countdown.
                         var again = await ReadRoomAsync(context, token);
                         bool stillOver = again.Complete && !again.Rows.Any(r => r.Audio == ParticipantAudio.Unmuted) &&
-                                         (again.State == room.State || !CoHostPresent(again, session.SessionId) && coHostGone != null);
+                                         (again.State == room.State || !CoHostPresent(again, session.SessionId) && coHostGone != null) &&
+                                         !await _breakoutRoomsOpen(context);
                         if (!stillOver) { _ends.Withdraw(session.SessionId); await _delay(_interval, token); continue; }
                     }
                     _log($"{session.GroupId}: ending the meeting for everyone ({decision.Reason}).");

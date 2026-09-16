@@ -59,4 +59,47 @@ public sealed class AutoEndRuleTests
         Assert.Equal(TimeSpan.Zero, tracker.Observe(t.AddMinutes(5), RoomState.SmallAndSilent));
         Assert.Equal(TimeSpan.FromMinutes(5), tracker.Observe(t.AddMinutes(10), RoomState.SmallAndSilent));
     }
+    private static string CoHost(string name, bool talking = false) =>
+        $"{name},(Co-host), Computer audio {(talking ? "unmuted" : "muted")},Video off, Press tab for more options";
+
+    [Fact]
+    public void TheInstructorSittingThereMutedDoesNotMakeItAClass()
+    {
+        // "Fewer than five" is five students: the host's row and the co-host's are not students.
+        Assert.Equal(RoomState.SmallAndSilent, AutoEndRule.Classify(
+            Rows(Host, CoHost("Mostafa"), Guest("A"), Guest("B"), Guest("C"), Guest("D")), true));
+        // Five students and the instructor: still a class.
+        Assert.Equal(RoomState.Busy, AutoEndRule.Classify(
+            Rows(Host, CoHost("Mostafa"), Guest("A"), Guest("B"), Guest("C"), Guest("D"), Guest("E")), true));
+        // Only the instructor, muted: not "the host alone" (that is 50 s), but a small quiet room (5 min).
+        Assert.Equal(RoomState.SmallAndSilent, AutoEndRule.Classify(Rows(Host, CoHost("Mostafa")), true));
+        // And the instructor talking keeps it going, like anyone else.
+        Assert.Equal(RoomState.Busy, AutoEndRule.Classify(Rows(Host, CoHost("Mostafa", talking: true)), true));
+    }
+
+    [Fact]
+    public void AMicComingOnStartsTheFiveMinutesAgainFromTheMomentItGoesQuiet()
+    {
+        var tracker = new AutoEndTracker();
+        var three = TimeSpan.FromHours(3);
+        var t = DateTimeOffset.Now;
+
+        // Quiet for four minutes past the three hours - nearly there.
+        tracker.Observe(t, RoomState.SmallAndSilent);
+        var held = tracker.Observe(t.AddMinutes(4), RoomState.SmallAndSilent);
+        Assert.Equal(AutoEndAction.Wait, AutoEndRule.Decide(three + TimeSpan.FromMinutes(4), RoomState.SmallAndSilent, held).Action);
+
+        // Someone starts talking; a minute later they stop.
+        tracker.Observe(t.AddMinutes(4.5), RoomState.Busy);
+        held = tracker.Observe(t.AddMinutes(5.5), RoomState.SmallAndSilent);
+        Assert.Equal(TimeSpan.Zero, held);
+        Assert.Equal(AutoEndAction.Wait, AutoEndRule.Decide(three + TimeSpan.FromMinutes(5.5), RoomState.SmallAndSilent, held).Action);
+
+        // The five minutes run from the moment the last mic went off, not from before.
+        held = tracker.Observe(t.AddMinutes(10.4), RoomState.SmallAndSilent);
+        Assert.Equal(AutoEndAction.Wait, AutoEndRule.Decide(three + TimeSpan.FromMinutes(10.4), RoomState.SmallAndSilent, held).Action);
+        held = tracker.Observe(t.AddMinutes(10.5), RoomState.SmallAndSilent);
+        Assert.Equal(AutoEndAction.EndForAll, AutoEndRule.Decide(three + TimeSpan.FromMinutes(10.5), RoomState.SmallAndSilent, held).Action);
+    }
+
 }

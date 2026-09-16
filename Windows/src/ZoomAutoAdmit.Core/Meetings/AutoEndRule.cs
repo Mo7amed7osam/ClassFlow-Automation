@@ -43,9 +43,13 @@ public sealed record AutoEndDecision(AutoEndAction Action, string Reason);
 
 /// <summary>
 /// When a class may be ended for everyone (the user's rule): from three hours after the class's time,
-/// if nobody but the host is left, or if fewer than five people have been there for five minutes
-/// with every mic off. Never while anyone is talking, and never on a read that could not see the
-/// whole list.
+/// if nobody but the host is left, or if fewer than five students have been there for five minutes
+/// with every mic off - the instructor being there, muted, does not make it a class.
+///
+/// Never while anyone is talking: a mic that comes on puts the room back to busy, so the five
+/// minutes start again from the moment the last one goes quiet. Never on a read that could not see
+/// the whole list, and never while breakout rooms are open (people may be inside them - the bridge
+/// checks that before it ends anything).
 /// </summary>
 public static class AutoEndRule
 {
@@ -64,9 +68,13 @@ public static class AutoEndRule
             if (r.Audio == ParticipantAudio.Unmuted) return RoomState.Busy;
             if (r.Audio == ParticipantAudio.Unknown && !r.IsMe) return RoomState.Busy;
         }
+        // "Fewer than five" is five of the people the class is for: the host's own row and the
+        // instructor's (the co-host) are not students, so a co-host sitting there muted with three
+        // students is still a room of three (the user's rule).
         int others = rows.Count(r => !r.IsMe);
+        int students = rows.Count(r => !r.IsMe && !r.IsCoHost);
         if (others == 0) return RoomState.HostAlone;
-        return others < SmallRoomBelow ? RoomState.SmallAndSilent : RoomState.Busy;
+        return students < SmallRoomBelow ? RoomState.SmallAndSilent : RoomState.Busy;
     }
 
     public static AutoEndDecision Decide(TimeSpan sinceClassStart, RoomState state, TimeSpan heldFor)
