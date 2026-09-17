@@ -30,8 +30,11 @@ public sealed class AiMatchingService : IAiMatchingService
     private static readonly HttpClient Client = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(45) };
     private readonly HttpClient _client;
     private readonly IAliasMemory _aliases;
-    public AiMatchingService(HttpClient? client = null, IAliasMemory? aliases = null)
-    { _client = client ?? Client; _aliases = aliases ?? new JsonAliasMemory(); }
+    private readonly IAiDecisionMemory? _decisions;
+    /// <summary>Where AI answers are remembered by default (tests replace it, so they never touch this PC's file).</summary>
+    public static Func<IAiDecisionMemory?> DefaultDecisions { get; set; } = () => new JsonAiDecisionMemory();
+    public AiMatchingService(HttpClient? client = null, IAliasMemory? aliases = null, IAiDecisionMemory? decisions = null)
+    { _client = client ?? Client; _aliases = aliases ?? new JsonAliasMemory(); _decisions = decisions ?? DefaultDecisions(); }
 
     public async Task TestAsync(AiConnectionSettings settings, CancellationToken token)
     {
@@ -45,7 +48,7 @@ public sealed class AiMatchingService : IAiMatchingService
     {
         var errors = new HashSet<string>();
         var matcher = new ReportingMatcher(CreateMatcher(settings), errors, settings.Provider);
-        var result = await new AttendanceMatchingEngine(_aliases, matcher, log: ConsoleLogger.Info).MatchAsync(group, names, token);
+        var result = await new AttendanceMatchingEngine(_aliases, matcher, log: ConsoleLogger.Info, decisions: _decisions).MatchAsync(group, names, token);
         return result with { Diagnostics = result.Diagnostics.Concat(errors).ToArray() };
     }
 

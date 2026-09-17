@@ -22,6 +22,23 @@ public sealed class AliasMemoryTests : IDisposable
     }
 
     [Fact]
+    public async Task AnAiAnswerIsNeverPaidForTwiceEvenANo()
+    {
+        var decisions = Path.Combine(_directory, "ai-decisions.json");
+        // The AI says "not this student": no alias is saved for a no, so before it was asked every run.
+        var ai = new MatchingTests.Ai((s, _) => new(false, 10, s.StudentId, "Different people", false));
+        for (int run = 0; run < 3; run++)
+            await new AttendanceMatchingEngine(new MatchingTests.Memory(), ai, decisions: new JsonAiDecisionMemory(decisions))
+                .MatchAsync(MatchingTests.Group(MatchingTests.Student()), ["Mo7ab Mohamed"]);
+        Assert.Equal(1, ai.Calls);
+
+        // A corrected roster name is a new question.
+        await new AttendanceMatchingEngine(new MatchingTests.Memory(), ai, decisions: new JsonAiDecisionMemory(decisions))
+            .MatchAsync(MatchingTests.Group(MatchingTests.Student() with { FullName = "Mohab Osama Sayed Ali" }), ["Mo7ab Mohamed"]);
+        Assert.Equal(2, ai.Calls);
+    }
+
+    [Fact]
     public async Task ConflictingAliasRejectedWithoutOverwritingAndOtherGroupsAreIndependent()
     {
         await Memory.SaveAsync(Alias());

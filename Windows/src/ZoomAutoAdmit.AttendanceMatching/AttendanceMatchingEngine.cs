@@ -9,11 +9,14 @@ public sealed class AttendanceMatchingEngine
     private readonly IAiNameMatcher? _ai;
     private readonly MatchingOptions _options;
     private readonly Action<string> _log;
+    /// <summary>Every AI answer given before: the same comparison is never sent again.</summary>
+    private readonly IAiDecisionMemory? _decisions;
     private sealed record Candidate(GroupStudent Student, int Confidence, MatchSource Source, string Reason);
 
     public AttendanceMatchingEngine(IAliasMemory memory, IAiNameMatcher? ai = null,
-        MatchingOptions? options = null, Action<string>? log = null)
+        MatchingOptions? options = null, Action<string>? log = null, IAiDecisionMemory? decisions = null)
     {
+        _decisions = decisions;
         _memory = memory ?? throw new ArgumentNullException(nameof(memory));
         _ai = ai;
         _options = options ?? new();
@@ -43,7 +46,7 @@ public sealed class AttendanceMatchingEngine
             memoryAvailable = false;
             Diagnostic("Alias memory unavailable; not overwritten", ex);
         }
-        int calls = 0;
+        int calls = 0, remembered = 0;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var observed in observations)
         {
@@ -75,7 +78,10 @@ public sealed class AttendanceMatchingEngine
                 Queue(observed, _ai == null ? "AI is not configured; manual review required." : "Roster is empty.", possible);
                 continue;
             }
-            if (possible.Length > _options.MaximumAiCandidates || possible.Length > _options.MaximumAiCalls - calls)
+            // Comparisons answered before cost nothing; only the rest count against the budget.
+            int toAsk = possible.Count(c => _decisions == null ||
+                !_decisions.TryGet(roster.GroupId, c.Student.StudentId, c.Student.FullName, observed, out _));
+            if (possible.Length > _options.MaximumAiCandidates || toAsk > _options.MaximumAiCalls - calls)
             {
                 Queue(observed, "AI candidate/request budget reached; candidates were not silently truncated.", possible);
                 continue;
@@ -85,6 +91,13 @@ public sealed class AttendanceMatchingEngine
             foreach (var candidate in possible)
             {
                 token.ThrowIfCancellationRequested();
+                if (_decisions != null &&
+                    _decisions.TryGet(roster.GroupId, candidate.Student.StudentId, candidate.Student.FullName, observed, out var known))
+                {
+                    answers.Add((candidate, known));
+                    remembered++;
+                    continue;
+                }
                 calls++;
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
                 timeout.CancelAfter(_options.AiTimeout);
@@ -93,6 +106,7 @@ public sealed class AttendanceMatchingEngine
                     var answer = await _ai.MatchAsync(candidate.Student, observed, timeout.Token).WaitAsync(timeout.Token);
                     OpenAiNameMatcher.ValidateResult(answer, candidate.Student.StudentId);
                     answers.Add((candidate, answer));
+                    _decisions?.Save(roster.GroupId, candidate.Student.StudentId, candidate.Student.FullName, observed, answer);
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
                 catch (Exception ex) { failed = true; Diagnostic("AI comparison unavailable or invalid", ex); }
@@ -132,7 +146,8 @@ public sealed class AttendanceMatchingEngine
                 }));
             }
         }
-        Log($"Matching completed; Present: {results.Values.Count(r => r.Status == AttendanceMatchStatus.Present)}; Review: {review.Count}");
+        Log($"Matching completed; Present: {results.Values.Count(r => r.Status == AttendanceMatchStatus.Present)}; Review: {review.Count}" +
+            (_ai != null ? $"; AI requests: {calls} (answered from memory: {remembered})" : ""));
         return new(roster.GroupId, students.Select(s => results[s.StudentId]).ToArray(), review.AsReadOnly(), diagnostics.AsReadOnly());
 
         void Confirm(Candidate candidate, string observed)
