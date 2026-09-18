@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows.Input;
 using ZoomAutoAdmit.Core.Formatting;
@@ -347,12 +347,11 @@ public sealed class LmsSessionsViewModel : ObservableObject
                         : new StepState("run", "Run", running || finished ? "lms" : upcoming ? "future" : "none", running || finished ? "On the LMS" : upcoming ? "At start" : "Not run"),
                     State("attendance", "Attendance", LmsFollowUpStep.TakeAttendance, lms?.Session.AttendanceTaken == true, classStart + LmsFollowUpQueue.TakeAttendanceAfter > now),
                     State("correct", "Late joiners", LmsFollowUpStep.CorrectAttendance, false, classStart + LmsFollowUpQueue.CorrectAttendanceAfter > now),
-                    ReportStep(),
                     State("complete", "Complete", LmsFollowUpStep.CompleteSession, finished, classStart + LmsFollowUpQueue.CorrectAttendanceAfter > now),
                 };
-                // The second half of the late-joiner correction, from Zoom's own report: it looks
-                // different while Zoom has not published the report yet, and like every other step
-                // once it has gone up.
+                // The second half of the late-joiner correction, from Zoom's own report (shown after
+                // "Ended", where it belongs): it looks different while Zoom has not published the
+                // report yet, and like every other step once it has gone up.
                 StepState ReportStep()
                 {
                     var step = State("report", "Zoom report", LmsFollowUpStep.ZoomReportAttendance, false, classStart + LmsFollowUpQueue.CorrectAttendanceAfter > now);
@@ -371,6 +370,8 @@ public sealed class LmsSessionsViewModel : ObservableObject
                     { How: ClassEndedHow.ByHand } e => new StepState("ended", "Ended", "due", "Yours to end", e.Message),
                     _ => new StepState("ended", "Ended", past ? "none" : "future", past ? "Still open" : "After class"),
                 });
+                // Zoom's report exists only once the meeting has ended, so its step comes after "Ended".
+                steps.Add(ReportStep());
                 // The record link, in two steps: the Zoom recording soon after class, then the Drive
                 // copy that replaces it. A link the app wrote counts even when the last LMS read was a
                 // quick list read, which does not look at links.
