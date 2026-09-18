@@ -107,8 +107,12 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
         {
             if (candidates.Count == 0)
                 throw new InvalidOperationException("Attendance Desktop: no Zoom process is running.");
-            if (_processId is { } known && candidates.FirstOrDefault(c => c.ProcessId == known) is { } cached)
-                return cached;
+            // Whoever owns the participants or meeting window now, before anything remembered: Zoom
+            // hands a meeting to another of its processes as it goes, and the one remembered from
+            // the start of the class stays alive as the launcher. Bound to it, the list was still
+            // found (the window is found by its class) but the wheel that walks it is posted to
+            // "the window of this process under the list" - none - so only the six rows on show were
+            // ever read, a whole evening long (S8, 2026-09-18: 6 of 19 in 238 reads).
             foreach (var handle in new[] { ZoomWindowManager.FindParticipantsWindow(), ZoomWindowManager.FindMainZoomMeetingWindow() })
             {
                 if (handle == IntPtr.Zero) continue;
@@ -119,6 +123,8 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
                     return match;
                 }
             }
+            if (_processId is { } known && candidates.FirstOrDefault(c => c.ProcessId == known) is { } cached)
+                return cached;
             var visible = candidates.Where(c => c.Windows.Any(w => w.IsVisible)).ToArray();
             if (visible.Length == 1)
             {

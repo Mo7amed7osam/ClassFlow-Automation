@@ -202,4 +202,41 @@ public sealed class ScheduleTaskRepairTests
         Assert.True(ScheduleTaskRepair.NeedsRepair(
             Dated("x", Today.AddDays(1)), Today, string.Empty, _ => true));
     }
+
+    private const string InstalledExe = @"C:\Users\mohab\AppData\Local\Programs\Zoom Auto Admit\ZoomAutoAdmit.Inspector.exe";
+
+    [Fact]
+    public async Task ATaskThatRunsAnotherCopyOfTheAppIsRePointedAtThisOne()
+    {
+        // The build in the source folder exists and opens the class - as the app was two days ago.
+        var windows = new FakeWindows { RegisterWith = InstalledExe };
+        windows.Programs.Add(InstalledExe);
+        var meeting = Dated("CAI5_AIS4_S8 • Technical", Today.AddDays(1));
+        windows.Tasks[meeting.Id] = NewExe;
+        var repair = new ScheduleTaskRepair(
+            _ => Task.FromResult<IReadOnlyList<MeetingSchedule>>([meeting]),
+            (id, _) => Task.FromResult(windows.Tasks.TryGetValue(id, out var t) ? t : null),
+            (schedule, _) => { windows.Registered.Add(schedule.Id); windows.Tasks[schedule.Id] = InstalledExe; return Task.CompletedTask; },
+            windows.Programs.Contains,
+            ownProgram: () => InstalledExe);
+
+        var dry = await repair.RepairAsync(Today, dryRun: true);
+        Assert.Contains("another copy of the app", Assert.Single(dry.Details));
+
+        var result = await repair.RepairAsync(Today);
+
+        Assert.Equal(1, result.Repaired);
+        Assert.Equal(0, result.Failed);
+        Assert.Equal(InstalledExe, windows.Tasks[meeting.Id]);
+    }
+
+    [Fact]
+    public void TheSameProgramWrittenDifferentlyIsNotARepair()
+    {
+        var schedule = Dated("x", Today.AddDays(1));
+        Assert.False(ScheduleTaskRepair.NeedsRepair(schedule, Today, "\"" + InstalledExe.ToLowerInvariant() + "\"", _ => true, InstalledExe));
+        Assert.True(ScheduleTaskRepair.NeedsRepair(schedule, Today, NewExe, _ => true, InstalledExe));
+        // Nothing known about this copy's own program: only a missing one is a repair, as before.
+        Assert.False(ScheduleTaskRepair.NeedsRepair(schedule, Today, NewExe, _ => true, null));
+    }
 }

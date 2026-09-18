@@ -27,10 +27,23 @@ public sealed class LmsFollowUpProcessor
 
     private static string ClassKey(LmsFollowUp item) => $"{item.Group}|{item.SessionDate:yyyy-MM-dd}|{item.SessionStart:HH\\:mm}";
 
-    private string WithWarning(LmsFollowUp item, string message) =>
-        item.Step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance && _warnings.TryGetValue(ClassKey(item), out var warning)
-            ? $"{message} {warning}"
-            : message;
+    /// <summary>
+    /// What Zoom's own report said for each class, kept on the correction's outcome so the class card
+    /// shows that the report was read - "Zoom report: 26 people, ended 21:14" - not only when
+    /// somebody stayed under an hour.
+    /// </summary>
+    private readonly Dictionary<string, string> _reportNotes = new(StringComparer.OrdinalIgnoreCase);
+
+    private string WithWarning(LmsFollowUp item, string message)
+    {
+        if (item.Step is not (LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance)) return message;
+        if (item.Step == LmsFollowUpStep.CorrectAttendance && _reportNotes.TryGetValue(ClassKey(item), out var note))
+            message = $"{note} {message}";
+        return _warnings.TryGetValue(ClassKey(item), out var warning) ? $"{message} {warning}" : message;
+    }
+
+    /// <summary>How long one LMS step may run before it is counted as failed and tried again.</summary>
+    public static readonly TimeSpan StepTimeout = TimeSpan.FromMinutes(12);
 
     private async Task<IReadOnlyCollection<string>> ZoomReportNamesAsync(LmsFollowUp item, CancellationToken token)
     {
@@ -38,7 +51,9 @@ public sealed class LmsFollowUpProcessor
         try
         {
             var report = await _zoomReport(item, token);
-            if (report == null || report.People.Count == 0) return [];
+            if (report == null || report.People.Count == 0) { _reportNotes.Remove(ClassKey(item)); return []; }
+            _reportNotes[ClassKey(item)] = $"Zoom report: {report.People.Count} people" +
+                $"{(report.EndedAt is { } ended ? $", meeting ended {ended.LocalDateTime:HH:mm}" : "")}.";
             // A meeting in Zoom's usage report has ended: the class card's "Ended" step says so, even
             // when nothing on this PC saw it close (closed from a phone, or the app was not running).
             new ZoomAutoAdmit.Core.Meetings.ClassEndings().Record(new ZoomAutoAdmit.Core.Meetings.ClassEnding
@@ -63,8 +78,31 @@ public sealed class LmsFollowUpProcessor
         }
         catch (Exception ex)
         {
+            _reportNotes[ClassKey(item)] = $"Zoom report not read ({ex.Message}); the snapshots were used alone.";
             ConsoleLogger.Warn($"[LMS] {item.Describe}: Zoom's participants report could not be read ({ex.Message}); the snapshots are used alone.");
             return [];
+        }
+    }
+
+    /// <summary>
+    /// One step, given <see cref="StepTimeout"/>: a browser that never answers must not hold every
+    /// later step of every class behind it. Past the time it is a failure like any other, and tried again.
+    /// </summary>
+    private async Task<(bool IsSuccess, string Message)> RunStepAsync(LmsFollowUp item, bool dryRun, CancellationToken token)
+    {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(token);
+        limit.CancelAfter(StepTimeout);
+        try
+        {
+            IReadOnlyCollection<string> present = item.Step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance
+                ? await _presentNames(item, limit.Token)
+                : [];
+            var outcome = await _runAction(item, present, dryRun, limit.Token);
+            return (outcome.IsSuccess, WithWarning(item, outcome.Message));
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            return (false, $"{item.Describe}: took longer than {StepTimeout.TotalMinutes:0} minutes and was stopped; it will be tried again.");
         }
     }
 
@@ -226,21 +264,14 @@ public sealed class LmsFollowUpProcessor
                     }
                     try
                     {
-                        IReadOnlyCollection<string> present;
-                        try
-                        {
-                            present = item.Step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance
-                                ? await _presentNames(item, token)
-                                : [];
-                        }
+                        (bool IsSuccess, string Message) outcome;
+                        try { outcome = await RunStepAsync(item, dryRun, token); }
                         catch (MeetingNotInReportException ex)
                         {
                             if (!dryRun) await _queue.PostponeAsync(item, (now ?? DateTimeOffset.Now) + LiveWait, ex.Message, token);
                             chainBlocked = true;
                             continue;
                         }
-                        var outcome = await _runAction(item, present, dryRun, token);
-                        outcome = (outcome.IsSuccess, WithWarning(item, outcome.Message));
                         messages.Add(outcome.Message);
                         // Kept for the Sessions page: what each step did, or why it has not yet.
                         if (!dryRun) await _queue.RecordAsync(item, outcome.IsSuccess, outcome.Message, token);
@@ -290,14 +321,7 @@ public sealed class LmsFollowUpProcessor
         try
         {
             (bool IsSuccess, string Message) outcome;
-            try
-            {
-                IReadOnlyCollection<string> present = step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance
-                    ? await _presentNames(item, token)
-                    : [];
-                outcome = await _runAction(item, present, false, token);
-                outcome = (outcome.IsSuccess, WithWarning(item, outcome.Message));
-            }
+            try { outcome = await RunStepAsync(item, false, token); }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { outcome = (false, $"{item.Describe}: {ex.Message}"); }
             var owed = (await _queue.ReadAsync(token)).FirstOrDefault(existing => existing.Id == item.Id);

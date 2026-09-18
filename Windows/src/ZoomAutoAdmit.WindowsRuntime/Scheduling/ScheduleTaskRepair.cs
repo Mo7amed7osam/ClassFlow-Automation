@@ -26,16 +26,20 @@ public sealed class ScheduleTaskRepair(
     Func<Guid, CancellationToken, Task<string?>> readTaskTarget,
     Func<MeetingSchedule, CancellationToken, Task> register,
     Func<string, bool>? programExists = null,
-    Func<Guid, CancellationToken, Task<DateTime?>>? readTaskLaunch = null)
+    Func<Guid, CancellationToken, Task<DateTime?>>? readTaskLaunch = null,
+    Func<string?>? ownProgram = null)
 {
     private readonly Func<string, bool> _exists = programExists ?? File.Exists;
+    /// <summary>The program this copy of the app registers its tasks with, when it knows it.</summary>
+    private readonly Func<string?> _ownProgram = ownProgram ?? (() => null);
 
     /// <summary>The app's real scheduler and store, for the app and the terminal.</summary>
     public static ScheduleTaskRepair For(WindowsMeetingScheduleStore store, WindowsTaskSchedulerService scheduler) =>
         new((token) => store.ListAsync(token),
             (id, token) => scheduler.ReadTaskTargetAsync(id, token),
             (schedule, token) => scheduler.RegisterTaskAsync(schedule, token),
-            readTaskLaunch: (id, token) => scheduler.ReadTaskLaunchAsync(id, token));
+            readTaskLaunch: (id, token) => scheduler.ReadTaskLaunchAsync(id, token),
+            ownProgram: scheduler.ResolveInspectorExecutablePath);
 
     /// <summary>
     /// Whether a schedule's task has to be registered again. Disabled schedules and dated ones
@@ -43,12 +47,27 @@ public sealed class ScheduleTaskRepair(
     /// bring back something that was meant to be finished.
     /// </summary>
     /// <param name="currentTarget">What the task runs now; null when there is no task at all.</param>
-    public static bool NeedsRepair(MeetingSchedule schedule, DateOnly today, string? currentTarget, Func<string, bool> exists)
+    /// <param name="ownProgram">
+    /// The program this copy of the app would register. A task that runs another copy - a build
+    /// left in a source folder from before the app was installed, say - is re-pointed too: it
+    /// exists, and it opens the class, but with the app as it was when that copy was built. The
+    /// evening of 2026-09-18 ran a class on a build two days old that way, with the fixes of those
+    /// two days missing from it.
+    /// </param>
+    public static bool NeedsRepair(MeetingSchedule schedule, DateOnly today, string? currentTarget, Func<string, bool> exists,
+        string? ownProgram = null)
     {
         if (!schedule.Enabled) return false;
         if (schedule.OccurrenceDate is { } day && day < today) return false;
         if (string.IsNullOrWhiteSpace(currentTarget)) return true;
-        return !exists(currentTarget);
+        if (!exists(currentTarget)) return true;
+        return !string.IsNullOrWhiteSpace(ownProgram) && exists(ownProgram) && !SamePath(currentTarget, ownProgram);
+    }
+
+    private static bool SamePath(string a, string b)
+    {
+        try { return string.Equals(Path.GetFullPath(a.Trim().Trim('"')), Path.GetFullPath(b.Trim().Trim('"')), StringComparison.OrdinalIgnoreCase); }
+        catch { return string.Equals(a, b, StringComparison.OrdinalIgnoreCase); }
     }
 
     /// <param name="dryRun">Report what would be re-registered without registering anything.</param>
@@ -69,14 +88,16 @@ public sealed class ScheduleTaskRepair(
             string? target = await readTaskTarget(schedule.Id, cancellationToken);
             DateTime? currentLaunch = readTaskLaunch == null ? null : await readTaskLaunch(schedule.Id, cancellationToken);
             bool wrongTime = currentLaunch.HasValue && HasWrongLaunch(schedule, currentLaunch.Value);
-            if (!NeedsRepair(schedule, today, target, _exists) && !wrongTime) continue;
+            string? own = _ownProgram();
+            if (!NeedsRepair(schedule, today, target, _exists, own) && !wrongTime) continue;
 
             string when = schedule.OccurrenceDate is { } date
                 ? $"{date:yyyy-MM-dd} {schedule.Time:HH\\:mm}"
                 : $"{schedule.Days} {schedule.Time:HH\\:mm}";
             string was = wrongTime
                 ? $"at {currentLaunch:yyyy-MM-dd HH:mm} instead of 15 minutes before the scheduled time"
-                : string.IsNullOrWhiteSpace(target) ? "no task" : target;
+                : string.IsNullOrWhiteSpace(target) ? "no task"
+                : _exists(target) ? $"another copy of the app ({target})" : target;
             if (dryRun)
             {
                 repaired++;
@@ -91,7 +112,7 @@ public sealed class ScheduleTaskRepair(
                 string? after = await readTaskTarget(schedule.Id, cancellationToken);
                 DateTime? afterLaunch = readTaskLaunch == null ? null : await readTaskLaunch(schedule.Id, cancellationToken);
                 bool stillWrongTime = afterLaunch.HasValue && HasWrongLaunch(schedule, afterLaunch.Value);
-                if (NeedsRepair(schedule, today, after, _exists) || stillWrongTime)
+                if (NeedsRepair(schedule, today, after, _exists, own) || stillWrongTime)
                 {
                     failed++;
                     details.Add($"still broken after re-registering '{schedule.Name}' ({when}) - it runs {after ?? "no task"}");
