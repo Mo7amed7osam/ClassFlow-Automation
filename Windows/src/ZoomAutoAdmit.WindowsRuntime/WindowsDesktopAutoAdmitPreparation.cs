@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.UIA3;
@@ -42,8 +43,10 @@ public sealed class WindowsDesktopAutoAdmitPreparation : IWindowsDesktopAutoAdmi
     private static readonly TimeSpan MeetingWindowPoll = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan PanelRetryDelay = TimeSpan.FromSeconds(1);
     private const int PanelAttempts = 5;
-    private const int MediaAttempts = 8;
-    private static readonly TimeSpan MediaRetryDelay = TimeSpan.FromSeconds(1);
+    // Zoom draws its toolbar late, and a class that joined unmuted stayed unmuted after 8 seconds of
+    // trying (S7, 2026-09-18): it is now watched for two minutes, and stops the moment both are off.
+    private const int MediaAttempts = 60;
+    private static readonly TimeSpan MediaRetryDelay = TimeSpan.FromSeconds(2);
 
     public Task PrepareAsync(CancellationToken cancellationToken) => Task.Run(() =>
     {
@@ -105,9 +108,9 @@ public sealed class WindowsDesktopAutoAdmitPreparation : IWindowsDesktopAutoAdmi
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!microphoneOff)
-                microphoneOff = TurnControlOff("Mute", "Unmute", "microphone", cancellationToken);
+                microphoneOff = TurnControlOff(MuteButton, UnmuteButton, "microphone", cancellationToken);
             if (!cameraOff)
-                cameraOff = TurnControlOff("Stop Video", "Start Video", "camera", cancellationToken);
+                cameraOff = TurnControlOff(StopVideoButton, StartVideoButton, "camera", cancellationToken);
             if (microphoneOff && cameraOff) break;
             if (cancellationToken.WaitHandle.WaitOne(MediaRetryDelay)) break;
         }
@@ -122,9 +125,23 @@ public sealed class WindowsDesktopAutoAdmitPreparation : IWindowsDesktopAutoAdmi
     /// True once the control is off: either Zoom already shows the "turn it on" button, or this
     /// call pressed the "turn it off" one.
     /// </summary>
+    // Zoom words the host's own toolbar buttons differently between versions: "Mute", "Mute my
+    // microphone (Alt+A)", "Unmute my audio (Alt+A). Or you can simply press and hold the Space
+    // bar…", "Start my video, Alt+V". Matching the exact word left the host unmuted in a real class
+    // (S7, 2026-09-18). The participants list has buttons of its own with the very same short names
+    // - "Mute", "Unmute", "Start video" belong to a STUDENT's row, and "Mute all" to the panel - so
+    // a name that says whose control it is ("my audio", "Alt+A") is taken first, and a bare name is
+    // only believed when it is not inside the participants list.
+    public static readonly Regex MuteButton = new(@"^mute(\s+(my\s+)?(audio|microphone|mic))?\b(?!\s*all)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    public static readonly Regex UnmuteButton = new(@"^unmute\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    public static readonly Regex StopVideoButton = new(@"^stop(\s+my)?\s+video\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    public static readonly Regex StartVideoButton = new(@"^start(\s+my)?\s+video\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    /// <summary>A name that says the control is the host's own, whoever else is in the list.</summary>
+    public static readonly Regex MyOwnControl = new(@"\bmy\s+(audio|microphone|mic|video)\b|\balt\+[av]\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private static bool TurnControlOff(
-        string turnOffName,
-        string alreadyOffName,
+        Regex turnOffName,
+        Regex alreadyOffName,
         string label,
         CancellationToken cancellationToken)
     {
@@ -141,14 +158,18 @@ public sealed class WindowsDesktopAutoAdmitPreparation : IWindowsDesktopAutoAdmi
                 var root = automation.FromHandle(meeting);
                 if (root == null) return;
 
-                var buttons = root.FindAllDescendants(cf => cf.ByControlType(ControlType.Button));
-                if (buttons.Any(button => HasName(button, alreadyOffName)))
+                // The host's own controls: never a button inside the participants list, which is a
+                // student's row.
+                var buttons = root.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                    .Where(button => !InParticipantsList(button))
+                    .ToArray();
+                if (Pick(buttons, alreadyOffName) != null)
                 {
                     isOff = true;   // Zoom offers to turn it on, so it is already off.
                     return;
                 }
 
-                var turnOff = buttons.FirstOrDefault(button => HasName(button, turnOffName));
+                var turnOff = Pick(buttons, turnOffName);
                 if (turnOff?.Patterns.Invoke.IsSupported != true) return;
                 turnOff.Patterns.Invoke.Pattern.Invoke();
                 isOff = true;
@@ -163,9 +184,39 @@ public sealed class WindowsDesktopAutoAdmitPreparation : IWindowsDesktopAutoAdmi
         return isOff;
     }
 
-    private static bool HasName(AutomationElement element, string name)
+    /// <summary>The host's own button: one that names itself as theirs first, else a plain one.</summary>
+    private static AutomationElement? Pick(IEnumerable<AutomationElement> buttons, Regex name)
     {
-        try { return (element.Name ?? string.Empty).Trim().Equals(name, StringComparison.OrdinalIgnoreCase); }
+        var matching = buttons.Where(button => HasName(button, name)).ToArray();
+        return matching.FirstOrDefault(button => MyOwnControl.IsMatch(SafeName(button))) ?? matching.FirstOrDefault();
+    }
+
+    /// <summary>A button belonging to a row of the participants list rather than to the toolbar.</summary>
+    private static bool InParticipantsList(AutomationElement element)
+    {
+        try
+        {
+            var walker = element.Automation.TreeWalkerFactory.GetControlViewWalker();
+            for (var parent = walker.GetParent(element); parent != null; parent = walker.GetParent(parent))
+            {
+                var type = parent.Properties.ControlType.ValueOrDefault;
+                if (type == ControlType.List || type == ControlType.ListItem) return true;
+                if (type == ControlType.Window) return false;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private static string SafeName(AutomationElement element)
+    {
+        try { return (element.Name ?? string.Empty).Trim(); }
+        catch { return string.Empty; }
+    }
+
+    private static bool HasName(AutomationElement element, Regex name)
+    {
+        try { return name.IsMatch(SafeName(element)); }
         catch { return false; }
     }
 
