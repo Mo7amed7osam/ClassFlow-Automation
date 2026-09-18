@@ -32,7 +32,9 @@ public sealed class AppAttendanceMatcher(
     private readonly IAiCredentialStore _key = key ?? new AiCredentialStore();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, int> _slotsDone = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _rosterAsked = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> _rosterAsked = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>A roster the LMS would not give is asked for again, not once and never more.</summary>
+    public static readonly TimeSpan RosterRetryAfter = TimeSpan.FromMinutes(10);
 
     /// <summary>Reads a group's students from the LMS; the app replaces it in tests so nothing goes out.</summary>
     public Func<string, CancellationToken, Task<bool>> ImportRoster { get; init; } =
@@ -41,11 +43,12 @@ public sealed class AppAttendanceMatcher(
     /// <summary>The group's roster, brought from the LMS once per app run when this PC has none.</summary>
     private async Task<RosterGroup?> BringRosterAsync(string group, CancellationToken token)
     {
-        if (!_rosterAsked.Add(group))
+        if (_rosterAsked.TryGetValue(group, out var asked) && DateTime.Now - asked < RosterRetryAfter)
         {
             ConsoleLogger.Warn($"[ATTENDANCE] {group}: no roster to match against (Groups & Students).");
             return null;
         }
+        _rosterAsked[group] = DateTime.Now;
         ConsoleLogger.Info($"[ATTENDANCE] {group}: no roster on this PC; reading its students from the LMS.");
         bool ok;
         try { ok = await ImportRoster(group, token); }

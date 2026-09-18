@@ -89,8 +89,8 @@ public sealed class LmsFollowUpQueueTests : IDisposable
         var upload = (await Queue.DueAsync(At(19, 45)))[0];
 
         await Queue.RetryAsync(upload, "the dashboard did not answer", At(19, 45));
-        Assert.Empty(await Queue.DueAsync(At(19, 50)));                 // waiting out its retry
-        var back = Assert.Single(await Queue.DueAsync(At(20, 5)));
+        Assert.Empty(await Queue.DueAsync(At(19, 46)));                 // waiting out its retry
+        var back = Assert.Single(await Queue.DueAsync(At(19, 48)));
         Assert.Equal(1, back.Attempts);
         Assert.Equal("the dashboard did not answer", back.LastError);
 
@@ -99,22 +99,35 @@ public sealed class LmsFollowUpQueueTests : IDisposable
     }
 
     [Fact]
-    public async Task WorkThatKeepsFailingStopsBeingTriedButIsNotThrownAway()
+    public async Task WorkThatKeepsFailingIsTriedAgainAndAgainUntilItWorks()
     {
         await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start);
         var upload = (await Queue.DueAsync(At(19, 45)))[0];
         var now = At(19, 45);
-        for (int attempt = 0; attempt < LmsFollowUpQueue.MaximumAttempts; attempt++)
+        for (int attempt = 0; attempt < 20; attempt++)
         {
-            await Queue.RetryAsync(upload, "still failing", now);
-            now = now.AddMinutes(20);
+            var again = Assert.Single(await Queue.DueAsync(now), item => item.Step == LmsFollowUpStep.TakeAttendance);
+            Assert.Equal(attempt, again.Attempts);
+            await Queue.RetryAsync(again, "still failing", now);
+            now += LmsFollowUpQueue.LongestRetryAfter;
         }
 
-        Assert.DoesNotContain(await Queue.DueAsync(now), item => item.Step == LmsFollowUpStep.TakeAttendance);
-        // Still on the list, with its reason, so a class that never got its attendance is visible.
         var kept = (await Queue.ReadAsync()).Single(item => item.Step == LmsFollowUpStep.TakeAttendance);
-        Assert.Equal(LmsFollowUpQueue.MaximumAttempts, kept.Attempts);
+        Assert.Equal(20, kept.Attempts);
         Assert.Equal("still failing", kept.LastError);
+        Assert.NotEmpty(await Queue.DueAsync(now));
+    }
+
+    [Theory]
+    [InlineData(0, 2)]
+    [InlineData(1, 4)]
+    [InlineData(2, 8)]
+    [InlineData(3, 16)]
+    [InlineData(4, 30)]
+    [InlineData(40, 30)]
+    public void EachFailureWaitsALittleLongerUpToHalfAnHour(int attempts, int minutes)
+    {
+        Assert.Equal(TimeSpan.FromMinutes(minutes), LmsFollowUpQueue.RetryAfter(attempts));
     }
 
     [Fact]

@@ -60,11 +60,19 @@ public sealed class LmsFollowUpQueue
     public static readonly TimeSpan CorrectAttendanceAfter = TimeSpan.FromHours(3);
 
     /// <summary>
-    /// A step that keeps failing is retried a while and then left alone. Giving up quietly forever
-    /// is worse than stopping, so the entry stays with its reason on it rather than disappearing.
+    /// A step that fails is tried again until it works: soon after the first failure, then further
+    /// apart so a site that is down is not hammered, and never more than half an hour apart. Nothing
+    /// is ever left half done because a few tries went wrong; only <see cref="TooOld"/> stops it.
     /// </summary>
-    public static readonly TimeSpan RetryAfter = TimeSpan.FromMinutes(15);
-    public const int MaximumAttempts = 8;
+    public static readonly TimeSpan FirstRetryAfter = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan LongestRetryAfter = TimeSpan.FromMinutes(30);
+
+    /// <summary>2, 4, 8, 16, then every half hour.</summary>
+    public static TimeSpan RetryAfter(int attempts)
+    {
+        double minutes = FirstRetryAfter.TotalMinutes * Math.Pow(2, Math.Clamp(attempts, 0, 10));
+        return TimeSpan.FromMinutes(Math.Min(minutes, LongestRetryAfter.TotalMinutes));
+    }
 
     /// <summary>
     /// Work older than this is not worth doing. A class from last week whose attendance was never
@@ -170,7 +178,6 @@ public sealed class LmsFollowUpQueue
         var all = await ReadAsync(cancellationToken);
         return [.. all
             .Where(item => item.DueAt <= now)
-            .Where(item => item.Attempts < MaximumAttempts)
             .Where(item => now - item.DueAt <= TooOld)
             .OrderBy(item => item.DueAt)];
     }
@@ -215,8 +222,8 @@ public sealed class LmsFollowUpQueue
         }, cancellationToken);
 
     /// <summary>
-    /// Not done: it is due again shortly, with the reason on it. After enough attempts it stops
-    /// being retried but stays in the file, so a class that never got its attendance is visible.
+    /// Not done: it is due again shortly, with the reason on it, and goes on being tried until it
+    /// works. Each failure waits a little longer than the last, up to half an hour.
     /// </summary>
     public Task<IReadOnlyList<LmsFollowUp>> RetryAsync(
         LmsFollowUp item, string reason, DateTimeOffset now, CancellationToken cancellationToken = default) =>
@@ -228,7 +235,7 @@ public sealed class LmsFollowUpQueue
             {
                 Attempts = items[index].Attempts + 1,
                 LastError = reason,
-                DueAt = now + RetryAfter,
+                DueAt = now + RetryAfter(items[index].Attempts),
             };
             return items;
         }, cancellationToken);
