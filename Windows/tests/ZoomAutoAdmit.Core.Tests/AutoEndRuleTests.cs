@@ -104,4 +104,61 @@ public sealed class AutoEndRuleTests
         Assert.Equal(AutoEndAction.EndForAll, AutoEndRule.Decide(three + TimeSpan.FromMinutes(10.5), RoomState.SmallAndSilent, held).Action);
     }
 
+    // --------------------------------------------------------------- the instructor leaving
+
+    private static readonly TimeSpan ThreeHours = TimeSpan.FromHours(3);
+    private static AutoEndDecision CoHostLeft(double goneMinutes, int withCoHost, int now, double? emptyMinutes = null) =>
+        CoHostAbsenceRule.Decide(ThreeHours + TimeSpan.FromMinutes(Math.Max(goneMinutes, emptyMinutes ?? 0)), sawCoHost: true,
+            TimeSpan.FromMinutes(goneMinutes), anyoneTalking: false, readComplete: true,
+            withCoHost, now, emptyMinutes is { } m ? TimeSpan.FromMinutes(m) : null);
+
+    [Fact]
+    public void TheClassLeavingWithTheInstructorEndsItFiveMinutesLater()
+    {
+        Assert.Equal(AutoEndAction.Wait, CoHostLeft(4.9, withCoHost: 22, now: 4).Action);
+        Assert.Equal(AutoEndAction.EndForAll, CoHostLeft(5, withCoHost: 22, now: 4).Action);
+    }
+
+    [Fact]
+    public void AClassStillFullWithoutTheInstructorIsLeftAlone()
+    {
+        // The instructor's connection dropped: everybody else is still sitting there.
+        var decision = CoHostLeft(20, withCoHost: 22, now: 21);
+        Assert.Equal(AutoEndAction.Wait, decision.Action);
+        Assert.Contains("connection may have dropped", decision.Reason);
+    }
+
+    [Theory]
+    [InlineData(22, 11, true)]        // half of them left
+    [InlineData(22, 12, false)]
+    [InlineData(4, 1, true)]
+    [InlineData(0, 0, false)]         // nothing was ever seen with the co-host
+    public void MostOfTheClassLeaving(int withCoHost, int now, bool most)
+    {
+        Assert.Equal(most, CoHostAbsenceRule.MostLeft(withCoHost, now));
+    }
+
+    [Fact]
+    public void TheFiveMinutesRunFromTheRoomEmptyingEvenIfAHalfReadListSeemsToShowTheCoHostAgain()
+    {
+        // The room has been this empty for five minutes; the co-host was "seen" one minute ago by a
+        // list that could not be read properly.
+        Assert.Equal(AutoEndAction.EndForAll, CoHostLeft(1, withCoHost: 20, now: 3, emptyMinutes: 5).Action);
+    }
+
+    [Fact]
+    public void NothingEndsWhileSomebodyIsTalkingOrTheListIsHalfRead()
+    {
+        Assert.Equal(AutoEndAction.Wait, CoHostAbsenceRule.Decide(ThreeHours + TimeSpan.FromMinutes(9), true,
+            TimeSpan.FromMinutes(9), anyoneTalking: true, readComplete: true, 20, 2, TimeSpan.FromMinutes(9)).Action);
+        Assert.Equal(AutoEndAction.Wait, CoHostAbsenceRule.Decide(ThreeHours + TimeSpan.FromMinutes(9), true,
+            TimeSpan.FromMinutes(9), anyoneTalking: false, readComplete: false, 20, 2, TimeSpan.FromMinutes(9)).Action);
+    }
+
+    [Fact]
+    public void NothingEndsBeforeTheThreeHours()
+    {
+        Assert.Equal(AutoEndAction.Wait, CoHostAbsenceRule.Decide(TimeSpan.FromHours(2.9), true,
+            TimeSpan.FromMinutes(30), anyoneTalking: false, readComplete: true, 20, 1, TimeSpan.FromMinutes(30)).Action);
+    }
 }

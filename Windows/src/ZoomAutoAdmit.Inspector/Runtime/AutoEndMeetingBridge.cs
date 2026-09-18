@@ -145,6 +145,10 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
             bool sawCoHost = false;
             DateTimeOffset? coHostLastSeen = null;
             string? lastLogged = null;
+            // How full the class was while the instructor was still in it, and since when it has been
+            // this empty: the class walking out with them is what says the lesson is over.
+            int peopleWithCoHost = 0;
+            DateTimeOffset? emptySince = null;
             while (!token.IsCancellationRequested)
             {
                 if (!Enabled) { await _delay(_interval, token); continue; }
@@ -157,12 +161,24 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
                 else if (!sawCoHost && AssignedCoHosts.For(session.SessionId).Count > 0 && room.Complete) { sawCoHost = true; coHostLastSeen = _now(); }
                 TimeSpan? coHostGone = sawCoHost && !coHostHere && room.Complete && coHostLastSeen is { } seen ? _now() - seen : null;
 
+                // The class as it was with the instructor in it, against the class now.
+                int people = room.Rows.Count(r => !r.IsMe && !r.IsJoining);
+                if (room.Complete && coHostHere) peopleWithCoHost = Math.Max(peopleWithCoHost, people);
+                if (room.Complete)
+                {
+                    bool empty = CoHostAbsenceRule.MostLeft(peopleWithCoHost, people);
+                    if (!empty) emptySince = null;
+                    else emptySince ??= _now();
+                }
+
                 var held = tracker.Observe(_now(), room.State);
                 var since = _now() - classStart;
                 var decision = AutoEndRule.Decide(since, web && room.State == RoomState.SmallAndSilent ? RoomState.Busy : room.State, held);
                 if (decision.Action != AutoEndAction.EndForAll)
                 {
-                    var byCoHost = CoHostAbsenceRule.Decide(since, sawCoHost, coHostGone, room.Rows.Any(r => r.Audio == ParticipantAudio.Unmuted), room.Complete);
+                    var byCoHost = CoHostAbsenceRule.Decide(since, sawCoHost, coHostGone,
+                        room.Rows.Any(r => r.Audio == ParticipantAudio.Unmuted), room.Complete,
+                        peopleWithCoHost, people, emptySince is { } emptied ? _now() - emptied : null);
                     if (byCoHost.Action == AutoEndAction.EndForAll || coHostGone != null) decision = byCoHost;
                 }
                 // Everyone may simply be inside a breakout room: the main list leaves them out, so a

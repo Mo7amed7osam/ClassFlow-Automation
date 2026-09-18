@@ -18,8 +18,14 @@ namespace ZoomAutoAdmit.UIAutomation.Meetings;
 public sealed class ZoomDesktopMeetingEnder
 {
     private const string MeetingWindowClass = "ConfMultiTabContentWndClass";
-    private static readonly Regex EndButton = new(@"^\s*end(\s+meeting)?\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex EndForAllButton = new(@"^\s*end\s+meeting\s+for\s+all\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // Zoom Workplace writes its own shortcut into the name ("End meeting, Alt+Q", "End Meeting for
+    // All"), so each control is recognised by how its name begins, never by the whole name - matching
+    // the whole name is why a real class (S7, 2026-09-18) was left open twice. "End" must not match
+    // "End breakout rooms" or anything that only mentions ending.
+    public static readonly Regex EndButton = new(@"^\s*end(\s+(the\s+)?(meeting|session|class|webinar))?\b(?!\s*(for\s+all|breakout))", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    public static readonly Regex EndForAllButton = new(@"^\s*end\s+(the\s+)?(meeting|session|class|webinar)?\s*for\s+all\b|^\s*end\s+for\s+all\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    /// <summary>Never pressed, whatever happens: leaving hands the meeting to somebody else.</summary>
+    public static readonly Regex LeaveButton = new(@"^\s*leave\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public (bool Ended, string Message) EndForAll()
     {
@@ -31,20 +37,28 @@ public sealed class ZoomDesktopMeetingEnder
             NativeMethods.GetWindowThreadProcessId(meeting, out uint pid);
             using var automation = new UIA3Automation();
 
-            var end = Buttons(automation, (int)pid).FirstOrDefault(b => EndButton.IsMatch(Name(b)) && b.Patterns.Invoke.IsSupported);
-            if (end != null) end.Patterns.Invoke.Pattern.Invoke();
-            else NativeMethods.PostMessage(meeting, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
+            var end = Choices(automation, (int)pid).FirstOrDefault(c => EndButton.IsMatch(Name(c)));
+            if (end == null || !Press(end)) NativeMethods.PostMessage(meeting, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
 
-            // The popup: "End meeting for all" / "Leave meeting" - only the first is ever pressed.
+            // The popup: "End meeting for all" / "Leave meeting" - only the first is ever pressed. It
+            // is a button in some versions and a menu item in others, so both are looked at, and it is
+            // given long enough for a window that draws slowly.
             AutomationElement? forAll = null;
-            var until = DateTime.UtcNow.AddSeconds(4);
+            var until = DateTime.UtcNow.AddSeconds(10);
             while (forAll == null && DateTime.UtcNow < until)
             {
                 Thread.Sleep(300);
-                forAll = Buttons(automation, (int)pid).FirstOrDefault(b => EndForAllButton.IsMatch(Name(b)) && b.Patterns.Invoke.IsSupported);
+                forAll = Choices(automation, (int)pid).FirstOrDefault(c => EndForAllButton.IsMatch(Name(c)));
             }
-            if (forAll == null) { outcome = (false, "\"End meeting for all\" did not appear (is this account the host?); nothing else was pressed."); return; }
-            forAll.Patterns.Invoke.Pattern.Invoke();
+            if (forAll == null)
+            {
+                // What Zoom did show, so the next version's wording can be read from the log.
+                string seen = string.Join(" | ", Choices(automation, (int)pid).Select(Name)
+                    .Where(n => n.Length is > 0 and < 60).Distinct(StringComparer.OrdinalIgnoreCase).Take(12));
+                outcome = (false, $"\"End meeting for all\" did not appear (is this account the host?); nothing else was pressed. Zoom offered: {seen}");
+                return;
+            }
+            if (!Press(forAll)) { outcome = (false, "\"End meeting for all\" could not be pressed."); return; }
 
             var gone = DateTime.UtcNow.AddSeconds(10);
             while (DateTime.UtcNow < gone)
@@ -57,7 +71,22 @@ public sealed class ZoomDesktopMeetingEnder
         return outcome;
     }
 
-    private static IEnumerable<AutomationElement> Buttons(UIA3Automation automation, int processId)
+    /// <summary>Invoke, or the older way a Zoom menu item answers to; never a press of Leave.</summary>
+    private static bool Press(AutomationElement element)
+    {
+        if (LeaveButton.IsMatch(Name(element))) return false;
+        try
+        {
+            if (element.Patterns.Invoke.IsSupported) { element.Patterns.Invoke.Pattern.Invoke(); return true; }
+            if (element.Patterns.SelectionItem.IsSupported) { element.Patterns.SelectionItem.Pattern.Select(); return true; }
+            if (element.Patterns.LegacyIAccessible.IsSupported) { element.Patterns.LegacyIAccessible.Pattern.DoDefaultAction(); return true; }
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>Everything in Zoom's windows that can be pressed: buttons, menu items and list items.</summary>
+    private static IEnumerable<AutomationElement> Choices(UIA3Automation automation, int processId)
     {
         var windows = new List<IntPtr>();
         NativeMethods.EnumWindows((h, _) =>
@@ -69,9 +98,15 @@ public sealed class ZoomDesktopMeetingEnder
         foreach (var handle in windows)
         {
             AutomationElement[] found;
-            try { found = automation.FromHandle(handle)?.FindAllDescendants(cf => cf.ByControlType(ControlType.Button)) ?? []; }
+            try
+            {
+                found = automation.FromHandle(handle)?.FindAllDescendants(cf =>
+                    cf.ByControlType(ControlType.Button)
+                        .Or(cf.ByControlType(ControlType.MenuItem))
+                        .Or(cf.ByControlType(ControlType.ListItem))) ?? [];
+            }
             catch { continue; }
-            foreach (var button in found) yield return button;
+            foreach (var choice in found) yield return choice;
         }
     }
 

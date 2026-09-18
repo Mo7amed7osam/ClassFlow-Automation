@@ -1,4 +1,4 @@
-﻿using ZoomAutoAdmit.Attendance;
+using ZoomAutoAdmit.Attendance;
 using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.Core.Sessions;
 using ZoomAutoAdmit.Inspector.Runtime;
@@ -102,13 +102,24 @@ public sealed class AutoEndMeetingBridgeTests
     private static string Instructor(bool talking = false) => $"Mostafa Badr,(Co-host, guest), Computer audio {(talking ? "unmuted" : "muted")},Video on";
 
     [Fact]
-    public async Task TheInstructorLeavingForFiveMinutesAfterThreeHoursEndsIt()
+    public async Task TheClassLeavingWithTheInstructorAfterThreeHoursEndsIt()
     {
-        // Twenty students still there, but the co-host (the instructor) left at 3 h 10.
+        // Twenty students until 3 h 10, when the instructor and nearly all of them walk out together.
+        string[] students = [.. Enumerable.Range(1, 20).Select(i => Guest("Student " + i))];
+        var (ended, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(190)
+            ? [Host, Instructor(), .. students]
+            : [Host, .. students.Take(3)], TimeSpan.FromHours(5));
+        // Five minutes after the read that first saw them gone.
+        Assert.InRange(Assert.Single(ended) - ClassTime, TimeSpan.FromMinutes(195), TimeSpan.FromMinutes(201));
+    }
+
+    [Fact]
+    public async Task TheInstructorDroppingOutWhileTheClassStaysIsLeftAlone()
+    {
+        // Their connection went, not the lesson: the twenty students are still sitting there.
         string[] students = [.. Enumerable.Range(1, 20).Select(i => Guest("Student " + i))];
         var (ended, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(190) ? [Host, Instructor(), .. students] : [Host, .. students], TimeSpan.FromHours(5));
-        // Last seen at the 30-second read just before 3 h 10: five minutes after that.
-        Assert.InRange(Assert.Single(ended) - ClassTime, TimeSpan.FromMinutes(198), TimeSpan.FromMinutes(201));
+        Assert.Empty(ended);
     }
 
     [Fact]
@@ -128,7 +139,7 @@ public sealed class AutoEndMeetingBridgeTests
         const string webHost = "Mohab (Host, me)";
         var (alone, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(170) ? [webHost, "Rowida Amr"] : [webHost], TimeSpan.FromHours(5), SessionEngineType.Web);
         Assert.InRange(Assert.Single(alone) - ClassTime, TimeSpan.FromHours(3), TimeSpan.FromMinutes(187));
-        var (gone, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(200) ? [webHost, "Mostafa Badr", "Rowida Amr", "A", "B", "C", "D"] : [webHost, "Rowida Amr", "A", "B", "C", "D"],
+        var (gone, _) = await Run(t => t - ClassTime < TimeSpan.FromMinutes(200) ? [webHost, "Mostafa Badr", "Rowida Amr", "A", "B", "C", "D"] : [webHost, "Rowida Amr"],
             TimeSpan.FromHours(5), SessionEngineType.Web, assignedCoHost: "Mostafa Badr");
         Assert.InRange(Assert.Single(gone) - ClassTime, TimeSpan.FromMinutes(208), TimeSpan.FromMinutes(211));
         var (small, _) = await Run(_ => [webHost, "Rowida Amr", "A"], TimeSpan.FromHours(4), SessionEngineType.Web);

@@ -106,22 +106,39 @@ public static class CoHostAbsenceRule
     public static readonly TimeSpan GoneFor = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// The user's second rule: from three hours after the class's time, a co-host who was in the
-    /// meeting (the instructor the app made co-host) and has been gone five minutes ends it - the
-    /// five minutes counted from the three hours at the earliest. Not while anyone's mic is on, and
-    /// only on a read that saw the whole list.
+    /// The class is over when the instructor and the class walk out together: the room keeps at most
+    /// this share of the people it had while the co-host was still there.
     /// </summary>
-    public static AutoEndDecision Decide(TimeSpan sinceClassStart, bool sawCoHost, TimeSpan? coHostGoneFor, bool anyoneTalking, bool readComplete)
+    public const double LeftShare = 0.5;
+
+    /// <summary>Whether most of the class left with the co-host (half of them or more).</summary>
+    public static bool MostLeft(int peopleWithCoHost, int peopleNow) =>
+        peopleWithCoHost > 0 && peopleNow <= peopleWithCoHost * LeftShare;
+
+    /// <summary>
+    /// The user's second rule: from three hours after the class's time, the instructor (the co-host
+    /// the app made) leaving and not coming back for five minutes ends the class - but only when the
+    /// class left with them. A room that still holds its people without the co-host is not over: that
+    /// is the co-host's connection, not the end of the lesson, and it is left alone. The five minutes
+    /// are counted from the moment the room emptied as well as from the co-host's last sighting, so a
+    /// half-read list that seems to show them again does not put the clock back.
+    /// Not while anyone's mic is on, and only on a read that saw the whole list.
+    /// </summary>
+    public static AutoEndDecision Decide(TimeSpan sinceClassStart, bool sawCoHost, TimeSpan? coHostGoneFor,
+        bool anyoneTalking, bool readComplete, int peopleWithCoHost = 0, int peopleNow = 0, TimeSpan? emptyFor = null)
     {
         if (sinceClassStart < AutoEndRule.EndAfter) return new(AutoEndAction.Wait, "less than three hours since the class's time");
         if (!sawCoHost || coHostGoneFor is not { } gone) return new(AutoEndAction.Wait, "the co-host is in the meeting (or never was)");
         if (!readComplete) return new(AutoEndAction.Wait, "the participants list could not be read in full");
         if (anyoneTalking) return new(AutoEndAction.Wait, "someone's mic is on");
+        if (!MostLeft(peopleWithCoHost, peopleNow))
+            return new(AutoEndAction.Wait, $"the co-host left {gone.TotalMinutes:0.#} minutes ago but the class is still here ({peopleNow} of {peopleWithCoHost}) - their connection may have dropped");
+        if (emptyFor is { } emptied && emptied > gone) gone = emptied;
         var pastThree = sinceClassStart - AutoEndRule.EndAfter;
         if (gone > pastThree) gone = pastThree;
         return gone >= GoneFor
-            ? new(AutoEndAction.EndForAll, $"the co-host left and has not come back for {GoneFor.TotalMinutes:0} minutes")
-            : new(AutoEndAction.Wait, $"the co-host left {gone.TotalMinutes:0.#} minutes ago");
+            ? new(AutoEndAction.EndForAll, $"the co-host and most of the class left {GoneFor.TotalMinutes:0} minutes ago ({peopleNow} of {peopleWithCoHost} left)")
+            : new(AutoEndAction.Wait, $"the co-host and most of the class left {gone.TotalMinutes:0.#} minutes ago");
     }
 }
 
