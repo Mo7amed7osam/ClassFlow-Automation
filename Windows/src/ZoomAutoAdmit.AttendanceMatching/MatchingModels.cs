@@ -46,11 +46,23 @@ public sealed record MatchingOptions
     public int MaximumAiCandidates { get; init; } = 8;
     public int MaximumAiCalls { get; init; } = 100;
     public TimeSpan AiTimeout { get; init; } = TimeSpan.FromSeconds(20);
+    /// <summary>
+    /// How sure the AI must be to give a student one of the names still unclaimed when it is shown
+    /// every choice at once. Lower than a pairwise answer's threshold on purpose: the whole list is
+    /// far better evidence than one yes/no, and a name two people fit equally is refused anyway.
+    /// </summary>
+    public int AssignmentConfidence { get; init; } = 85;
+    /// <summary>How many students one assignment question covers.</summary>
+    public int AssignmentBatch { get; init; } = 4;
+    /// <summary>One assignment question carries a whole class's names, so it is given longer than a pairwise one.</summary>
+    public TimeSpan AssignmentTimeout { get; init; } = TimeSpan.FromSeconds(60);
 
     internal void Validate()
     {
         if (ConfidenceThreshold is < 90 or > 100 || AmbiguityMargin is < 1 or > 100 ||
             MaximumAiCandidates is < 1 or > 100 || MaximumAiCalls is < 0 or > 10000 ||
+            AssignmentConfidence is < 60 or > 100 || AssignmentBatch is < 1 or > 25 ||
+            AssignmentTimeout <= TimeSpan.Zero || AssignmentTimeout > TimeSpan.FromMinutes(3) ||
             AiTimeout <= TimeSpan.Zero || AiTimeout > TimeSpan.FromMinutes(2))
             throw new ArgumentOutOfRangeException(nameof(MatchingOptions), "Invalid matching safety options.");
     }

@@ -48,7 +48,8 @@ public sealed class AiMatchingService : IAiMatchingService
     {
         var errors = new HashSet<string>();
         var matcher = new ReportingMatcher(CreateMatcher(settings), errors, settings.Provider);
-        var result = await new AttendanceMatchingEngine(_aliases, matcher, log: ConsoleLogger.Info, decisions: _decisions).MatchAsync(group, names, token);
+        var result = await new AttendanceMatchingEngine(_aliases, matcher, log: ConsoleLogger.Info,
+            decisions: _decisions, assigner: CreateAssigner(settings)).MatchAsync(group, names, token);
         return result with { Diagnostics = result.Diagnostics.Concat(errors).ToArray() };
     }
 
@@ -62,6 +63,11 @@ public sealed class AiMatchingService : IAiMatchingService
         CancellationToken token,
         string? context = null) =>
         CreateMatcher(settings).MatchAsync(person, observedName, token, context);
+
+    /// <summary>The same key and model, asked who the names left over belong to (the whole list at once).</summary>
+    private IAiRosterAssigner CreateAssigner(AiConnectionSettings settings) => new ChatRosterAssigner(
+        _client, settings.Model, () => settings.ApiKey,
+        settings.Provider == AiProvider.OpenRouter ? ChatRosterAssigner.OpenRouterEndpoint : ChatRosterAssigner.OpenAiEndpoint);
 
     private IAiNameMatcher CreateMatcher(AiConnectionSettings settings)
     {

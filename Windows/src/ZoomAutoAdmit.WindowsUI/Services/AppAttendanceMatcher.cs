@@ -5,11 +5,12 @@ using ZoomAutoAdmit.Roster;
 namespace ZoomAutoAdmit.WindowsUI.Services;
 
 /// <summary>
-/// Matches each class's Zoom names to its roster by itself, once an hour counted from the class's
-/// time (at 55 minutes, 1 h 55, …) - the Attendance page's "Match with AI" without anyone opening
-/// the page. The name rules go first, then the AI for what they cannot settle (with the app's key,
-/// when one is saved). The result is kept for the LMS upload, an hour and a half in: the upload
-/// asks for a fresh match first if this one is old, so it never goes up unmatched.
+/// Matches each class's Zoom names to its roster by itself, from the first quarter of an hour of the
+/// class and every half hour after it - the Attendance page's "Match with AI" without anyone opening
+/// the page, pressing Start attendance or loading a roster. The group is whichever one the meeting
+/// belongs to; its roster is brought from the LMS when this PC has none. The name rules go first,
+/// then the AI for what they cannot settle (with the app's key, when one is saved). The result is
+/// kept for the LMS upload, which asks for a fresh match of its own before it uploads anything.
 /// </summary>
 public sealed class AppAttendanceMatcher(
     ExtensionAttendanceFeed? feed = null,
@@ -17,8 +18,12 @@ public sealed class AppAttendanceMatcher(
     IAiMatchingService? matching = null,
     IAiCredentialStore? key = null)
 {
-    public static readonly TimeSpan FirstMatchAfter = TimeSpan.FromMinutes(55);
-    public static readonly TimeSpan MatchEvery = TimeSpan.FromHours(1);
+    /// <summary>
+    /// The first match of a class, soon after it opens: whoever is already in is matched while the
+    /// class runs, so nothing waits for the hour and nobody has to start it by hand.
+    /// </summary>
+    public static readonly TimeSpan FirstMatchAfter = TimeSpan.FromMinutes(15);
+    public static readonly TimeSpan MatchEvery = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan StopAfter = TimeSpan.FromHours(4.5);
 
     private readonly ExtensionAttendanceFeed _feed = feed ?? new ExtensionAttendanceFeed();
@@ -27,8 +32,40 @@ public sealed class AppAttendanceMatcher(
     private readonly IAiCredentialStore _key = key ?? new AiCredentialStore();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, int> _slotsDone = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _rosterAsked = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Which hourly match a class is due (0 at 55 min, 1 at 1 h 55, …), or -1 before the first.</summary>
+    /// <summary>Reads a group's students from the LMS; the app replaces it in tests so nothing goes out.</summary>
+    public Func<string, CancellationToken, Task<bool>> ImportRoster { get; init; } =
+        async (group, token) => (await new LmsRosterImport().ImportAsync(group, token)).Ok;
+
+    /// <summary>The group's roster, brought from the LMS once per app run when this PC has none.</summary>
+    private async Task<RosterGroup?> BringRosterAsync(string group, CancellationToken token)
+    {
+        if (!_rosterAsked.Add(group))
+        {
+            ConsoleLogger.Warn($"[ATTENDANCE] {group}: no roster to match against (Groups & Students).");
+            return null;
+        }
+        ConsoleLogger.Info($"[ATTENDANCE] {group}: no roster on this PC; reading its students from the LMS.");
+        bool ok;
+        try { ok = await ImportRoster(group, token); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { ConsoleLogger.Warn($"[ATTENDANCE] {group}: the roster could not be read from the LMS ({ex.Message})."); return null; }
+        var roster = ok
+            ? (await _rosters.ListAsync(token)).FirstOrDefault(g => g.GroupId.Equals(group, StringComparison.OrdinalIgnoreCase))
+            : null;
+        if (roster == null || roster.Students.Count == 0)
+        {
+            ConsoleLogger.Warn($"[ATTENDANCE] {group}: no roster to match against (Groups & Students).");
+            return null;
+        }
+        // It is there now: a later class of the group asks for it again only if it disappears.
+        _rosterAsked.Remove(group);
+        ConsoleLogger.Info($"[ATTENDANCE] {group}: {roster.Students.Count} students read from the LMS.");
+        return roster;
+    }
+
+    /// <summary>Which match a class is due (0 a quarter of an hour in, 1 at 45 minutes, …), or -1 before the first.</summary>
     public static int SlotAt(DateTime classStart, DateTime now)
     {
         var age = now - classStart;
@@ -88,8 +125,10 @@ public sealed class AppAttendanceMatcher(
         var roster = (await _rosters.ListAsync(token)).FirstOrDefault(g => g.GroupId.Equals(group, StringComparison.OrdinalIgnoreCase));
         if (roster == null || roster.Students.Count == 0)
         {
-            ConsoleLogger.Warn($"[ATTENDANCE] {group}: no roster to match against (Groups & Students).");
-            return null;
+            // The names of a group this PC has never read: brought from the LMS by itself, the way
+            // "Load roster" does on the Attendance page, so a first class is not missed over it.
+            roster = await BringRosterAsync(group, token);
+            if (roster == null) return null;
         }
 
         AiConnectionSettings? settings = null;

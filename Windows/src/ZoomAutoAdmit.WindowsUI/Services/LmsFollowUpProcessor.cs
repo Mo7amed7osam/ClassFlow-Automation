@@ -142,8 +142,10 @@ public sealed class LmsFollowUpProcessor
             // The late-joiner correction, once the meeting has ended: Zoom's own participants report
             // too - anyone the snapshots missed is added, and anyone there under an hour is warned about.
             var reportNames = await ZoomReportNamesAsync(item, token);
-            if (reportNames.Count > 0 || app == null || DateTimeOffset.Now - app.UpdatedAt > TimeSpan.FromMinutes(15))
-                app = await matcher.MatchClassAsync(item.Group, item.SessionDate.ToDateTime(item.SessionStart), token, reportNames) ?? app;
+            // Matched again every single time, just before it goes up: names seen after the last
+            // match (a late joiner, a renamed person, Zoom's own report) are in it, and the answers
+            // given before cost nothing to use again.
+            app = await matcher.MatchClassAsync(item.Group, item.SessionDate.ToDateTime(item.SessionStart), token, reportNames) ?? app;
             var present = new List<string>(pageFresh ? page!.Present : []);
             foreach (var name in app?.Present ?? [])
                 if (!present.Contains(name, StringComparer.OrdinalIgnoreCase)) present.Add(name);

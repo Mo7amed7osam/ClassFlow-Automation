@@ -11,5 +11,8 @@ internal static class LiveMeetingsIsolation
         ZoomAutoAdmit.Core.Meetings.LiveMeetings.Folder = Path.Combine(Path.GetTempPath(), "ZoomAutoAdmit.Tests", "live-" + Guid.NewGuid().ToString("N"));
         // Nor this PC's remembered AI answers: each test's matching asks its own fake AI.
         ZoomAutoAdmit.WindowsUI.Services.AiMatchingService.DefaultDecisions = () => null;
+        // Nor the attendance really taken of this PC's classes, which a match would write over.
+        ZoomAutoAdmit.WindowsUI.Services.ExtensionAttendanceFeed.ResultsPath = Path.Combine(
+            Path.GetTempPath(), "ZoomAutoAdmit.Tests", "results-" + Guid.NewGuid().ToString("N") + ".json");
     }
 }

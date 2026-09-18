@@ -11,12 +11,16 @@ public sealed class AttendanceMatchingEngine
     private readonly Action<string> _log;
     /// <summary>Every AI answer given before: the same comparison is never sent again.</summary>
     private readonly IAiDecisionMemory? _decisions;
+    /// <summary>Asked, at the end, who the names nobody was confirmed from belong to.</summary>
+    private readonly IAiRosterAssigner? _assigner;
     private sealed record Candidate(GroupStudent Student, int Confidence, MatchSource Source, string Reason);
 
     public AttendanceMatchingEngine(IAliasMemory memory, IAiNameMatcher? ai = null,
-        MatchingOptions? options = null, Action<string>? log = null, IAiDecisionMemory? decisions = null)
+        MatchingOptions? options = null, Action<string>? log = null, IAiDecisionMemory? decisions = null,
+        IAiRosterAssigner? assigner = null)
     {
         _decisions = decisions;
+        _assigner = assigner;
         _memory = memory ?? throw new ArgumentNullException(nameof(memory));
         _ai = ai;
         _options = options ?? new();
@@ -146,9 +150,106 @@ public sealed class AttendanceMatchingEngine
                 }));
             }
         }
+        int assignments = 0;
+        if (_assigner != null) await AssignRemainingAsync();
         Log($"Matching completed; Present: {results.Values.Count(r => r.Status == AttendanceMatchStatus.Present)}; Review: {review.Count}" +
-            (_ai != null ? $"; AI requests: {calls} (answered from memory: {remembered})" : ""));
+            (_ai != null ? $"; AI requests: {calls} (answered from memory: {remembered})" : "") +
+            (assignments > 0 ? $"; AI assignment questions: {assignments}" : ""));
         return new(roster.GroupId, students.Select(s => results[s.StudentId]).ToArray(), review.AsReadOnly(), diagnostics.AsReadOnly());
+
+        // The names nobody was confirmed from, shown to the AI beside the students still without one:
+        // seeing every choice at once is evidence a pairwise question cannot carry, and it is how the
+        // attendance page has always resolved a nickname or a middle name. Equal evidence is still
+        // never broken, and each name goes to at most one person.
+        async Task AssignRemainingAsync()
+        {
+            var claimed = new HashSet<string>(results.Values
+                .Where(r => r.Status == AttendanceMatchStatus.Present)
+                .SelectMany(r => r.ObservedNames).Select(SafeNormalize).Where(n => n.Length > 0), StringComparer.Ordinal);
+            var free = new List<string>();
+            var listed = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var observed in observations)
+            {
+                string normalized = SafeNormalize(observed);
+                if (normalized.Length == 0 || claimed.Contains(normalized) || !listed.Add(normalized)) continue;
+                free.Add(observed);
+            }
+            var waiting = students.Where(s => results[s.StudentId].Status != AttendanceMatchStatus.Present).ToList();
+            if (free.Count == 0 || waiting.Count == 0) return;
+
+            // Answers given before cost nothing and are believed on the same terms as fresh ones.
+            if (_decisions != null)
+                foreach (var student in waiting.ToArray())
+                    foreach (var observed in free.ToArray())
+                        if (_decisions.TryGet(roster.GroupId, student.StudentId, student.FullName, observed, out var known) &&
+                            known.Match && MayTake(student, observed, known.Confidence, known.NeedsReview))
+                        {
+                            Take(student, observed, known.Confidence, "Remembered AI answer.");
+                            remembered++;
+                            break;
+                        }
+
+            var pending = waiting.Where(s => results[s.StudentId].Status != AttendanceMatchStatus.Present).ToArray();
+            int size = Math.Max(1, _options.AssignmentBatch);
+            for (int offset = 0; offset < pending.Length && free.Count > 0; offset += size)
+            {
+                token.ThrowIfCancellationRequested();
+                var batch = pending.Skip(offset).Take(size)
+                    .Where(s => results[s.StudentId].Status != AttendanceMatchStatus.Present).ToArray();
+                if (batch.Length == 0) continue;
+                IReadOnlyList<RosterAssignment> answers;
+                try
+                {
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    timeout.CancelAfter(_options.AssignmentTimeout);
+                    assignments++;
+                    answers = await _assigner!.AssignAsync(batch, [.. free], timeout.Token).WaitAsync(timeout.Token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (Exception ex) { Diagnostic("AI assignment unavailable or invalid", ex); return; }
+                foreach (var answer in answers)
+                {
+                    var student = batch.FirstOrDefault(s => s.StudentId == answer.StudentId);
+                    if (student == null) continue;
+                    bool confident = answer.Confidence >= _options.AssignmentConfidence && !answer.NeedsReview;
+                    _decisions?.Save(roster.GroupId, student.StudentId, student.FullName, answer.ObservedName,
+                        new AiNameMatch(confident, answer.Confidence, student.StudentId, answer.Reason, answer.NeedsReview));
+                    if (MayTake(student, answer.ObservedName, answer.Confidence, answer.NeedsReview))
+                        Take(student, answer.ObservedName, answer.Confidence, answer.Reason);
+                }
+            }
+            // A name that has found its person is no longer waiting for one.
+            review.RemoveAll(item => claimed.Contains(SafeNormalize(item.ObservedName)));
+
+            bool MayTake(GroupStudent student, string observed, int confidence, bool needsReview)
+            {
+                if (needsReview || confidence < _options.AssignmentConfidence) return false;
+                if (results[student.StudentId].Status == AttendanceMatchStatus.Present) return false;
+                string normalized = SafeNormalize(observed);
+                if (normalized.Length == 0 || !free.Any(name => SafeNormalize(name) == normalized)) return false;
+                var ranked = students.Select(s => Score(s, observed, normalized, aliases))
+                    .Where(c => c.Confidence > 0).OrderByDescending(c => c.Confidence).ToArray();
+                // Two people the names fit equally well: no guess may decide between them.
+                if (ranked.Length > 1 && ranked[0].Confidence == ranked[1].Confidence) return false;
+                // The name rules already point firmly at somebody else.
+                return ranked.Length == 0 || ranked[0].Student.StudentId == student.StudentId ||
+                       ranked[0].Confidence < _options.ConfidenceThreshold;
+            }
+
+            void Take(GroupStudent student, string observed, int confidence, string reason)
+            {
+                Confirm(new Candidate(student, confidence, MatchSource.AI, reason), observed);
+                string normalized = SafeNormalize(observed);
+                claimed.Add(normalized);
+                free.RemoveAll(name => SafeNormalize(name) == normalized);
+            }
+        }
+
+        static string SafeNormalize(string? value)
+        {
+            try { return NameNormalizer.Normalize(value ?? string.Empty); }
+            catch (ArgumentException) { return string.Empty; }
+        }
 
         void Confirm(Candidate candidate, string observed)
         {
