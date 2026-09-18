@@ -316,7 +316,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
                     lms?.Session.Title, lms?.Session.RecordLink is { Length: > 0 } l ? $"Link: {l}" : null,
                     Done(LmsFollowUpStep.RunSession)?.Message, Done(LmsFollowUpStep.TakeAttendance)?.Message,
                     Owed(LmsFollowUpStep.TakeAttendance)?.LastError, Done(LmsFollowUpStep.CorrectAttendance)?.Message,
-                    Done(LmsFollowUpStep.CompleteSession)?.Message,
+                    Done(LmsFollowUpStep.ZoomReportAttendance)?.Message, Done(LmsFollowUpStep.CompleteSession)?.Message,
                 }.Where(x => !string.IsNullOrWhiteSpace(x)));
                 StepState State(string key, string label, LmsFollowUpStep step, bool doneOnLms, bool dueLater)
                 {
@@ -347,8 +347,20 @@ public sealed class LmsSessionsViewModel : ObservableObject
                         : new StepState("run", "Run", running || finished ? "lms" : upcoming ? "future" : "none", running || finished ? "On the LMS" : upcoming ? "At start" : "Not run"),
                     State("attendance", "Attendance", LmsFollowUpStep.TakeAttendance, lms?.Session.AttendanceTaken == true, classStart + LmsFollowUpQueue.TakeAttendanceAfter > now),
                     State("correct", "Late joiners", LmsFollowUpStep.CorrectAttendance, false, classStart + LmsFollowUpQueue.CorrectAttendanceAfter > now),
+                    ReportStep(),
                     State("complete", "Complete", LmsFollowUpStep.CompleteSession, finished, classStart + LmsFollowUpQueue.CorrectAttendanceAfter > now),
                 };
+                // The second half of the late-joiner correction, from Zoom's own report: it looks
+                // different while Zoom has not published the report yet, and like every other step
+                // once it has gone up.
+                StepState ReportStep()
+                {
+                    var step = State("report", "Zoom report", LmsFollowUpStep.ZoomReportAttendance, false, classStart + LmsFollowUpQueue.CorrectAttendanceAfter > now);
+                    var owed = Owed(LmsFollowUpStep.ZoomReportAttendance);
+                    bool waitingForZoom = owed?.LastError != null && owed.Attempts == 0 &&
+                        (owed.LastError.Contains("report", StringComparison.OrdinalIgnoreCase) || owed.LastError.Contains("still running", StringComparison.OrdinalIgnoreCase));
+                    return waitingForZoom ? step with { State = "waiting", Text = "Waiting for Zoom's report" } : step;
+                }
                 // How the meeting ended. The program ends a finished class itself, but it is just as
                 // often closed from a phone - which it notices rather than guesses at.
                 var ending = _endings.For(group, date, start);
@@ -527,6 +539,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 }),
                 "attendance" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.TakeAttendance),
                 "correct" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.CorrectAttendance),
+                "report" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.ZoomReportAttendance),
                 "complete" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.CompleteSession),
                 "zoomRecording" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.AttachZoomRecording),
                 "recording" => await RecordingAsync(processor, group, date, start),

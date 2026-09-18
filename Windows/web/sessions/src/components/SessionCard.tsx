@@ -3,10 +3,10 @@ import type { Action, Row, Step, StepKey } from '../types'
 import { ACTIONS, availableActions, dayNumber, groupHue, month, primaryAction, relative, shortGroup, startOf, weekday, workingKey } from '../logic'
 import { Icon } from './Icon'
 
-const STEP_ICON: Record<StepKey, string> = { zoom: 'video', run: 'play', attendance: 'people', correct: 'late', complete: 'flag', ended: 'stop', record: 'film', drive: 'drive', material: 'sheet', assignment: 'calendar' }
-const STATE_ICON: Record<Step['state'], string> = { done: 'check', lms: 'check', partial: 'half', due: 'clock', retry: 'retry', failed: 'x', future: 'dot', none: 'dot' }
+const STEP_ICON: Record<StepKey, string> = { zoom: 'video', run: 'play', attendance: 'people', correct: 'late', report: 'report', complete: 'flag', ended: 'stop', record: 'film', drive: 'drive', material: 'sheet', assignment: 'calendar' }
+const STATE_ICON: Record<Step['state'], string> = { done: 'check', lms: 'check', partial: 'half', due: 'clock', waiting: 'hourglass', retry: 'retry', failed: 'x', future: 'dot', none: 'dot' }
 const STEP_ACTIONS: Partial<Record<StepKey, Action[]>> = {
-  run: ['run'], attendance: ['attendance'], correct: ['correct'], complete: ['complete'], record: ['recording', 'zoomRecording', 'link'], drive: ['recording', 'sheet', 'link'],
+  run: ['run'], attendance: ['attendance'], correct: ['correct'], report: ['report'], complete: ['complete'], record: ['recording', 'zoomRecording', 'link'], drive: ['recording', 'sheet', 'link'],
   material: ['material'], assignment: ['assignment'],
 }
 const LMS_LABEL: Record<string, string> = { running: 'Running', finished: 'Finished', completed: 'Finished', pending: 'Pending', '': 'Not read' }
@@ -123,7 +123,7 @@ export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, o
                 <div className="menu" role="menu">
                   {actions.filter((a) => a !== 'material').map((a) => (
                     <button key={a} type="button" role="menuitem" disabled={working.has(workingKey(row, a))} onClick={() => { setMenu(false); onAction(row, a) }}>
-                      <Icon name={a === 'run' ? 'play' : a === 'attendance' ? 'people' : a === 'correct' ? 'late' : a === 'complete' ? 'flag' : a === 'zoomRecording' || a === 'recording' ? 'film' : a === 'sheet' ? 'sheet' : a === 'assignment' ? 'calendar' : 'link'} size={15} />
+                      <Icon name={a === 'run' ? 'play' : a === 'attendance' ? 'people' : a === 'correct' ? 'late' : a === 'report' ? 'report' : a === 'complete' ? 'flag' : a === 'zoomRecording' || a === 'recording' ? 'film' : a === 'sheet' ? 'sheet' : a === 'assignment' ? 'calendar' : 'link'} size={15} />
                       {ACTIONS[a].label}
                     </button>
                   ))}

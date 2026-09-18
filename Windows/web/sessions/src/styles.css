@@ -168,6 +168,9 @@ code { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 12px; }
 .s-due .orb { background: var(--blue-soft); border-color: var(--blue); color: var(--blue); }
 .s-retry .orb { background: var(--amber-soft); border-color: var(--amber); color: var(--amber); }
 .s-retry .node-text { color: var(--amber); }
+/* Owed to Zoom, not to this PC: a dashed amber ring until Zoom publishes the report. */
+.s-waiting .orb { background: var(--amber-soft); border-style: dashed; border-color: var(--amber); color: var(--amber); }
+.s-waiting .node-text { color: var(--amber); }
 .s-failed .orb { background: var(--red-soft); border-color: var(--red); color: var(--red); }
 .s-failed .node-text { color: var(--red); }
 .s-future .orb { border-style: dashed; }

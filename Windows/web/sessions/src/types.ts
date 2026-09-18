@@ -1,7 +1,8 @@
 // What the app sends (SessionsWebView.BuildState). Kept in step with that method by hand.
 
-export type StepKey = 'zoom' | 'run' | 'attendance' | 'correct' | 'complete' | 'ended' | 'record' | 'drive' | 'material' | 'assignment'
-export type StepStateName = 'done' | 'lms' | 'partial' | 'due' | 'retry' | 'failed' | 'future' | 'none'
+export type StepKey = 'zoom' | 'run' | 'attendance' | 'correct' | 'report' | 'complete' | 'ended' | 'record' | 'drive' | 'material' | 'assignment'
+/** 'waiting': owed to something outside this PC (Zoom publishing its report), not a failure and not a retry. */
+export type StepStateName = 'done' | 'lms' | 'partial' | 'due' | 'waiting' | 'retry' | 'failed' | 'future' | 'none'
 
 export interface Step {
   key: StepKey
@@ -96,7 +97,7 @@ export interface State {
 }
 
 /** A step the page can ask the app to do now, on the real LMS. */
-export type Action = 'run' | 'attendance' | 'correct' | 'complete' | 'zoomRecording' | 'sheet' | 'recording' | 'link' | 'material' | 'assignment'
+export type Action = 'run' | 'attendance' | 'correct' | 'report' | 'complete' | 'zoomRecording' | 'sheet' | 'recording' | 'link' | 'material' | 'assignment'
 
 export interface Result {
   ok: boolean

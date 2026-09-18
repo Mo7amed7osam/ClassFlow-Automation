@@ -9,10 +9,16 @@ public enum LmsFollowUpStep
 {
     /// <summary>Fill in the attendance sheet, an hour and a half in (with a fresh name match first).</summary>
     TakeAttendance,
-    /// <summary>Move whoever turned up late from Not-joined to Joined, three hours in.</summary>
+    /// <summary>Move whoever turned up late from Not-joined to Joined, three hours in - from what this PC saw of the meeting.</summary>
     CorrectAttendance,
     /// <summary>Mark the LMS session complete after the late-attendance correction.</summary>
     CompleteSession,
+    /// <summary>
+    /// The same correction once more from Zoom's own participants report, which Zoom publishes only
+    /// after the meeting has ended: anyone the snapshots missed is added, and whoever stayed under an
+    /// hour is named. Waits, not fails, until the report is there.
+    /// </summary>
+    ZoomReportAttendance,
     /// <summary>
     /// Put the Zoom recording's share link on the finished session (read from My Recordings, even
     /// while Zoom is still processing it). The Drive link n8n reports later replaces it.
@@ -162,6 +168,7 @@ public sealed class LmsFollowUpQueue
             Build(group, date, start, LmsFollowUpStep.TakeAttendance, startedAt + TakeAttendanceAfter),
             Build(group, date, start, LmsFollowUpStep.CorrectAttendance, startedAt + CorrectAttendanceAfter),
             Build(group, date, start, LmsFollowUpStep.CompleteSession, startedAt + CorrectAttendanceAfter),
+            Build(group, date, start, LmsFollowUpStep.ZoomReportAttendance, startedAt + CorrectAttendanceAfter),
             Build(group, date, start, LmsFollowUpStep.AttachZoomRecording, startedAt + CorrectAttendanceAfter),
         };
         return await UpdateAsync(items =>
@@ -203,9 +210,13 @@ public sealed class LmsFollowUpQueue
                                               item.SessionDate == date && item.SessionStart == start;
             var correct = Build(group, date, start, LmsFollowUpStep.CorrectAttendance, due);
             if (items.FindIndex(item => item.Id == correct.Id) < 0) items.Add(correct);
+            // And from Zoom's report, once Zoom has it: added again if it was already done.
+            var report = Build(group, date, start, LmsFollowUpStep.ZoomReportAttendance, due);
+            if (items.FindIndex(item => item.Id == report.Id) < 0) items.Add(report);
             for (int i = 0; i < items.Count; i++)
                 if (IsClass(items[i]) &&
-                    items[i].Step is LmsFollowUpStep.CorrectAttendance or LmsFollowUpStep.CompleteSession or LmsFollowUpStep.AttachZoomRecording &&
+                    items[i].Step is LmsFollowUpStep.CorrectAttendance or LmsFollowUpStep.CompleteSession
+                        or LmsFollowUpStep.ZoomReportAttendance or LmsFollowUpStep.AttachZoomRecording &&
                     items[i].DueAt > due)
                     items[i] = items[i] with { DueAt = due };
             return items;

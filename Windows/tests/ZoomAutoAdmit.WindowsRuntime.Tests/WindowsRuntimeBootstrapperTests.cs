@@ -77,7 +77,7 @@ public sealed class WindowsRuntimeBootstrapperTests : IDisposable
         // The LMS half of the class, however it was started: Run Session for the meeting's group
         // at its scheduled time, and the three follow-up steps written down.
         Assert.Equal(new[] { $"CAI5_AIS4_S7 2026-09-15 {new DateTimeOffset(2026, 9, 15, 19, 0, 0, TimeSpan.FromHours(3)).ToLocalTime():HH\\:mm}" }, lmsRuns);
-        Assert.Equal(4, (await queue.ReadAsync()).Count);        // attendance, late pass, Complete, Zoom recording
+        Assert.Equal(5, (await queue.ReadAsync()).Count);        // attendance, late pass, Complete, Zoom report, Zoom recording
     }
 
     private sealed class AttendanceTestSource : ZoomAutoAdmit.Attendance.IAttendanceParticipantSource

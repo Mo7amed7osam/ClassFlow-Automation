@@ -36,18 +36,21 @@ public sealed class LmsFollowUpProcessor
 
     private string WithWarning(LmsFollowUp item, string message)
     {
-        if (item.Step is not (LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance)) return message;
-        if (item.Step == LmsFollowUpStep.CorrectAttendance && _reportNotes.TryGetValue(ClassKey(item), out var note))
-            message = $"{note} {message}";
+        if (item.Step != LmsFollowUpStep.ZoomReportAttendance) return message;
+        if (_reportNotes.TryGetValue(ClassKey(item), out var note)) message = $"{note} {message}";
         return _warnings.TryGetValue(ClassKey(item), out var warning) ? $"{message} {warning}" : message;
     }
+
+    /// <summary>The steps that upload names, and so match them first.</summary>
+    private static bool UploadsNames(LmsFollowUpStep step) =>
+        step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance or LmsFollowUpStep.ZoomReportAttendance;
 
     /// <summary>How long one LMS step may run before it is counted as failed and tried again.</summary>
     public static readonly TimeSpan StepTimeout = TimeSpan.FromMinutes(12);
 
     private async Task<IReadOnlyCollection<string>> ZoomReportNamesAsync(LmsFollowUp item, CancellationToken token)
     {
-        if (item.Step != LmsFollowUpStep.CorrectAttendance || _isLive(item.Group)) return [];
+        if (item.Step != LmsFollowUpStep.ZoomReportAttendance || _isLive(item.Group)) return [];
         try
         {
             var report = await _zoomReport(item, token);
@@ -94,9 +97,7 @@ public sealed class LmsFollowUpProcessor
         limit.CancelAfter(StepTimeout);
         try
         {
-            IReadOnlyCollection<string> present = item.Step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance
-                ? await _presentNames(item, limit.Token)
-                : [];
+            IReadOnlyCollection<string> present = UploadsNames(item.Step) ? await _presentNames(item, limit.Token) : [];
             var outcome = await _runAction(item, present, dryRun, limit.Token);
             return (outcome.IsSuccess, WithWarning(item, outcome.Message));
         }
@@ -213,7 +214,7 @@ public sealed class LmsFollowUpProcessor
                     ? $"Attendance was already on the LMS; checked it against this class. {check.Message}"
                     : result.Message);
             }
-            if (item.Step == LmsFollowUpStep.CorrectAttendance)
+            if (item.Step is LmsFollowUpStep.CorrectAttendance or LmsFollowUpStep.ZoomReportAttendance)
             {
                 var result = await lms.CorrectAttendanceAsync(item.Group, present, item.SessionStart,
                     item.SessionDate, dryRun: dryRun, cancellationToken: token);

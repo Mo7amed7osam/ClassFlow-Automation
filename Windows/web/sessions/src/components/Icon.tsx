@@ -10,6 +10,8 @@ const PATHS: Record<string, string> = {
   play: 'M7 5l12 7-12 7V5z',
   people: 'M16 19v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 17.5V19M10 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 19v-1.5a3.5 3.5 0 0 0-2.5-3.35M15.5 5.2a3 3 0 0 1 0 5.6',
   late: 'M12 8v4l2.5 1.5M4.5 16.5A9 9 0 1 1 12 21M3 21l2-4.5 4.5 2',
+  report: 'M6 3h9l4 4v14H6zM14 3v5h5M9 17v-4M12 17v-7M15 17v-2',
+  hourglass: 'M7 3h10M7 21h10M8 3v3.5L12 11l4-4.5V3M8 21v-3.5L12 13l4 4.5V21',
   flag: 'M5 21V4m0 0h11l-2 4 2 4H5',
   film: 'M4 5h16v14H4zM8 5v14M16 5v14M4 9h4M4 15h4M16 9h4M16 15h4',
   sheet: 'M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7',

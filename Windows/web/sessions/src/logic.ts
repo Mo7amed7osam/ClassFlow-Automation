@@ -45,7 +45,8 @@ export interface ActionInfo {
 export const ACTIONS: Record<Action, ActionInfo> = {
   run: { action: 'run', label: 'Run Session', explain: 'Press "Run Session" for this class on the LMS.', changesLms: true },
   attendance: { action: 'attendance', label: 'Take attendance', explain: 'Fill in Take Session Attendance with who the Attendance page shows as present. If the sheet is already there, it is checked against this class instead.', changesLms: true },
-  correct: { action: 'correct', label: 'Correct late joiners', explain: 'Move whoever joined late from Not-joined to Joined on the LMS attendance.', changesLms: true },
+  correct: { action: 'correct', label: 'Correct late joiners', explain: 'Move whoever joined late from Not-joined to Joined on the LMS attendance, from what this PC saw of the meeting.', changesLms: true },
+  report: { action: 'report', label: 'Apply Zoom report', explain: "Read Zoom's own participants report for this meeting (it exists only after the meeting ended), add anyone the snapshots missed to the LMS attendance, and name whoever stayed under an hour.", changesLms: true },
   complete: { action: 'complete', label: 'Complete session', explain: 'Press "Complete Session" on the LMS. This cannot be undone there.', changesLms: true },
   zoomRecording: { action: 'zoomRecording', label: 'Get Zoom recording', explain: "Copy the class's Zoom cloud recording link (even while Zoom is still processing it) and add it as the record link. A link already on the session is kept.", changesLms: true },
   sheet: { action: 'sheet', label: 'Check sheet for Drive', explain: "Look this class up in the recordings sheet and put its Google Drive link on the LMS, replacing a Zoom link.", changesLms: true },
@@ -84,8 +85,8 @@ export function availableActions(row: Row, now: Date): Action[] {
   const material: Action[] = hasMaterial(row) ? ['material'] : []
   if (row.material?.assignmentTitle && row.material.deadline && !row.material.noAssignment) material.push('assignment')
   if (!started) return material
-  if (isPastDay(row, now)) return ['recording', 'sheet', 'zoomRecording', 'link', ...material]
-  return ['run', 'attendance', 'correct', 'complete', 'recording', 'zoomRecording', 'sheet', 'link', ...material]
+  if (isPastDay(row, now)) return ['report', 'recording', 'sheet', 'zoomRecording', 'link', ...material]
+  return ['run', 'attendance', 'correct', 'report', 'complete', 'recording', 'zoomRecording', 'sheet', 'link', ...material]
 }
 
 /** Before today: the class is over and Completed. */
