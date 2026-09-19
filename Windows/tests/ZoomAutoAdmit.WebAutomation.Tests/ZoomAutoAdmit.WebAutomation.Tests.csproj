@@ -27,4 +27,11 @@
     <ProjectReference Include="..\..\src\ZoomAutoAdmit.WebAutomation\ZoomAutoAdmit.WebAutomation.csproj" />
   </ItemGroup>
 
+  <!-- The loopback API server is not in the portable build (see the library's own csproj), so
+       neither are the tests that start one. Everything else here runs on both. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <Compile Remove="RecordingApiServerTests.cs" />
+    <Compile Remove="RecordingApiHostingTests.cs" />
+  </ItemGroup>
+
 </Project>

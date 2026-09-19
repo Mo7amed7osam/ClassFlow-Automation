@@ -1,5 +1,6 @@
 using ZoomAutoAdmit.CentralAgent;
 using ZoomAutoAdmit.CloudWorker;
+using ZoomAutoAdmit.CloudWorker.Stages;
 using ZoomAutoAdmit.WebAutomation.Lms;
 
 // The cloud worker: the half of Zoom Auto Admit that runs where there is no Windows.
@@ -82,18 +83,37 @@ if (tokens.Read() is null && string.IsNullOrWhiteSpace(settings.EnrollmentToken)
 Log("enrolled" + (tokens.Read() is null ? " (will register with the enrolment token)" : ""));
 
 // ---------------------------------------------------------------------------------------------
-// What is not built yet, said plainly rather than started and left to fail.
+// What this worker can do, and what it therefore says it can do.
 //
-// The worker's shell is here: it reads its settings, proves the machine can drive a browser, holds
-// passwords the way a server must, and knows how it is enrolled. What it does not yet have is the
-// job types for the class stages - the backend knows one, recording.process, and the stages in the
-// Sessions timeline have no server-side path at all (FEATURE_PARITY.md, section 1).
+// The three LMS stages are built: they drive the same LmsSessionRunner the Windows app drives,
+// under the account the class names. The Zoom stages - opening a meeting, admitting, taking a
+// snapshot, ending, and reading Zoom's own report afterwards - are not, so "zoom_web" is not in
+// the list below and the backend will not hand this worker one. Those jobs stay queued, which is
+// visible, rather than being taken and failed, which looks like the class went wrong.
 //
-// Connecting now would register a worker that answers "I can do nothing", which reads on the
-// dashboard as a worker that is fine. It says so instead.
+// None of the LMS stages has run against the real DEPI LMS from Linux. They are written and unit
+// tested; FEATURE_PARITY.md keeps them as IMPLEMENTED_NOT_LIVE_VERIFIED until somebody watches one
+// work on a class that is safe to run against.
 // ---------------------------------------------------------------------------------------------
-Log("the machine is ready. The job types for the class stages are not built yet, so there is nothing "
-    + "to take: see FEATURE_PARITY.md. Run `preflight` from a deployment to check a machine.");
+var accountSource = new ServerLmsAccounts();
+var attendanceNames = new NoAttendanceCollected();
+
+var handlers = new IJobHandler[]
+{
+    new RunSessionStage(accountSource, Log),
+    new CompleteSessionStage(accountSource, Log),
+    new AttendanceStage(accountSource, attendanceNames, Log),
+};
+
+var capabilities = new[] { "lms" };
+Log($"can run: {string.Join(", ", handlers.Select(h => h.JobType))} (capabilities: {string.Join(", ", capabilities)})");
+Log("the Zoom stages are not built, so this worker does not claim zoom_web and is never given one.");
+
+// Connecting is the next piece: the agent's own socket, journal and outbox already exist in
+// ZoomAutoAdmit.CentralAgent and are what this will be handed to. Until the account source below
+// is wired to the server, a connected worker would take an LMS stage and fail it for want of a
+// sign-in, which is worse than not connecting.
+Log("not connecting yet: the account source has no route to the server. See FEATURE_PARITY.md.");
 
 credentials.Clear();
 return 0;

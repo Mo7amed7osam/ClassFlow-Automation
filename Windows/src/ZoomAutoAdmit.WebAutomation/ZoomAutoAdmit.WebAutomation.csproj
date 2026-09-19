@@ -12,6 +12,21 @@
     <PackageReference Include="Microsoft.Playwright" Version="1.62.0" />
   </ItemGroup>
 
+  <!--
+    The local recording API is the Windows app's own loopback server, and it is built on
+    HttpListener, which is http.sys. The managed HttpListener on Linux refuses the prefix it is
+    given ("Invalid port in prefix") the moment it starts, so the class exists there but cannot
+    run - the worst kind of portable.
+
+    Nothing off Windows wants it: the cloud worker reaches the central backend over its own
+    socket and never opens a port. So the server is left out of the portable build, and what the
+    agent actually needs - RecordingApiRequestParser, which is plain parsing - stays in both.
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <Compile Remove="Api\RecordingApiServer.cs" />
+    <Compile Remove="Api\RecordingApiOptions.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\ZoomAutoAdmit.Core\ZoomAutoAdmit.Core.csproj" />
     <!-- Names are compared the same way the matcher compares them, so the dashboard and the

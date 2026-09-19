@@ -96,9 +96,20 @@ hands one to an authorised caller and audits the read. No new secret store was n
 worker becomes another authorised reader of the one that exists, and holds what it is given in
 memory only (`InMemoryLmsCredentialBackend`), so a restart asks again rather than keeping anything.
 
-**Measured:** the `net8.0` build of `ZoomAutoAdmit.WebAutomation.Tests` runs **322 tests, all
-passing**, with no Windows API on any path. That is the evidence that the automation logic runs off
-Windows — not that a build succeeded.
+**Measured, and then measured again properly.** The `net8.0` build of
+`ZoomAutoAdmit.WebAutomation.Tests` first ran 322 tests, all passing — **on Windows**. Running the
+same build inside a Linux container is what it actually takes, and 60 of those 322 failed there, all
+with one cause: `RecordingApiServer` is the Windows app's own loopback API, built on `HttpListener`,
+and the managed `HttpListener` on Linux refuses its prefix outright.
+
+Compiling for `net8.0` on Windows had said nothing about Linux, exactly as compiling with a Windows
+target had said nothing about the P/Invokes. The loopback server is now out of the `net8.0` build —
+nothing off Windows wants it, since the worker reaches the backend over its own socket and never
+opens a port — while `RecordingApiRequestParser`, which the agent genuinely uses and which is plain
+parsing, stays in both.
+
+**On Linux, in a container: 207 WebAutomation tests and 19 CloudWorker tests, all passing.** On
+Windows the same assembly still runs all 322. That is the evidence.
 
 ---
 
@@ -233,7 +244,8 @@ Credentials are never to be sent in chat; they belong in the server's own secret
 | Date | Change |
 |---|---|
 | 2026-09-19 | `Core` and `WebAutomation` multi-target `net8.0;net8.0-windows10.0.19041.0`. Both build for `net8.0`; the full Windows solution still builds with 0 errors and 0 warnings. The `net8.0` build of `WebAutomation` is **not** runnable yet — see §2 |
-| 2026-09-19 | The credential seam is built and the `net8.0` build is runnable: `ILmsCredentialBackend`, `LmsCredentialBackend.Current`, `InMemoryLmsCredentialBackend`, and a resolver for Zoom sign-in references. 322 WebAutomation tests pass on `net8.0`. `CentralAgent` multi-targets too, with `FileDeviceTokenStore` for a machine that has no Credential Manager |
+| 2026-09-19 | The credential seam is built: `ILmsCredentialBackend`, `LmsCredentialBackend.Current`, `InMemoryLmsCredentialBackend`, and a resolver for Zoom sign-in references. `CentralAgent` multi-targets too, with `FileDeviceTokenStore` for a machine that has no Credential Manager |
 | 2026-09-19 | `ZoomAutoAdmit.CloudWorker` added: `net8.0` only, on purpose, so a Windows-only reference cannot creep in unnoticed. Settings from the environment, a six-check preflight that actually launches Chromium, in-memory credentials, and enrolment against the existing device-token flow. It does **not** connect yet, because there are no job types for the class stages to answer for |
 | 2026-09-19 | `deploy/`: Dockerfiles for the backend and the worker, `docker-compose.coolify.yml`, `.env.example`, and `COOLIFY_DEPLOYMENT.md` |
 | 2026-09-19 | Both images built and the stack run. **Chromium 151.0.7922.34 launches headless on Linux inside the worker image** — the portability question this whole migration rests on. The `/dev/shm` guard was tested both ways. Postgres and backend both report healthy, `0001`→`0013` migrate from empty into 24 tables, and the several-admins rules were exercised over HTTP against that database: two admins created, the second signed in as `admin` and made a third, promoting a coordinator refused with `400`, deleting one answered with what went. Five defects were found by building rather than by reading, and fixed |
+| 2026-09-20 | The class stages exist. Nine job types on the server (`class.open`, `class.admit`, `class.attendance`, `class.end`, `zoom.report`, `zoom.recording`, `lms.run_session`, `lms.attendance`, `lms.complete`), each routed by capability so a recording-only agent is never handed one, with a shared validator that insists a class says whose it is. Three of them are built in the worker, on the same `LmsSessionRunner` the Windows app drives. **Running the portable tests inside a Linux container for the first time found 60 failures the Windows `net8.0` build had hidden** - all `RecordingApiServer`, all `HttpListener`. It is out of the portable build now: 207 + 19 tests pass on Linux, 322 still pass on Windows |

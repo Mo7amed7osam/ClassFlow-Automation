@@ -15,14 +15,22 @@ which is which will waste your afternoon.
 | Backend (FastAPI) + dashboard | Built and tested. 410 tests pass against a real PostgreSQL |
 | PostgreSQL, volumes, migrations | Built. Migration chain `0001` → `0013`, single head |
 | Cloud worker: settings, preflight, credentials, enrolment | Built. Runs, checks a machine, reports honestly |
-| Cloud worker: **doing the class stages** | **Not built.** See below |
+| Cloud worker: the class stages | **Partly.** The three LMS stages are built and unit tested; the Zoom stages are not, and the worker does not claim to do them. None has run against the real LMS |
 | Dockerfiles and compose | **Built and run.** Both images build; the stack comes up, migrates and answers. See §7 |
 
-The worker today starts, proves the machine can drive Chromium, holds LMS passwords the way a server
-must, and knows whether it is enrolled. What it does **not** have is job types for the class stages.
-The backend knows one job type, `recording.process`, which attaches a Drive link to an LMS session.
-Opening a meeting, admitting the waiting room, taking attendance, assigning roles, completing on the
-LMS — none of those have a server-side path yet. `FEATURE_PARITY.md` has the full inventory.
+The backend now knows ten job types: `recording.process` as before, and nine stages of a class.
+Each is routed by the capability a device reports, so a recording-only agent is never handed one.
+
+The worker runs three of them — `lms.run_session`, `lms.attendance` and `lms.complete` — on the same
+`LmsSessionRunner` the Windows app drives, under the account the class names. It reports only the
+`lms` capability, so the six Zoom stages (opening a meeting, admitting, snapshots, ending, and
+Zoom's own report afterwards) are never given to it: those jobs stay queued, which is visible, rather
+than being taken and failed, which reads as a class that went wrong.
+
+It also does not connect yet. The account source that fetches a coordinator's LMS sign-in from the
+server has no route to it — the endpoint exists and is audited, but it accepts a dashboard session
+and not a device token. A connected worker would take an LMS stage and fail it for want of a
+sign-in, which is worse than not connecting. `FEATURE_PARITY.md` has the full inventory.
 
 So: **this deployment gets the backend, the dashboard and a worker that is ready to be given work.**
 It does not yet run a class by itself. `ZoomAutoAdmit.CloudWorker/Program.cs` says the same thing and

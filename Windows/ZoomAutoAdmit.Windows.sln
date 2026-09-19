@@ -50,6 +50,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZoomAutoAdmit.Setup", "src\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZoomAutoAdmit.CloudWorker", "src\ZoomAutoAdmit.CloudWorker\ZoomAutoAdmit.CloudWorker.csproj", "{7B4B82D9-9861-4339-BBDB-1490167CA28D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZoomAutoAdmit.CloudWorker.Tests", "tests\ZoomAutoAdmit.CloudWorker.Tests\ZoomAutoAdmit.CloudWorker.Tests.csproj", "{2696320F-8352-4752-A51B-424BF9F70F91}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -144,6 +146,10 @@ Global
 		{7B4B82D9-9861-4339-BBDB-1490167CA28D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7B4B82D9-9861-4339-BBDB-1490167CA28D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7B4B82D9-9861-4339-BBDB-1490167CA28D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2696320F-8352-4752-A51B-424BF9F70F91}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2696320F-8352-4752-A51B-424BF9F70F91}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2696320F-8352-4752-A51B-424BF9F70F91}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2696320F-8352-4752-A51B-424BF9F70F91}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -166,5 +172,6 @@ Global
 		{F2CA0F5A-52DA-4952-A5AF-CE5E018D2A8D} = {90388369-4D7C-4221-9571-CCC8EF41FBCD}
 		{BE4144D8-EB7D-44EE-8F59-63B5840455F2} = {B6F428AB-AFD3-427A-BE30-794DB3318B5A}
 		{7B4B82D9-9861-4339-BBDB-1490167CA28D} = {B6F428AB-AFD3-427A-BE30-794DB3318B5A}
+		{2696320F-8352-4752-A51B-424BF9F70F91} = {90388369-4D7C-4221-9571-CCC8EF41FBCD}
 	EndGlobalSection
 EndGlobal

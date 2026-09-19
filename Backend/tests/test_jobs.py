@@ -119,3 +119,113 @@ def test_health_needs_no_key_and_reveals_nothing(client):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
+
+
+# ============================================================ the stages of a class
+
+PLAN = "11111111-2222-3333-4444-555555555555"
+COORDINATOR = "66666666-7777-8888-9999-000000000000"
+LMS_ACCOUNT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+def stage_payload(**overrides):
+    payload = {
+        "classPlanId": PLAN,
+        "group": "CAI5_AIS4_S7",
+        "date": "2026-09-20",
+        "startTime": "19:00",
+        "coordinatorId": COORDINATOR,
+        "meetingUrl": "https://zoom.us/j/1234567890",
+    }
+    payload.update(overrides)
+    return {k: v for k, v in payload.items() if v is not None}
+
+
+def post_stage(client, job_type, payload=None, key=None):  # noqa: ANN001, ANN201
+    headers = client_headers()
+    if key is not None:
+        headers["Idempotency-Key"] = key
+    return client.post("/api/v1/jobs", json={"type": job_type, "payload": payload or stage_payload()},
+                       headers=headers)
+
+
+@pytest.mark.parametrize("job_type", [
+    "class.open", "class.admit", "class.attendance", "class.end", "zoom.report", "zoom.recording",
+])
+def test_every_zoom_stage_of_a_class_is_accepted(client, job_type):
+    response = post_stage(client, job_type)
+    assert response.status_code == 202, response.text
+    job = get_job(client, response.json()["jobId"])
+    assert job["type"] == job_type
+    assert job["status"] == "queued"
+    assert job["payload"]["classPlanId"] == PLAN
+    assert job["payload"]["coordinatorId"] == COORDINATOR
+    assert job["payload"]["dryRun"] is False
+
+
+@pytest.mark.parametrize("job_type", ["lms.run_session", "lms.attendance", "lms.complete"])
+def test_an_lms_stage_must_say_whose_sign_in_writes_it_up(client, job_type):
+    """The rule that matters: a class is written up under its own coordinator's account, never
+    under whoever the machine last used."""
+    refused = post_stage(client, job_type, stage_payload(lmsAccountId=None))
+    assert refused.status_code == 400
+    assert "lmsAccountId" in refused.json()["details"]
+
+    accepted = post_stage(client, job_type, stage_payload(lmsAccountId=LMS_ACCOUNT))
+    assert accepted.status_code == 202, accepted.text
+    assert get_job(client, accepted.json()["jobId"])["payload"]["lmsAccountId"] == LMS_ACCOUNT
+
+
+def test_opening_a_meeting_needs_somewhere_to_open(client):
+    refused = post_stage(client, "class.open", stage_payload(meetingUrl=None))
+    assert refused.status_code == 400
+    assert "meetingUrl" in refused.json()["details"]
+
+    # The stages that join a meeting already live do not need one.
+    assert post_stage(client, "class.admit", stage_payload(meetingUrl=None)).status_code == 202
+
+
+def test_a_class_always_says_whose_it_is(client):
+    for missing in ("coordinatorId", "classPlanId"):
+        refused = post_stage(client, "class.admit", stage_payload(**{missing: None}))
+        assert refused.status_code == 400, f"{missing} was accepted as missing"
+        assert missing in refused.json()["details"]
+
+
+@pytest.mark.parametrize("payload,fragment", [
+    (stage_payload(classPlanId="not-a-uuid"), "UUID"),
+    (stage_payload(coordinatorId="1234"), "UUID"),
+    (stage_payload(date="20-09-2026"), "yyyy-MM-dd"),
+    (stage_payload(startTime="7pm"), "HH:mm"),
+    (stage_payload(group=""), "'group' is required"),
+    (stage_payload(meetingUrl="http://zoom.us/j/1"), "https"),
+    (stage_payload(meetingUrl="https://user:pw@zoom.us/j/1"), "user name"),
+])
+def test_a_bad_stage_payload_is_refused_with_a_reason(client, payload, fragment):
+    response = post_stage(client, "class.admit", payload)
+    assert response.status_code == 400
+    assert fragment in response.json()["details"]
+
+
+def test_a_stage_payload_refuses_a_field_it_does_not_know(client):
+    response = post_stage(client, "class.admit", stage_payload(**{}) | {"engine": "web"})
+    assert response.status_code == 400
+    assert "engine" in response.json()["details"]
+
+
+def test_the_same_stage_of_the_same_class_is_created_once(client):
+    """Idempotency is what stops a retried caller opening the same meeting twice."""
+    first = post_stage(client, "class.open", key="class-open-plan-1")
+    second = post_stage(client, "class.open", key="class-open-plan-1")
+    assert first.status_code == 202 and second.status_code == 200
+    assert first.json()["jobId"] == second.json()["jobId"]
+
+
+def test_a_stage_goes_only_to_a_device_that_can_run_it(client):
+    """A recording-only agent must never be handed a class stage, and the routing is by
+    capability, not by hope."""
+    from central_backend.validation import JOB_TYPES
+
+    assert JOB_TYPES["recording.process"] == "recording_processing"
+    assert {JOB_TYPES[t] for t in ("class.open", "class.admit", "zoom.report")} == {"zoom_web"}
+    assert {JOB_TYPES[t] for t in ("lms.run_session", "lms.attendance", "lms.complete")} == {"lms"}
