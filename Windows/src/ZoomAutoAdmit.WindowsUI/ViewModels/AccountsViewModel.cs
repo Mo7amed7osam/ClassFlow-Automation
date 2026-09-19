@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Windows.Input;
 using ZoomAutoAdmit.Core.Sessions;
 using ZoomAutoAdmit.WindowsRuntime;
@@ -11,6 +11,7 @@ public sealed class AccountsViewModel : ObservableObject
 {
     private readonly IWindowsUiService _service;
     private readonly IZoomProfileCredentialStore _credentials;
+    private readonly SignedInScope _scope;
     private WindowsMeetingAccountMetadata? _selectedAccount;
     private string _accountId = string.Empty;
     private string _displayName = string.Empty;
@@ -22,10 +23,15 @@ public sealed class AccountsViewModel : ObservableObject
     private EnginePreference _preferredEngine;
     private string _statusMessage = string.Empty;
 
-    public AccountsViewModel(IWindowsUiService service, IZoomProfileCredentialStore? credentials = null)
+    public AccountsViewModel(IWindowsUiService service, IZoomProfileCredentialStore? credentials = null,
+        SignedInScope? scope = null)
     {
         _service = service;
         _credentials = credentials ?? new ZoomProfileCredentialStore();
+        // One PC holds everybody's Zoom accounts; a coordinator signed in here sees only the ones
+        // that host a group of theirs.
+        _scope = scope ?? new SignedInScope(() => null);
+        _scope.Changed += () => _ = RefreshAsync();
         NewCommand = new RelayCommand(_ => ClearEditor());
         SaveCommand = new AsyncRelayCommand(_ => SaveAsync());
         DeleteCommand = new AsyncRelayCommand(_ => DeleteAsync());
@@ -75,11 +81,23 @@ public sealed class AccountsViewModel : ObservableObject
     public ICommand DeleteCommand { get; }
     public ICommand SwitchAccountCommand { get; }
 
+    /// <summary>What this PC is showing less of, and why. Empty when the whole list is shown.</summary>
+    public string ScopeNote { get => _scopeNote; private set => SetProperty(ref _scopeNote, value); }
+    private string _scopeNote = string.Empty;
+
     public async Task RefreshAsync()
     {
         var accounts = await _service.GetAccountsAsync();
+        // An account hosts a group: its own GroupName, or failing that the id, which is the group
+        // code on every account the app makes.
+        var mine = accounts.Where(account => _scope.Owns(account.GroupName ?? account.AccountId)).ToArray();
+        var keep = SelectedAccount?.AccountId;
         Items.Clear();
-        foreach (var account in accounts) Items.Add(account);
+        foreach (var account in mine) Items.Add(account);
+        ScopeNote = _scope.Narrowed(mine.Length, accounts.Count, "Zoom account(s)");
+        // Somebody else's account was open when the sign-in changed: let go of it.
+        if (keep != null && !Items.Any(a => a.AccountId.Equals(keep, StringComparison.OrdinalIgnoreCase)))
+            ClearEditor();
     }
 
     public async Task SaveAsync()

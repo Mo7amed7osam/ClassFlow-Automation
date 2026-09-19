@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Windows.Input;
 using ZoomAutoAdmit.SessionRoles;
 using ZoomAutoAdmit.WindowsUI.Infrastructure;
@@ -19,10 +19,15 @@ public sealed class SessionRolesViewModel : ObservableObject
     private string _accounts = string.Empty;
     private string _coHosts = string.Empty;
     private string _status = "Pick a session type, then list who may be made co-host in it.";
+    private readonly Services.SignedInScope _scope;
 
-    public SessionRolesViewModel(ISessionRoleStore? store = null)
+    public SessionRolesViewModel(ISessionRoleStore? store = null, Services.SignedInScope? scope = null)
     {
         _store = store ?? new JsonSessionRoleStore();
+        // One PC holds everybody's session types; a coordinator sees the ones that name a group of
+        // theirs, and the ones that name no group at all because those cover their meetings too.
+        _scope = scope ?? new Services.SignedInScope(() => null);
+        _scope.Changed += Load;
         NewCommand = new RelayCommand(_ => ClearEditor());
         SaveCommand = new RelayCommand(_ => Save());
         DeleteCommand = new RelayCommand(_ => Delete());
@@ -37,6 +42,9 @@ public sealed class SessionRolesViewModel : ObservableObject
     public event Action<string, string>? ProfileSaved;
 
     public ObservableCollection<SessionRoleProfile> Profiles { get; } = [];
+    /// <summary>What this PC is showing less of, and why. Empty when the whole list is shown.</summary>
+    public string ScopeNote { get => _scopeNote; private set => SetProperty(ref _scopeNote, value); }
+    private string _scopeNote = string.Empty;
     public ObservableCollection<RoleAssignment> History { get; } = [];
     public SessionRoleProfile? SelectedProfile
     {
@@ -181,8 +189,10 @@ public sealed class SessionRolesViewModel : ObservableObject
     private void RefreshLists()
     {
         Profiles.Clear();
-        foreach (var profile in _document.Profiles.OrderBy(profile => profile.SessionType, StringComparer.OrdinalIgnoreCase))
-            Profiles.Add(profile);
+        var mine = _document.Profiles.Where(profile => _scope.OwnsAny(profile.Accounts))
+            .OrderBy(profile => profile.SessionType, StringComparer.OrdinalIgnoreCase).ToArray();
+        foreach (var profile in mine) Profiles.Add(profile);
+        ScopeNote = _scope.Narrowed(mine.Length, _document.Profiles.Count, "session type(s)");
         History.Clear();
         foreach (var entry in _document.History.Take(50)) History.Add(entry);
         RefreshTypeOptions();

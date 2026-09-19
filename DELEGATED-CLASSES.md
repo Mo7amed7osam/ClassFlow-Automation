@@ -97,6 +97,29 @@ Automation stops), and a scheduled class needs a logged-in interactive user. A P
 should open its classes with the browser engine - **Use for all shown** on the Schedules page sets
 that for every class at once.
 
+## One PC, several people signing in
+
+The classes run for everybody, but the pages belong to whoever is signed in. A coordinator opening
+this PC after the admin would otherwise find the admin's Zoom accounts on **Accounts**, their groups
+on **Groups & Students**, and their session types on **Session Roles** — none of it theirs.
+
+Splitting the files per account would be the wrong fix: a scheduled class opens in its own process
+with nobody signed in, and it has to find every class this PC runs, whoever owns it. So the files
+stay where they are and the pages narrow instead. Everything the app keeps is keyed by group — a
+Zoom account hosts one, a roster is one, a session type names them, a class belongs to one — and the
+server already knows which groups are whose. `SignedInScope` is that one rule:
+
+| Signed in as | Sees |
+|---|---|
+| nobody | everything, exactly as a PC that only ever ran its own classes |
+| an admin | everything |
+| a coordinator | the groups they were given, and nothing else |
+
+A page showing less than the PC holds says so (`Showing the 2 Zoom account(s) of your groups; 3 on
+this PC belong to somebody else.`), so nothing looks lost. Signing in as somebody else narrows every
+page at once, and anything of the previous person's left open in an editor is let go. A session type
+that names no group at all covers every meeting, theirs included, so it is still shown.
+
 ## Two at once
 
 * **Zoom.** The existing allocation policy already gives the first live class the Zoom desktop app

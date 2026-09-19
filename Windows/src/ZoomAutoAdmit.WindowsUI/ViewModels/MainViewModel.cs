@@ -1,4 +1,4 @@
-using ZoomAutoAdmit.WindowsUI.Infrastructure;
+﻿using ZoomAutoAdmit.WindowsUI.Infrastructure;
 using ZoomAutoAdmit.WindowsUI.Services;
 using ZoomAutoAdmit.Roster;
 using ZoomAutoAdmit.Core.Formatting;
@@ -73,7 +73,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Central = central ?? new CentralViewModel();
         Central.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName is nameof(CentralViewModel.IsSignedIn) or nameof(CentralViewModel.IsAdmin)) RefreshNavigation();
+            if (e.PropertyName is not (nameof(CentralViewModel.IsSignedIn) or nameof(CentralViewModel.IsAdmin))) return;
+            RefreshNavigation();
+            // Somebody else signed in: every page that shows things by group looks again, so the
+            // list on screen is theirs and not the one before them.
+            Scope.Refresh();
         };
         // "Check sheet" looks first at what n8n sent the central server from the recordings sheet.
         LmsSessions.CentralDriveLink = async (group, date, start) =>
@@ -96,13 +100,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // And the classes this PC opens by itself, so a new PC - a cloud one - finds them there
         // instead of being set up again.
         OwnSchedules = new ScheduleServerSync(Central.Api);
+        // What the signed-in person may see on this shared PC. Every page that lists things keyed
+        // by group narrows through it, so a coordinator never finds somebody else's work here.
+        Scope = new SignedInScope(() => Central.Api.Me);
         StartMeeting = new StartMeetingViewModel(service);
-        Accounts = new AccountsViewModel(service);
+        Accounts = new AccountsViewModel(service, scope: Scope);
         Schedules = new SchedulesViewModel(service);
         Logs = new LogsViewModel();
-        SessionRoles = new SessionRolesViewModel();
+        SessionRoles = new SessionRolesViewModel(scope: Scope);
         AiMatching = new AiMatchingViewModel(aiCredentials ?? new AiCredentialStore(), aiService ?? new AiMatchingService());
-        Roster = new GroupRosterViewModel(groups ?? new GroupRosterStore(log: ConsoleLogger.Info), groupDialogs ?? new GroupRosterDialogs());
+        Roster = new GroupRosterViewModel(groups ?? new GroupRosterStore(log: ConsoleLogger.Info),
+            groupDialogs ?? new GroupRosterDialogs(), Scope);
         Attendance = new AttendanceViewModel(
             attendanceHistory ?? new AttendanceHistoryReader(),
             AiMatching,
@@ -154,6 +162,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public LmsSessionsViewModel LmsSessions { get; }
     /// <summary>The central server's recordings, accounts and groups, as pages of the app.</summary>
     public CentralViewModel Central { get; }
+    /// <summary>What the signed-in person may see of what this PC holds.</summary>
+    public SignedInScope Scope { get; }
     public StartMeetingViewModel StartMeeting { get; }
     public AccountsViewModel Accounts { get; }
     public SchedulesViewModel Schedules { get; }

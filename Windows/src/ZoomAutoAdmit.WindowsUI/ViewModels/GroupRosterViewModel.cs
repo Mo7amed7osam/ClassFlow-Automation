@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Windows.Input;
 using ZoomAutoAdmit.Roster;
 using ZoomAutoAdmit.WindowsUI.Infrastructure;
@@ -11,16 +11,21 @@ public sealed class GroupRosterViewModel : ObservableObject
     private readonly IGroupRosterService _service;
     private readonly IGroupRosterDialogs _dialogs;
     private IReadOnlyList<RosterGroup> _all = [];
+    private readonly Services.SignedInScope _scope;
     private RosterGroup? _group;
     private GroupStudent? _student;
     private bool _idle = true, _hasGroup;
     private string _groupId = "", _displayName = "", _groupSearch = "", _studentSearch = "", _status = "";
     private string _studentId = "", _order = "1", _fullName = "", _aliases = "", _email = "";
 
-    public GroupRosterViewModel(IGroupRosterService service, IGroupRosterDialogs dialogs)
+    public GroupRosterViewModel(IGroupRosterService service, IGroupRosterDialogs dialogs,
+        Services.SignedInScope? scope = null)
     {
         _service = service;
         _dialogs = dialogs;
+        // One PC holds everybody's rosters; a coordinator signed in here sees only their groups.
+        _scope = scope ?? new Services.SignedInScope(() => null);
+        _scope.Changed += () => { FilterGroups(); };
         RefreshCommand = new AsyncRelayCommand(_ => RefreshAsync());
         NewGroupCommand = new RelayCommand(_ => { if (IsIdle) { SelectedGroup = null; GroupId = DisplayName = ""; } });
         SaveGroupCommand = new AsyncRelayCommand(_ => SaveGroupAsync());
@@ -37,6 +42,9 @@ public sealed class GroupRosterViewModel : ObservableObject
     public IGroupRosterService Service => _service;
     public IGroupRosterDialogs Dialogs => _dialogs;
     public ObservableCollection<RosterGroup> Groups { get; } = [];
+    /// <summary>What this PC is showing less of, and why. Empty when every group is shown.</summary>
+    public string ScopeNote { get => _scopeNote; private set => SetProperty(ref _scopeNote, value); }
+    private string _scopeNote = string.Empty;
     public ObservableCollection<GroupStudent> Students { get; } = [];
     public RosterGroup? SelectedGroup
     {
@@ -206,10 +214,14 @@ public sealed class GroupRosterViewModel : ObservableObject
     {
         string? id = SelectedGroup?.GroupId;
         string query = GroupSearch?.Trim() ?? "";
+        // Whose they are first, then what was typed in the box.
+        var mine = _all.Where(g => _scope.Owns(g.GroupId)).ToArray();
         Groups.Clear();
-        foreach (var group in _all.Where(g => g.GroupId.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+        foreach (var group in mine.Where(g => g.GroupId.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                      g.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase))) Groups.Add(group);
-        if (id != null) SelectedGroup = Groups.FirstOrDefault(g => g.GroupId == id);
+        ScopeNote = _scope.Narrowed(mine.Length, _all.Count, "group(s)");
+        // A group that is no longer theirs must not stay open with its students on screen.
+        SelectedGroup = id == null ? SelectedGroup : Groups.FirstOrDefault(g => g.GroupId == id);
     }
 
     private void FilterStudents()
