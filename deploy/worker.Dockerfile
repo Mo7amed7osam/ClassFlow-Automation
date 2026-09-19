@@ -19,7 +19,13 @@ COPY Windows/src/ZoomAutoAdmit.AttendanceMatching/ZoomAutoAdmit.AttendanceMatchi
 COPY Windows/src/ZoomAutoAdmit.WebAutomation/ZoomAutoAdmit.WebAutomation.csproj       Windows/src/ZoomAutoAdmit.WebAutomation/
 COPY Windows/src/ZoomAutoAdmit.CentralAgent/ZoomAutoAdmit.CentralAgent.csproj         Windows/src/ZoomAutoAdmit.CentralAgent/
 COPY Windows/src/ZoomAutoAdmit.CloudWorker/ZoomAutoAdmit.CloudWorker.csproj           Windows/src/ZoomAutoAdmit.CloudWorker/
-RUN dotnet restore Windows/src/ZoomAutoAdmit.CloudWorker/ZoomAutoAdmit.CloudWorker.csproj
+# EnableWindowsTargeting, and it is not a contradiction. The worker itself is net8.0 alone, but the
+# libraries it references multi-target, and `restore` evaluates every target framework a referenced
+# project declares - including net8.0-windows, which Linux refuses to restore without this. The
+# build that follows still picks each library's net8.0 output; this only lets restore read past the
+# Windows one rather than stopping at it.
+RUN dotnet restore Windows/src/ZoomAutoAdmit.CloudWorker/ZoomAutoAdmit.CloudWorker.csproj \
+      -p:EnableWindowsTargeting=true
 
 COPY Windows/src/ZoomAutoAdmit.Core/               Windows/src/ZoomAutoAdmit.Core/
 COPY Windows/src/ZoomAutoAdmit.Roster/             Windows/src/ZoomAutoAdmit.Roster/
@@ -31,7 +37,17 @@ COPY Windows/src/ZoomAutoAdmit.CloudWorker/        Windows/src/ZoomAutoAdmit.Clo
 # The worker targets net8.0 alone. If a Windows-only project ever creeps into its references, this
 # line fails on Linux, which is the point of keeping it net8.0 and not multi-targeted.
 RUN dotnet publish Windows/src/ZoomAutoAdmit.CloudWorker/ZoomAutoAdmit.CloudWorker.csproj \
-      -c Release -o /app --no-restore
+      -c Release -o /app --no-restore -p:EnableWindowsTargeting=true
+
+# The package's MSBuild targets are meant to copy the .playwright driver - the bundled node and
+# the CLI it runs - into the output. They do not here, whether the reference is direct or
+# transitive, and publish leaves only playwright.ps1, a PowerShell wrapper this image cannot run.
+# The driver is in the package either way, so it is taken from there: one path, and no dependence
+# on which target happened to fire.
+RUN set -eux; \
+    driver="$(find /root/.nuget/packages/microsoft.playwright -maxdepth 2 -name .playwright -type d | head -1)"; \
+    test -n "$driver"; \
+    cp -r "$driver" /app/.playwright
 
 # ---------------------------------------------------------------------------------- run
 FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy AS runtime
@@ -49,8 +65,16 @@ COPY --from=build /app .
 # Playwright's browsers go somewhere every user can read, not into root's home: the worker runs as
 # an unprivileged user and would not find them there.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN dotnet ZoomAutoAdmit.CloudWorker.dll --help >/dev/null 2>&1 || true \
- && ./playwright.sh install --with-deps chromium \
+# `dotnet publish` leaves only playwright.ps1 - a PowerShell script this image has no shell for.
+# The Playwright CLI is inside the assembly, so it is driven through the app's own dependency
+# graph instead: `dotnet ... --% install` is what playwright.sh would have run anyway.
+# `dotnet publish` leaves playwright.ps1, a PowerShell script this image has no shell for. The CLI
+# itself is in Microsoft.Playwright.dll, but it is a library: running it needs the worker's own
+# runtime configuration and dependency list, which is exactly what playwright.sh would have passed.
+# Driven by the node that ships with the driver, so nothing here depends on a Node installed in
+# the image. --with-deps is what pulls in the libraries Chromium links against, and it needs root,
+# which is why this runs before the unprivileged user is switched to below.
+RUN ./.playwright/node/linux-x64/node ./.playwright/package/cli.js install --with-deps chromium \
  && chmod -R a+rX /ms-playwright
 
 # An unprivileged user, and Chromium keeps its own sandbox: --no-sandbox is a common piece of advice

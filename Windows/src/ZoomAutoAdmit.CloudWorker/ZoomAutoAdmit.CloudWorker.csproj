@@ -21,6 +21,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Directly, although WebAutomation already brings it: the package's own targets copy the
+         .playwright driver (node and the browser registry) into the output of the project that
+         names it, and a transitive reference does not get that. Without this the worker publishes
+         without a driver and answers "missing required assets" the first time it opens a page. -->
+    <PackageReference Include="Microsoft.Playwright" Version="1.62.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="ZoomAutoAdmit.CloudWorker.Tests" />
   </ItemGroup>
 

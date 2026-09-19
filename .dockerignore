@@ -1,0 +1,65 @@
+# What must not reach a build context.
+#
+# The first reason is correctness, not size. `dotnet restore` runs in the image and writes its
+# answer to obj/project.assets.json; a later COPY of the same folder from a Windows machine puts
+# that machine's assets file on top of it, and the publish then looks for packages that were never
+# restored here. That failure reads as "Package System.Text.Json, version 6.0.10 was not found",
+# which says nothing about the real cause.
+#
+# The second reason is that a build context carries whatever it is given: a .venv, a node_modules,
+# a browser profile and an env file are all things that have no business inside an image.
+
+# Build output. See above: these actively break the build, they do not merely bloat it.
+**/bin/
+**/obj/
+**/dist/
+**/node_modules/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+.build/
+
+# Secrets. Nothing in an image, and nothing in a layer that an image is made from.
+**/*.env
+!deploy/.env.example
+api.env
+api_key.env
+
+# Local state and captures, regenerated and never source.
+diagnostics/
+**/diagnostics/
+**/*.log
+**/*.jsonl
+_local-before-branch-restore/
+**/_local-before-branch-restore/
+
+# Nothing in these is needed to build the backend, the dashboard or the worker. The Windows-only
+# projects are left out one by one rather than by a blanket rule, because the worker genuinely does
+# build from Windows/src - just not from these.
+Windows/src/ZoomAutoAdmit.WindowsUI/
+Windows/src/ZoomAutoAdmit.WindowsRuntime/
+Windows/src/ZoomAutoAdmit.UIAutomation/
+Windows/src/ZoomAutoAdmit.Inspector/
+Windows/src/ZoomAutoAdmit.WaitingRoomAutomation/
+Windows/src/ZoomAutoAdmit.WaitingRoomTester/
+Windows/src/ZoomAutoAdmit.Setup/
+Windows/src/ZoomAutoAdmit.Attendance/
+Windows/src/ZoomAutoAdmit.SessionRoles/
+Windows/tests/
+Windows/design-reference/
+Windows/installer/
+Windows/web/
+
+# The macOS half.
+Sources/
+Tests/
+AppBundle/
+Package.swift
+
+# Repository furniture.
+.git/
+.github/
+.claude/
+**/*.md
+!Backend/README.md
