@@ -66,7 +66,11 @@ async def _revoke(device_id: uuid.UUID) -> bool:
 
 
 async def _create_admin(username: str, password_hash: str, display_name: str) -> str | None:
-    """Insert the one admin account; the reason it could not be, or None."""
+    """Insert an admin account; the reason it could not be, or None.
+
+    This is how the first admin is made, before anyone can sign in. After that an admin makes
+    another from the Users page, so this command is the way back in when every admin is locked out
+    - it therefore no longer refuses because an admin already exists."""
     from sqlalchemy import select
 
     from .models import User
@@ -74,11 +78,8 @@ async def _create_admin(username: str, password_hash: str, display_name: str) ->
     engine = make_engine(database_url())
     try:
         async with make_sessionmaker(engine)() as session, session.begin():
-            existing = (await session.execute(select(User.username).where(User.role == "admin"))).scalar_one_or_none()
-            if existing is not None:
-                return f"There is already an admin account ('{existing}'). There can be only one."
             if (await session.execute(select(User.id).where(User.username == username))).first():
-                return f"The username '{username}' is taken by a coordinator."
+                return f"The username '{username}' is already taken."
             now = datetime.now(UTC)
             session.add(User(id=uuid.uuid4(), username=username, display_name=display_name, password_hash=password_hash,
                              role="admin", status="active", approved_at=now, created_at=now, updated_at=now))
@@ -120,8 +121,8 @@ def _create_admin_command(username: str | None, display_name: str | None, from_e
         elif len(legacy) == 1:
             name = next(iter(legacy))
         else:
-            print(f"{LEGACY_ADMIN_USERS_VARIABLE} has {len(legacy)} accounts ({', '.join(legacy)}), and there is only one "
-                  "admin now. Choose it with --username.", file=sys.stderr)
+            print(f"{LEGACY_ADMIN_USERS_VARIABLE} has {len(legacy)} accounts ({', '.join(legacy)}). Choose one "
+                  "with --username, and run the command again for each of the others.", file=sys.stderr)
             return 1
         stored = legacy[name]
         left_behind = [other for other in legacy if other != name]
@@ -147,8 +148,8 @@ def _create_admin_command(username: str | None, display_name: str | None, from_e
         return 1
     print(f"Admin account '{name}' created. Sign in at /dashboard/.")
     if left_behind:
-        print(f"Not imported: {', '.join(left_behind)}. There is one admin now; if they still need the "
-              "dashboard, create them as coordinators on the Users page.")
+        print(f"Not imported: {', '.join(left_behind)}. Run this command again for each of them, or "
+              "create them on the Users page.")
     if from_env:
         print(f"{LEGACY_ADMIN_USERS_VARIABLE} is no longer read; remove it from the environment.")
     return 0

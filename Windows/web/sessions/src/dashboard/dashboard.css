@@ -80,10 +80,13 @@
 .user-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card-2); }
 .user-row.off { opacity: .6; }
 .avatar { --hue: 250; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: #fff; background: hsl(var(--hue) 60% 50%); flex: none; }
+/* min-width: 0 so a long name shortens instead of pushing the tags out of the box and over the
+   group chips next to it; the name line wraps rather than overflowing when both tags are there. */
 .who { display: flex; flex-direction: column; min-width: 160px; flex: 1; }
-.who b { display: flex; align-items: center; gap: 6px; }
+.who b { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 4px; min-width: 0; }
+.who-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .who span { font-size: 12px; color: var(--muted); }
-.role-tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 1px 7px; border-radius: 6px; background: var(--violet-soft); color: var(--violet); }
+.role-tag { flex: none; white-space: nowrap; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 1px 7px; border-radius: 6px; background: var(--violet-soft); color: var(--violet); }
 .role-tag.coordinator { background: var(--blue-soft); color: var(--blue); }
 .role-tag.off { background: var(--red-soft); color: var(--red); }
 .user-groups { display: flex; gap: 5px; flex-wrap: wrap; flex: 1.2; min-width: 140px; }

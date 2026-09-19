@@ -44,7 +44,7 @@ from .auth import (
     user_summary,
 )
 from .dashboard import group_items, parse_id
-from .models import AdminAuditLog, Group, User, UserGroup
+from .models import AdminAuditLog, ClassPlan, Group, LmsAccount, User, UserGroup, ZoomAccount
 from .observability import emit
 
 router = APIRouter(dependencies=[Depends(require_admin)])
@@ -107,8 +107,16 @@ async def list_users(
             statement = statement.where(User.status == status)
         if role:
             statement = statement.where(User.role == role)
-        pending_first = case((User.status == "pending", 0), (User.role == "admin", 1), else_=2)
-        users = (await session.execute(statement.order_by(pending_first, User.username))).scalars().all()
+        # Waiting first, because they are what the admin came to do; then the admins, then the
+        # working coordinators. An account that is disabled or rejected is not part of the day's
+        # work, so it goes to the bottom instead of sitting between two live ones.
+        order = case(
+            (User.status == "pending", 0),
+            (User.status.in_(("disabled", "rejected")), 4),
+            (User.role == "admin", 1),
+            else_=2,
+        )
+        users = (await session.execute(statement.order_by(order, User.username))).scalars().all()
         assignments = await groups_by_user(session, [u.id for u in users])
         counts = dict((await session.execute(select(User.status, func.count()).group_by(User.status))).all())
     return _no_store({
@@ -124,11 +132,18 @@ class CreateUserBody(BaseModel):
     displayName: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=MAX_PASSWORD)
     groupIds: list[uuid.UUID] = Field(default_factory=list, max_length=500)
+    # An account is what it is born as. There is no endpoint that changes a role afterwards, so a
+    # coordinator cannot become an admin by any route - only a new account can be one.
+    role: str = Field(default="coordinator", pattern=r"^(admin|coordinator)$")
 
 
 @router.post("/api/v1/admin/users", dependencies=writes)
 async def create_user(body: CreateUserBody, request: Request, admin: CurrentUser = Depends(require_admin)) -> JSONResponse:
-    """A coordinator account, active at once (no approval step needed)."""
+    """An account, active at once (no approval step needed).
+
+    With role "admin" the new account is an admin from birth, with the same powers as the admin
+    making it, including making further admins. A coordinator is never promoted into one: the role
+    is written here and nothing else writes it again."""
     username = normalise_username(body.username)
     display_name = body.displayName.strip()
     if not display_name:
@@ -140,12 +155,14 @@ async def create_user(body: CreateUserBody, request: Request, admin: CurrentUser
         if (await session.execute(select(User.id).where(User.username == username))).first():
             raise ApiError(409, "Conflict", "That username is taken.")
         user = User(id=uuid.uuid4(), username=username, display_name=display_name[:100],
-                    password_hash=hash_password(body.password), role="coordinator", status="active",
+                    password_hash=hash_password(body.password), role=body.role, status="active",
                     approved_at=now, approved_by=admin.id, created_at=now, updated_at=now)
         session.add(user)
         await session.flush()
-        names = await _set_groups(session, user, body.groupIds, admin, now)
-        audit(session, admin, "user.create", {"targetUserId": str(user.id), "targetUsername": username, "groups": names}, now)
+        # An admin sees every group already, so naming some for one would only be misleading.
+        names = [] if body.role == "admin" else await _set_groups(session, user, body.groupIds, admin, now)
+        audit(session, admin, "user.create",
+              {"targetUserId": str(user.id), "targetUsername": username, "role": body.role, "groups": names}, now)
         view = await _user_view(session, user)
     return _no_store(view, 201)
 
@@ -179,8 +196,17 @@ async def update_user(user_id: str, body: UpdateUserBody, request: Request,
             user.display_name = body.displayName.strip()[:100]
             changes["displayName"] = user.display_name
         if body.status is not None and body.status != user.status:
-            if user.role == "admin":
-                raise ApiError(409, "Conflict", "The admin account cannot be disabled.")
+            if user.id == admin.id:
+                raise ApiError(409, "Conflict", "You cannot disable your own account.")
+            if user.role == "admin" and body.status == "disabled":
+                # Disabling the last one would leave nobody who can approve, create or re-enable an
+                # account, and no endpoint can undo that.
+                others = (await session.execute(
+                    select(func.count()).select_from(User).where(
+                        User.role == "admin", User.status == "active", User.id != user.id))).scalar_one()
+                if others == 0:
+                    raise ApiError(409, "Conflict",
+                                   "This is the last active admin. Make another admin first.")
             if user.status not in ("active", "disabled"):
                 raise ApiError(409, "Conflict", f"A {user.status} account is approved or rejected first.")
             user.status = body.status
@@ -227,6 +253,45 @@ async def reject(user_id: str, request: Request, admin: CurrentUser = Depends(re
 class PasswordResetBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     password: str = Field(min_length=1, max_length=MAX_PASSWORD)
+
+
+@router.delete("/api/v1/admin/users/{user_id}", dependencies=writes)
+async def delete_user(user_id: str, request: Request,
+                      admin: CurrentUser = Depends(require_admin)) -> JSONResponse:
+    """Remove a coordinator for good, with everything that was theirs.
+
+    Deleting is not disabling: their LMS and Zoom accounts, their saved classes, their timetable,
+    their group assignments, their delegation and their sessions all go with them, because every
+    one of those tables is theirs alone and cascades. What stays is what is not theirs to take
+    away - the attendance already recorded, the recordings already attached, and the audit log,
+    which keeps their username so the record of what was done remains readable.
+
+    An admin account is never deleted here: being an admin is not something this endpoint should
+    be able to take away quietly, and there is no route back.
+    """
+    state = request.app.state
+    now = state.clock()
+    async with state.sessionmaker() as session, session.begin():
+        user = await _coordinator(session, user_id)
+        username = user.username
+        removed = {
+            "groups": (await session.execute(
+                select(func.count()).select_from(UserGroup).where(UserGroup.user_id == user.id))).scalar_one(),
+            "lmsAccounts": (await session.execute(
+                select(func.count()).select_from(LmsAccount).where(LmsAccount.user_id == user.id))).scalar_one(),
+            "zoomAccounts": (await session.execute(
+                select(func.count()).select_from(ZoomAccount).where(ZoomAccount.user_id == user.id))).scalar_one(),
+            "classPlans": (await session.execute(
+                select(func.count()).select_from(ClassPlan).where(ClassPlan.coordinator_id == user.id))).scalar_one(),
+        }
+        # Written before the row goes, so the audit row is part of the same transaction: either
+        # the account is gone and the record of it exists, or neither happened.
+        audit(session, admin, "user.delete",
+              {"targetUserId": str(user.id), "targetUsername": username, "removed": removed}, now)
+        await end_sessions(session, user.id)
+        await session.delete(user)
+    emit("admin.user_deleted", username=username, by=admin.username)
+    return _no_store({"deleted": True, "username": username, "removed": removed})
 
 
 @router.post("/api/v1/admin/users/{user_id}/password", dependencies=writes)

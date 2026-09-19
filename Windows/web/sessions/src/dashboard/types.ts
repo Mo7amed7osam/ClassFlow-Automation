@@ -1,4 +1,15 @@
 // What DashboardWebView.BuildState sends. Kept in step with that method by hand.
+/** An account on the Coordinators page: who they are, whether they still work here, their groups. */
+export interface DashUser {
+  id: string
+  username: string
+  displayName: string
+  role: string
+  status: string
+  lastLogin?: string | null
+  groups: { id: string; name: string }[]
+}
+
 export interface DashState {
   server: { up: boolean; text: string; detail: string; clientMode: boolean }
   status: string
@@ -13,7 +24,7 @@ export interface DashState {
     attentionRows: { group: string; title: string; date: string; start: string; next: string }[]
   }
   recordings: null | { total: number; onLms: number; pending: number; drive: number; zoomOnly: number; missing: number }
-  users: null | { id: string; username: string; displayName: string; role: string; status: string; lastLogin?: string | null; groups: { id: string; name: string }[] }[]
+  users: null | DashUser[]
   groups: null | { id: string; name: string }[]
   /** Whose classes this PC runs besides its own (absent on a server that predates it). */
   runs?: null | {

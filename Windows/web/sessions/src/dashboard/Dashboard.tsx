@@ -4,7 +4,7 @@ import { Icon } from '../components/Icon'
 import { Toasts, type Toast } from '../components/Dialogs'
 import { DaysPicker, rangeOf, type DayRange } from '../components/DaysPicker'
 import { groupHue, shortGroup } from '../logic'
-import type { Activity, DashState } from './types'
+import type { Activity, DashState, DashUser } from './types'
 import { demoDash } from './demo'
 
 type Result = { ok: boolean; message: string }
@@ -423,7 +423,12 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
   const users = state.users!
   const groups = state.groups!
   const pending = users.filter((u) => u.status === 'pending')
-  const others = users.filter((u) => u.status !== 'pending')
+  // Waiting accounts have their own section above. Of the rest, a disabled one is not part of the
+  // day's work, so it sits at the bottom instead of between two working coordinators.
+  const others = users
+    .filter((u) => u.status !== 'pending')
+    .slice()
+    .sort((a, b) => Number(a.status === 'disabled') - Number(b.status === 'disabled'))
   const [adding, setAdding] = useState(false)
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -501,7 +506,7 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
           <div key={u.id} className={`user-row${u.status === 'disabled' ? ' off' : ''}`}>
             <div className="avatar" style={{ '--hue': groupHue(u.username) } as React.CSSProperties}>{(u.displayName || u.username).slice(0, 1).toUpperCase()}</div>
             <div className="who">
-              <b>{u.displayName} <span className={`role-tag ${u.role}`}>{u.role}</span>{u.status === 'disabled' && <span className="role-tag off">disabled</span>}</b>
+              <b><span className="who-name">{u.displayName}</span> <span className={`role-tag ${u.role}`}>{u.role}</span>{u.status === 'disabled' && <span className="role-tag off">disabled</span>}</b>
               <span>{u.username}{u.lastLogin ? ` · last in ${u.lastLogin}` : ' · never signed in'}</span>
             </div>
             <div className="user-groups">
@@ -530,6 +535,7 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
                       setShare({ title: `${u.username}'s new password was set.`, text })
                       copy(text)
                     }} />
+                    <DeleteCoordinator user={u} run={run} busy={working !== null} />
                   </>
                 )}
               </div>
@@ -659,6 +665,37 @@ function ResetPassword({ id, run, busy, onSet }: { id: string; run: Run; busy: b
       <input type="password" autoComplete="new-password" placeholder="New password (12+)" value={password} onChange={(e) => setPassword(e.target.value)} />
       <button type="submit" className="btn small primary" disabled={busy || password.length < 12}>Set</button>
       <button type="button" className="btn small ghost" onClick={() => setOpen(false)}>×</button>
+    </form>
+  )
+}
+
+/**
+ * Removing a coordinator for good. Disabling is one click because it is undone with one; this is
+ * not undone at all - their LMS and Zoom accounts, their saved classes and their groups go with
+ * them - so it asks for the username to be typed, which a misplaced click cannot do.
+ */
+function DeleteCoordinator({ user, run, busy }: { user: DashUser; run: Run; busy: boolean }) {
+  const [open, setOpen] = useState(false)
+  const [typed, setTyped] = useState('')
+  if (!open) {
+    return <button type="button" className="btn small ghost danger" onClick={() => setOpen(true)}>Delete</button>
+  }
+  return (
+    <form className="inline-form" onSubmit={async (e) => {
+      e.preventDefault()
+      await run('del', 'deleteUser', { id: user.id })
+      setTyped(''); setOpen(false)
+    }}>
+      <input
+        aria-label={`Type ${user.username} to delete them`}
+        placeholder={`Type ${user.username}`}
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+      />
+      <button type="submit" className="btn small danger" disabled={busy || typed.trim() !== user.username}>
+        Delete for good
+      </button>
+      <button type="button" className="btn small ghost" onClick={() => { setTyped(''); setOpen(false) }}>×</button>
     </form>
   )
 }

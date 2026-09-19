@@ -458,6 +458,10 @@ public sealed class CentralApiClient : IDelegatedRunsApi, IZoomAccountsApi, ISch
     public Task<JsonElement> SetUserGroupsAsync(string id, IEnumerable<string> groupIds, CancellationToken token = default) =>
         SendAsync<JsonElement>(HttpMethod.Put, $"api/v1/admin/users/{id}/groups", new { groupIds = groupIds.ToArray() }, token);
 
+    /// <summary>Removes a coordinator for good, with their accounts, classes and groups. Not an admin.</summary>
+    public Task<JsonElement> DeleteUserAsync(string id, CancellationToken token = default) =>
+        SendAsync<JsonElement>(HttpMethod.Delete, $"api/v1/admin/users/{id}", null, token);
+
     public Task<JsonElement> ResetPasswordAsync(string id, string password, CancellationToken token = default) =>
         SendAsync<JsonElement>(HttpMethod.Post, $"api/v1/admin/users/{id}/password", new { password }, token);
 

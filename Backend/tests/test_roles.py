@@ -160,7 +160,7 @@ def test_the_admin_creates_a_coordinator_with_groups(dash):
     assert dash.post("/api/v1/admin/users", headers=DASH, json={
         "username": "omar", "displayName": "Again", "password": COORDINATOR_PASSWORD}).status_code == 409
     assert dash.post("/api/v1/admin/users", headers=DASH, json={
-        "username": "x-role", "displayName": "X", "password": COORDINATOR_PASSWORD, "role": "admin"}).status_code == 400
+        "username": "x-role", "displayName": "X", "password": COORDINATOR_PASSWORD, "role": "owner"}).status_code == 400
     assert dash.post("/api/v1/admin/users", headers=DASH, json={
         "username": "ghost", "displayName": "X", "password": COORDINATOR_PASSWORD,
         "groupIds": [str(uuid.uuid4())]}).status_code == 400
@@ -174,13 +174,65 @@ def test_the_admin_creates_a_coordinator_with_groups(dash):
     assert audit_rows(dash)[0]["user_id"] is not None
 
 
-def test_there_is_only_one_admin(dash):
-    with pytest.raises(asyncpg.UniqueViolationError):
-        make_user(url(dash), "second-admin", role="admin")
-    # And nothing in the API can make one: there is no role field anywhere.
+def test_an_admin_makes_another_admin_with_the_same_powers(dash):
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    made = dash.post("/api/v1/admin/users", headers=DASH, json={
+        "username": "Nour", "displayName": "Nour H.", "password": COORDINATOR_PASSWORD, "role": "admin"})
+    assert made.status_code == 201, made.text
+    assert (made.json()["username"], made.json()["role"]) == ("nour", "admin")
+    # Groups are not narrowed for an admin: they see every group, so naming some would mislead.
+    assert made.json()["groups"] == []
+
+    # The same powers, including making a third admin.
+    as_user(dash, "nour", COORDINATOR_PASSWORD)
+    assert dash.get("/api/v1/auth/me").json()["role"] == "admin"
+    third = dash.post("/api/v1/admin/users", headers=DASH, json={
+        "username": "third", "displayName": "T", "password": COORDINATOR_PASSWORD, "role": "admin"})
+    assert third.status_code == 201, third.text
+
+
+def test_a_coordinator_is_never_promoted_to_admin(dash):
     as_user(dash, "admin", ADMIN_PASSWORD)
     coordinator = make_user(url(dash), "omar")
+    # There is no role field on the update body at all, so the attempt is refused outright rather
+    # than quietly ignored - the only way to be an admin is to be created as one.
     assert dash.patch(f"/api/v1/admin/users/{coordinator}", json={"role": "admin"}, headers=DASH).status_code == 400
+    assert dash.get(f"/api/v1/admin/users/{coordinator}", headers=DASH).json()["role"] == "coordinator"
+
+    # And a coordinator cannot make themselves one either.
+    as_user(dash, "omar")
+    assert dash.post("/api/v1/admin/users", headers=DASH, json={
+        "username": "sneaky", "displayName": "S", "password": COORDINATOR_PASSWORD, "role": "admin"}).status_code == 403
+
+
+def test_the_last_active_admin_cannot_be_disabled(dash):
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    second = dash.post("/api/v1/admin/users", headers=DASH, json={
+        "username": "nour", "displayName": "N", "password": COORDINATOR_PASSWORD, "role": "admin"}).json()["id"]
+
+    # With two admins, one may disable the other.
+    off = dash.patch(f"/api/v1/admin/users/{second}", json={"status": "disabled"}, headers=DASH)
+    assert off.status_code == 200 and off.json()["status"] == "disabled"
+
+    # Now there is one left, and nobody - not even another admin - can take the last one away.
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    me = user_id(dash, "admin")
+    refused = dash.patch(f"/api/v1/admin/users/{me}", json={"status": "disabled"}, headers=DASH)
+    assert refused.status_code == 409
+    assert "last active admin" in refused.text or "your own account" in refused.text
+
+
+def test_a_disabled_account_is_listed_below_the_working_ones(dash):
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    for name in ("amr", "basma", "cairo"):
+        make_user(url(dash), name)
+    amr = user_id(dash, "amr")
+    assert dash.patch(f"/api/v1/admin/users/{amr}", json={"status": "disabled"}, headers=DASH).status_code == 200
+
+    listed = [u["username"] for u in dash.get("/api/v1/admin/users", headers=DASH).json()["users"]]
+    # amr sorts first alphabetically, so only the status can be putting it last.
+    assert listed[-1] == "amr"
+    assert listed.index("basma") < listed.index("amr")
 
 
 def test_the_admin_cannot_lock_themselves_out(dash):
@@ -463,9 +515,16 @@ def test_create_admin_from_the_command_line(clean_db, monkeypatch, capsys):
     assert [(r["username"], r["display_name"], r["role"], r["status"]) for r in rows] == [("boss", "The Boss", "admin", "active")]
     assert rows[0]["password_hash"].startswith("scrypt$32768$")
 
+    # A second admin is allowed: this command is the way back in when every admin is locked out.
     answers = iter([ADMIN_PASSWORD, ADMIN_PASSWORD])
-    assert cli.main(["create-admin", "--username", "other"]) == 1           # there can be only one
-    assert "already an admin" in capsys.readouterr().err
+    assert cli.main(["create-admin", "--username", "other"]) == 0
+    assert "Admin account 'other' created" in capsys.readouterr().out
+    assert sorted(r["username"] for r in run_sql(clean_db, "SELECT username FROM users WHERE role = 'admin'"))         == ["boss", "other"]
+
+    # A name already in use is still refused, whoever holds it.
+    answers = iter([ADMIN_PASSWORD, ADMIN_PASSWORD])
+    assert cli.main(["create-admin", "--username", "boss"]) == 1
+    assert "already taken" in capsys.readouterr().err
 
     run_sql(clean_db, "DELETE FROM users")
     stored = hash_password(ADMIN_PASSWORD, n=2**14)
@@ -560,3 +619,59 @@ def test_migration_0005_registers_the_groups_recordings_already_had(database_url
         assert run_sql(fresh, "SELECT count(*) AS n FROM users")[0]["n"] == 0
     finally:
         asyncio.run(ddl(f"DROP DATABASE {name} WITH (FORCE)"))
+
+
+def test_deleting_a_coordinator_takes_what_was_theirs_and_leaves_the_record(dash):
+    """Deleting is not disabling. Their accounts, classes and groups go; the audit row stays."""
+    sync(dash, group=A, date="2026-09-10")
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    omar = dash.post("/api/v1/admin/users", headers=DASH, json={
+        "username": "omar", "displayName": "Omar A.", "password": COORDINATOR_PASSWORD,
+        "groupIds": [group_id(dash, A)]}).json()["id"]
+
+    # Something of theirs that hangs off the user row. A Zoom account needs no encryption key,
+    # so this says the same thing as an LMS account would without configuring one.
+    as_user(dash, "omar")
+    saved = dash.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": [
+        {"accountId": "CAI5_AIS4_S7", "label": "Omar's Zoom", "group": A}]})
+    assert saved.status_code == 200, saved.text
+    assert len(run_sql(url(dash), "SELECT id FROM zoom_accounts WHERE user_id = $1", uuid.UUID(omar))) == 1
+
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    gone = dash.request("DELETE", f"/api/v1/admin/users/{omar}", headers=DASH)
+    assert gone.status_code == 200, gone.text
+    assert gone.json()["username"] == "omar"
+    assert gone.json()["removed"]["groups"] == 1
+    assert gone.json()["removed"]["zoomAccounts"] == 1
+
+    assert dash.get(f"/api/v1/admin/users/{omar}", headers=DASH).status_code == 404
+    assert run_sql(url(dash), "SELECT id FROM zoom_accounts WHERE user_id = $1", uuid.UUID(omar)) == []
+    assert run_sql(url(dash), "SELECT user_id FROM user_groups WHERE user_id = $1", uuid.UUID(omar)) == []
+
+    # They cannot sign in again, and what was done to them is still readable.
+    assert login(dash, "omar", COORDINATOR_PASSWORD).status_code == 401
+    actions = [(r["username"], r["action"]) for r in audit_rows(dash)]
+    assert ("admin", "user.delete") in actions
+
+
+def test_an_admin_account_is_never_deleted_here(dash):
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    second = dash.post("/api/v1/admin/users", headers=DASH, json={
+        "username": "nour", "displayName": "N", "password": COORDINATOR_PASSWORD, "role": "admin"}).json()["id"]
+    for target in (user_id(dash, "admin"), second):
+        refused = dash.request("DELETE", f"/api/v1/admin/users/{target}", headers=DASH)
+        assert refused.status_code == 409, refused.text
+    assert dash.get("/api/v1/auth/me").json()["role"] == "admin"
+
+
+def test_only_an_admin_deletes_and_the_header_is_required(dash):
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    omar = make_user(url(dash), "omar")
+    sara = make_user(url(dash), "sara")
+
+    as_user(dash, "sara")
+    assert dash.request("DELETE", f"/api/v1/admin/users/{omar}", headers=DASH).status_code == 403
+
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    assert dash.request("DELETE", f"/api/v1/admin/users/{omar}").status_code == 403   # no X-Dashboard-Request
+    assert dash.request("DELETE", f"/api/v1/admin/users/{sara}", headers=DASH).status_code == 200

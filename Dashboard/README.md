@@ -1,6 +1,6 @@
 # Dashboard (V3: the admin and the coordinators)
 
-An internal web page for the recordings, the agents and class attendance, used by one admin and
+An internal web page for the recordings, the agents and class attendance, used by the admins and
 the coordinators.
 The existing FastAPI backend serves it under `/dashboard/`. It reads the existing PostgreSQL
 database through `/api/v1/dashboard/*`, `/api/v1/auth/*` and `/api/v1/admin/*`. There is no second
@@ -99,8 +99,14 @@ can sign in. The sign-in page says which it is, but only after the right passwor
   browsers.
 * After 5 failed attempts for a name from one address, sign-ins are refused for 15 minutes.
   Registrations are limited to 5 per hour per address.
-* There can be only one admin: the database enforces it (a unique index), and no route can make one.
-  The admin account cannot be disabled or given groups from the page.
+* There may be several admins, and each has the same powers, including making another. An account is
+  an admin from birth or never: a coordinator has no route to the role, because the update body has
+  no role field at all. The last active admin cannot be disabled, and nobody disables their own
+  account. An admin is not given groups, since they see every group already.
+* A coordinator can be deleted outright, which is not the same as disabling them: their LMS and Zoom
+  accounts, their saved classes, their timetable and their group assignments go with them. The
+  attendance and recordings already recorded stay, and so does the audit log, which keeps their
+  username. An admin account is never deleted from here.
 * Every POST, PATCH and PUT needs the header `X-Dashboard-Request: 1`, which blocks forged
   cross-site requests.
 * The three kinds of credential are separate: the n8n key does not open the dashboard, and a

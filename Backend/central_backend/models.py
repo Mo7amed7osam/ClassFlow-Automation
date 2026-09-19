@@ -175,7 +175,10 @@ class User(Base):
     __table_args__ = (
         CheckConstraint("role IN ('admin', 'coordinator')", name="ck_users_role"),
         CheckConstraint("status IN ('pending', 'active', 'rejected', 'disabled')", name="ck_users_status"),
-        Index("uq_users_single_admin", "role", unique=True, postgresql_where=text("role = 'admin'")),
+        # There may be several admins: an admin makes another, who has the same powers. A
+        # coordinator is never promoted, so the role is decided when the row is written and no
+        # endpoint accepts a change to it (migration 0012_several_admins).
+        Index("ix_users_role_status", "role", "status"),
     )
 
 
@@ -418,11 +421,16 @@ class LmsAccount(Base):
 class ZoomAccount(Base):
     """A Zoom account a user opens classes with, kept against their dashboard account.
 
-    No password: the Zoom sign-in itself lives in the Zoom app's saved accounts or in a browser
-    profile on the PC, and this table never asks for it. What is kept is which account (the id the
-    PC knows it by), its e-mail, the group it hosts and the link its classes open - so another PC
-    running that person's classes knows which account to open them with, and with what link,
-    instead of somebody typing it in twice.
+    Which account (the id the PC knows it by), its e-mail, the group it hosts and the link its
+    classes open - so another PC running that person's classes knows which account to open them
+    with, and with what link, instead of somebody typing it in twice.
+
+    The Zoom password is kept too, AES-GCM encrypted with CENTRAL_SECRETS_KEY exactly as an LMS
+    one is, and only when its PC has one saved. Without it a browser profile nobody has signed in
+    - a new PC, or the second profile of a simultaneous class - can only join as a guest, and a
+    guest cannot admit anybody. With it the app signs that profile in by itself, once, the way a
+    person would. Zoom asking for a captcha or a one-time code still needs a person; the app says
+    so and leaves the visible sign-in to them.
     """
 
     __tablename__ = "zoom_accounts"
@@ -435,6 +443,7 @@ class ZoomAccount(Base):
     group_name: Mapped[str | None] = mapped_column(String(100))
     default_meeting_url: Mapped[str | None] = mapped_column(Text)
     preferred_engine: Mapped[str | None] = mapped_column(String(8))
+    password_encrypted: Mapped[str | None] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

@@ -71,8 +71,12 @@ $env:CENTRAL_ENVIRONMENT = 'development'                        # allows plain h
 .venvScriptspython -m central_backend.cli create-admin --username admin --display-name "Your name"
 ```
 
-The password is asked for twice and never shown. There is exactly one admin; coordinators register
-on the sign-in page (the admin approves them) or are created by the admin. An old `CENTRAL_ADMIN_USERS`
+The password is asked for twice and never shown. This command makes the first admin; afterwards an
+admin makes another from the Users page (`role: "admin"`), and the new one has the same powers,
+including making further admins. A coordinator is never promoted: the role is written when the
+account is created and no endpoint changes it. The last active admin cannot be disabled, and nobody
+disables their own account. Coordinators register on the sign-in page (an admin approves them) or
+are created by an admin. An old `CENTRAL_ADMIN_USERS`
 entry can be moved into the database with `create-admin --from-env` (with several entries, pick one
 with `--username`); the variable is no longer read
 after that. See [Dashboard/README.md](../Dashboard/README.md).

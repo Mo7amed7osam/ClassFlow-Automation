@@ -164,6 +164,15 @@ public partial class DashboardWebView : UserControl
                 await central.Api.SetUserGroupsAsync(Text(p, "id"), List(p, "groupIds"));
                 await central.RefreshAsync();
                 return Done("Their groups were saved.");
+            // Deleting is not disabling: their LMS and Zoom accounts, their classes and their
+            // groups go with them. The page asks first; the server refuses an admin.
+            case "deleteUser":
+            {
+                var answer = await central.Api.DeleteUserAsync(Text(p, "id"));
+                await central.RefreshAsync();
+                string name = answer.TryGetProperty("username", out var u) ? u.GetString() ?? "" : "";
+                return Done($"{name} was deleted, with their accounts and classes.");
+            }
             case "copyText":
             {
                 // The sign-in the admin sends a coordinator. Only the clipboard sees it; nothing logs it.
