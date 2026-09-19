@@ -125,6 +125,7 @@ regenerated, never source, and stay out of the repository.
 - [Windows/CENTRAL-AGENT.md](Windows/CENTRAL-AGENT.md) — how an agent PC enrolls and takes jobs
 - [Windows/ATTENDANCE.md](Windows/ATTENDANCE.md), [Windows/ATTENDANCE-MATCHING.md](Windows/ATTENDANCE-MATCHING.md) — attendance capture and name matching
 - [Windows/SESSION-ROLES.md](Windows/SESSION-ROLES.md), [Windows/SESSION-ROLES-INSPECTION.md](Windows/SESSION-ROLES-INSPECTION.md) — roles in a session
+- [DELEGATED-CLASSES.md](DELEGATED-CLASSES.md) — one PC running several coordinators' classes, each under their own accounts
 - [Windows/GROUP-ROSTER.md](Windows/GROUP-ROSTER.md), [Windows/STUDENT-ROSTER.md](Windows/STUDENT-ROSTER.md), [COORDINATOR-ROSTER.md](COORDINATOR-ROSTER.md) — the rosters
 - [Windows/RECORDING-API.md](Windows/RECORDING-API.md) — recordings
 - [Windows/WINDOWS-UI-DESIGN.md](Windows/WINDOWS-UI-DESIGN.md) — the WPF window's design language

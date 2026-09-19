@@ -201,3 +201,68 @@ export interface UserList {
   count: number
   counts: Record<UserStatus, number>
 }
+
+// --------------------------------------------------------------- other people's classes, run here
+
+/** One of a user's LMS sign-ins, as the admin sees it. Never a password. */
+export interface LmsAccountRef {
+  id: string
+  label: string
+  email: string
+  role: Role
+  active: boolean
+}
+
+/** A coordinator, and whether the admin's PC opens and finishes their classes for them. */
+export interface Delegation {
+  coordinatorId: string
+  username: string
+  displayName: string
+  status: UserStatus
+  enabled: boolean
+  groups: GroupRef[]
+  /** the sign-in their classes go up under: the one chosen, or the one they have in use */
+  lmsAccount: LmsAccountRef | null
+  lmsAccounts: LmsAccountRef[]
+  /** the Zoom account on the running PC that opens their meetings */
+  zoomAccount: string | null
+  classes: { planned: number; done: number; skipped: number; needsLink: number }
+  updatedAt: string | null
+}
+
+export type ClassPlanStatus = 'planned' | 'skipped' | 'opened' | 'done' | 'failed'
+export type PreferredEngine = 'desktop' | 'web'
+
+/** One class of a delegated coordinator, read from their own LMS session list. */
+export interface ClassPlan {
+  id: string
+  coordinatorId: string
+  group: string
+  date: string
+  startTime: string | null
+  title: string | null
+  meetingUrl: string | null
+  zoomAccount: string | null
+  preferredEngine: PreferredEngine | null
+  source: 'lms' | 'manual'
+  status: ClassPlanStatus
+  note: string | null
+  /** still waiting for the one thing the LMS cannot give: the Zoom link */
+  needsLink: boolean
+  importedAt: string | null
+  updatedAt: string
+}
+
+export interface RunCoordinator {
+  coordinatorId: string
+  displayName: string
+  username: string
+  enabled: boolean
+  zoomAccount: string | null
+  lmsAccount: LmsAccountRef | null
+}
+
+export interface RunPlan {
+  classes: ClassPlan[]
+  coordinators: RunCoordinator[]
+}

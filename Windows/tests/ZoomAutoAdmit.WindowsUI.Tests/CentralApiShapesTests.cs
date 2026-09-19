@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Xunit;
 using ZoomAutoAdmit.WindowsUI.Services;
 
@@ -52,5 +52,78 @@ public sealed class CentralApiShapesTests
               "approvedAt":null,"lastLoginAt":null,"groups":[]}],"count":1,"counts":{"pending":1,"active":0,"rejected":0,"disabled":0}}
             """, Json)!;
         Assert.Equal("—", Assert.Single(users.Users).GroupsText);
+    }
+
+    [Fact]
+    public void TheCoordinatorsWhoseClassesThisPcRunsAreReadWithTheirTwoAccounts()
+    {
+        // Backend/central_backend/delegated_runs.py, GET /api/v1/admin/delegations
+        var listed = JsonSerializer.Deserialize<CentralDelegationList>("""
+            {"delegations":[
+              {"coordinatorId":"u1","username":"mona","displayName":"Mona","status":"active","enabled":true,
+               "groups":[{"id":"g1","name":"CAI5_AIS4_S7","displayName":null,"archived":false}],
+               "lmsAccount":{"id":"a1","label":"Mona","email":"mona@example.com","role":"coordinator","active":true},
+               "lmsAccounts":[{"id":"a1","label":"Mona","email":"mona@example.com","role":"coordinator","active":true}],
+               "zoomAccount":"CAI5_AIS4_S7","classes":{"planned":4,"done":1,"skipped":0,"needsLink":2},
+               "updatedAt":"2026-09-19T10:00:00Z"},
+              {"coordinatorId":"u2","username":"sami","displayName":"Sami","status":"active","enabled":false,
+               "groups":[],"lmsAccount":null,"lmsAccounts":[],"zoomAccount":null,
+               "classes":{"planned":0,"done":0,"skipped":0,"needsLink":0},"updatedAt":null}]}
+            """, Json)!;
+
+        var mona = listed.Delegations[0];
+        Assert.True(mona.IsReady);
+        Assert.Equal("CAI5_AIS4_S7", mona.GroupsText);
+        Assert.Equal("mona@example.com", mona.LmsAccount!.Email);
+        Assert.Equal(2, mona.Classes!.NeedsLink);
+
+        var sami = listed.Delegations[1];
+        Assert.False(sami.IsReady);                       // turned off, and no sign-in of their own
+        Assert.Equal("no groups", sami.GroupsText);
+    }
+
+    [Fact]
+    public void TheClassesToRunAreReadWithWhoseTheyAreAndWhatIsStillMissing()
+    {
+        // Backend/central_backend/delegated_runs.py, GET /api/v1/admin/run-plan
+        var plan = JsonSerializer.Deserialize<CentralRunPlan>("""
+            {"classes":[
+              {"id":"3f2504e0-4f89-11d3-9a0c-0305e82c3301","coordinatorId":"u1","group":"CAI5_AIS4_S7","date":"2026-09-22",
+               "startTime":"19:00","title":"36 • Technical","meetingUrl":"https://zoom.us/j/91473108490",
+               "zoomAccount":"CAI5_AIS4_S7","preferredEngine":"web","source":"lms","status":"planned","note":null,
+               "needsLink":false,"importedAt":"2026-09-19T10:00:00Z","updatedAt":"2026-09-19T10:00:00Z"},
+              {"id":"3f2504e0-4f89-11d3-9a0c-0305e82c3302","coordinatorId":"u1","group":"CAI5_AIS4_S7","date":"2026-09-29",
+               "startTime":null,"title":null,"meetingUrl":null,"zoomAccount":null,"preferredEngine":null,
+               "source":"lms","status":"planned","note":null,"needsLink":true,"importedAt":null,
+               "updatedAt":"2026-09-19T10:00:00Z"}],
+             "coordinators":[{"coordinatorId":"u1","displayName":"Mona","username":"mona","enabled":true,
+               "zoomAccount":"CAI5_AIS4_S7",
+               "lmsAccount":{"id":"a1","label":"Mona","email":"mona@example.com","role":"coordinator","active":true}}]}
+            """, Json)!;
+
+        var first = plan.ClassList[0];
+        Assert.Equal(new DateOnly(2026, 9, 22), first.Day);
+        Assert.Equal(new TimeOnly(19, 0), first.Start);
+        Assert.Equal("web", first.PreferredEngine);
+        Assert.False(first.NeedsLink);
+
+        var second = plan.ClassList[1];
+        Assert.Null(second.Start);                        // a class with no time on the LMS
+        Assert.True(second.NeedsLink);
+
+        Assert.Equal("Mona", Assert.Single(plan.CoordinatorList).DisplayName);
+    }
+
+    [Fact]
+    public void ACoordinatorsSignInNeverPrintsItself()
+    {
+        // The app writes plenty of log lines; this one must never carry a password into one.
+        var secret = JsonSerializer.Deserialize<CentralCoordinatorSecret>("""
+            {"id":"a1","coordinatorId":"u1","email":"mona@example.com","role":"coordinator","label":"Mona",
+             "password":"made-up password for tests"}
+            """, Json)!;
+        Assert.Equal("mona@example.com", secret.Email);
+        Assert.DoesNotContain("made-up", secret.ToString());
+        Assert.DoesNotContain("made-up", $"{secret}");
     }
 }

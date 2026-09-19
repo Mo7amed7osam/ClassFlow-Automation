@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Windows.Input;
 using ZoomAutoAdmit.WindowsRuntime;
@@ -39,6 +39,7 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
     private WindowsMeetingAccountMetadata? _importAccount;
     private string _importMeetingUrl = "";
     private string _scheduleFilter = "All";
+    private string _coordinatorFilter = Everyone;
     private string _nextMeetingSummary = "No upcoming enabled meeting.";
     private string _nextMeetingCountdown = "—";
     private string _todaySummary = "No sessions today.";
@@ -59,6 +60,7 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
         ToggleEnabledCommand = new AsyncRelayCommand(parameter => ToggleEnabledAsync(parameter as MeetingSchedule));
         EnableAllShownCommand = new AsyncRelayCommand(_ => SetEnabledForShownAsync(true));
         DisableAllShownCommand = new AsyncRelayCommand(_ => SetEnabledForShownAsync(false));
+        SetOpensWithForShownCommand = new AsyncRelayCommand(parameter => SetOpensWithForShownAsync(parameter as string));
         _service.StatusChanged += OnStatusChanged;
         // The countdown only ticks where there is a UI thread to post to; tests construct without one.
         if (_context != null)
@@ -76,6 +78,21 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
         get => _scheduleFilter;
         set { if (SetProperty(ref _scheduleFilter, value)) ApplyFilter(); }
     }
+
+    /// <summary>
+    /// Whose classes to show. This PC runs its own and, for an admin, other coordinators' as well,
+    /// so with several people's timetables in one list the first question is always whose.
+    /// </summary>
+    public const string Everyone = "Everyone", ThisPc = "This PC only";
+    public ObservableCollection<string> Coordinators { get; } = [Everyone, ThisPc];
+    public string CoordinatorFilter
+    {
+        get => _coordinatorFilter;
+        set { if (SetProperty(ref _coordinatorFilter, value ?? Everyone)) ApplyFilter(); }
+    }
+    /// <summary>The filter is worth showing only once somebody else's classes are on this PC.</summary>
+    public bool HasCoordinators => Coordinators.Count > 2;
+
     public string FilterSummary => $"Showing {FilteredItems.Count} of {Items.Count} schedules.";
     public string NextMeetingSummary { get => _nextMeetingSummary; private set => SetProperty(ref _nextMeetingSummary, value); }
     public string NextMeetingCountdown { get => _nextMeetingCountdown; private set => SetProperty(ref _nextMeetingCountdown, value); }
@@ -157,6 +174,7 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
     public ICommand ToggleEnabledCommand { get; }
     public ICommand EnableAllShownCommand { get; }
     public ICommand DisableAllShownCommand { get; }
+    public ICommand SetOpensWithForShownCommand { get; }
     public ICommand SelectAllImportCommand { get; }
     public ICommand ClearImportSelectionCommand { get; }
     public bool IsIdle { get => _idle; private set => SetProperty(ref _idle, value); }
@@ -192,6 +210,7 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
             ImportMeetingUrl = importUrl;
             Items.Clear();
             foreach (var schedule in schedules) Items.Add(schedule);
+            UpdateCoordinators();
             ApplyFilter();
             UpdateNextMeeting();
             StatusMessage = $"Refreshed — {Items.Count} schedules loaded; {FilteredItems.Count} shown.";
@@ -223,7 +242,11 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
                 existing?.LastTriggeredDate,
                 OccurrenceDate.HasValue ? DateOnly.FromDateTime(OccurrenceDate.Value) : null,
                 SelectedAccount.GroupName ?? SelectedAccount.AccountId,
-                EngineOf(OpensWith)));
+                EngineOf(OpensWith),
+                // Whose class it is survives an edit here: a coordinator's class edited by hand is
+                // still theirs, and still goes up on the LMS under their name.
+                existing?.Coordinator,
+                existing?.CoordinatorId));
             _editingId = id;
             await RefreshAsync();
             StatusMessage = "Done — schedule saved.";
@@ -347,10 +370,31 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
 
     private bool MatchesFilter(MeetingSchedule schedule)
     {
+        if (!MatchesCoordinator(schedule)) return false;
         if (ScheduleFilter == "All") return true;
         if (ScheduleFilter == "Today") return OccursOn(schedule, DateOnly.FromDateTime(DateTime.Now));
         if (!Enum.TryParse<DayOfWeek>(ScheduleFilter, out var day)) return true;
         return schedule.OccurrenceDate.HasValue ? schedule.OccurrenceDate.Value.DayOfWeek == day : schedule.Days.Includes(day);
+    }
+
+    private bool MatchesCoordinator(MeetingSchedule schedule) => CoordinatorFilter switch
+    {
+        Everyone => true,
+        ThisPc => string.IsNullOrEmpty(schedule.Coordinator),
+        var name => name.Equals(schedule.Coordinator, StringComparison.OrdinalIgnoreCase),
+    };
+
+    /// <summary>The people whose classes are on this PC now, kept in the filter as they come and go.</summary>
+    private void UpdateCoordinators()
+    {
+        var found = Items.Select(s => s.Coordinator).Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name).ToArray();
+        if (Coordinators.Skip(2).SequenceEqual(found, StringComparer.OrdinalIgnoreCase)) return;
+        while (Coordinators.Count > 2) Coordinators.RemoveAt(2);
+        foreach (var name in found) Coordinators.Add(name);
+        OnPropertyChanged(nameof(HasCoordinators));
+        // Whoever was being looked at has gone: back to everyone, rather than an empty table.
+        if (!Coordinators.Contains(CoordinatorFilter, StringComparer.OrdinalIgnoreCase)) CoordinatorFilter = Everyone;
     }
 
     /// <summary>The next time this schedule would start, or null when it is disabled or already past.</summary>
@@ -444,6 +488,38 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
             }
             await RefreshAsync();
             StatusMessage = $"Done — {changed} schedule{(changed == 1 ? "" : "s")} {(enabled ? "enabled" : "disabled")}.";
+        }
+        catch (Exception ex)
+        {
+            await RefreshAsync();
+            StatusMessage = $"Stopped after {changed} of {targets.Length}: {ex.Message}";
+        }
+        finally { IsIdle = true; }
+    }
+
+    /// <summary>
+    /// What every shown class opens with, in one go. The choice is not a property of one class in
+    /// practice - a PC where the Zoom app is unreliable wants Web for all of them - so it is set
+    /// for whatever the filters are showing, which is how "all of this coordinator's" is said.
+    /// </summary>
+    public async Task SetOpensWithForShownAsync(string? label = null)
+    {
+        if (!IsIdle) return;
+        var engine = EngineOf(label ?? OpensWith);
+        var targets = FilteredItems.Where(schedule => schedule.PreferredEngine != engine).ToArray();
+        if (targets.Length == 0) { StatusMessage = $"Every shown schedule already opens with {OpensWithLabel(engine)}."; return; }
+        IsIdle = false;
+        int changed = 0;
+        try
+        {
+            foreach (var schedule in targets)
+            {
+                StatusMessage = $"Setting what each class opens with… {changed}/{targets.Length}";
+                await _service.SaveScheduleAsync(schedule with { PreferredEngine = engine });
+                changed++;
+            }
+            await RefreshAsync();
+            StatusMessage = $"Done — {changed} schedule{(changed == 1 ? "" : "s")} now open with {OpensWithLabel(engine)}.";
         }
         catch (Exception ex)
         {

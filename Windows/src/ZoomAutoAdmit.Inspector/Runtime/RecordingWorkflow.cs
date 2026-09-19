@@ -1,4 +1,4 @@
-using ZoomAutoAdmit.Core.Formatting;
+﻿using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.WebAutomation.Lms;
 using ZoomAutoAdmit.WebAutomation.Recordings;
 using ZoomAutoAdmit.WebAutomation.Zoom;
@@ -23,9 +23,10 @@ public static class RecordingWorkflow
             log($"[RECORDINGS] {ZoomRecordingLinkReader.ZoomTimeZoneVariable} names a time zone Windows does not know; Zoom's times are read as they are.");
 
         var accounts = new WindowsMeetingAccountManager();
+        var classes = new ClassLmsAccounts();
         return new RecordingLinkProcessor(
             new ZoomRecordingSource(new ZoomRecordingLinkReader(zoomDisplayTimeZone: zoomZone)),
-            new LmsRecordingTarget(new LmsSessionRunner(new LmsCredentialStore())),
+            new LmsRecordingTarget(group => new LmsSessionRunner(classes.StoreFor(group))),
             new ProfileOperationLock(),
             accountProfile: async (group, token) =>
             {
@@ -35,7 +36,8 @@ public static class RecordingWorkflow
                     string.Equals(account.AccountId, group, StringComparison.OrdinalIgnoreCase))?.WebProfileName;
             },
             log: log,
-            lockWait: lockWait);
+            lockWait: lockWait,
+            dashboardProfile: group => classes.StoreFor(group).Profile);
     }
 
     /// <summary>
@@ -43,13 +45,18 @@ public static class RecordingWorkflow
     /// is handed the recording's Drive link, so there is nothing to look up - and the Zoom slot holds
     /// a stand-in that refuses, so no request can reach Zoom even by mistake.
     /// </summary>
-    public static RecordingLinkProcessor CreateForApi(Action<string> log, TimeSpan? lockWait = null) =>
-        new(new NoZoomSource(),
-            new LmsRecordingTarget(new LmsSessionRunner(new LmsCredentialStore())),
+    public static RecordingLinkProcessor CreateForApi(Action<string> log, TimeSpan? lockWait = null)
+    {
+        var classes = new ClassLmsAccounts();
+        return new RecordingLinkProcessor(
+            new NoZoomSource(),
+            new LmsRecordingTarget(group => new LmsSessionRunner(classes.StoreFor(group))),
             new ProfileOperationLock(),
             accountProfile: null,
             log: log,
-            lockWait: lockWait);
+            lockWait: lockWait,
+            dashboardProfile: group => classes.StoreFor(group).Profile);
+    }
 
     private sealed class NoZoomSource : IRecordingLinkSource
     {

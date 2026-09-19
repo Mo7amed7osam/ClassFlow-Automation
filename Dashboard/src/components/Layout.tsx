@@ -20,6 +20,7 @@ export function navFor(role: Role | undefined, pending = 0): NavItem[] {
       { to: '/students', label: 'Students', end: false },
       { to: '/groups', label: 'Groups', end: false },
       { to: '/users', label: 'Users', end: false, badge: pending || undefined },
+      { to: '/runs', label: 'Run classes', end: false },
       { to: '/agents', label: 'Agents', end: false },
     ]
   }

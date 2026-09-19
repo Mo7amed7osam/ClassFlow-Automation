@@ -29,7 +29,10 @@ public sealed class LmsViewModel : ObservableObject
         _store = store ?? new LmsCredentialStore();
         _runner = runner ?? (() => new LmsSessionRunner(_store));
         _followUp = followUp ?? new LmsFollowUpQueue();
-        _followUpProcessor = followUpProcessor ?? new LmsFollowUpProcessor(_followUp, runner: _runner);
+        // Given a runner, every step uses it (a test, or this page's own account). Otherwise the
+        // processor picks each class's own coordinator's sign-in for itself.
+        _followUpProcessor = followUpProcessor ?? new LmsFollowUpProcessor(
+            _followUp, runner: runner == null ? null : _ => _runner());
         SaveLoginCommand = new RelayCommand(parameter => SaveLogin(parameter as string));
         ForgetLoginCommand = new RelayCommand(_ => ForgetLogin());
         Reload();

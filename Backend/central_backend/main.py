@@ -35,6 +35,7 @@ from .auth import router as auth_router
 from .dashboard import router as dashboard_router
 from .dashboard import site_router
 from .dashboard_operations import router as dashboard_operations_router
+from .delegated_runs import router as delegated_runs_router
 from .activity import dashboard_router as activity_dashboard_router
 from .app_updates import default_releases_dir
 from .app_updates import router as app_updates_router
@@ -175,6 +176,7 @@ def create_app(
     app.include_router(admin_router)
     app.include_router(dashboard_router)
     app.include_router(dashboard_operations_router)
+    app.include_router(delegated_runs_router)
     app.include_router(attendance_router)
     app.include_router(attendance_dashboard_router)
     app.include_router(activity_router)

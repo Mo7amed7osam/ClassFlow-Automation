@@ -1,4 +1,4 @@
-using ZoomAutoAdmit.AttendanceMatching;
+﻿using ZoomAutoAdmit.AttendanceMatching;
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Roster;
 using ZoomAutoAdmit.WebAutomation.Lms;
@@ -150,7 +150,7 @@ public sealed class LmsFollowUpProcessor
         IAttendanceHistoryReader? history = null,
         IGroupRosterService? roster = null,
         IAiMatchingService? matching = null,
-        Func<LmsSessionRunner>? runner = null,
+        Func<string?, LmsSessionRunner>? runner = null,
         AppAttendanceMatcher? appMatcher = null,
         Func<string, bool>? isLive = null,
         Func<LmsFollowUp, CancellationToken, Task<ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReport?>>? zoomReport = null)
@@ -196,10 +196,14 @@ public sealed class LmsFollowUpProcessor
             }
             return await FindPresentNamesAsync(item, historyReader, rosterStore, matchingService, token);
         });
-        var createRunner = runner ?? (() => new LmsSessionRunner(new LmsCredentialStore()));
+        // Each class signs in as its own group's coordinator, so two people's steps can run one
+        // after the other (or at the same time, on their own browser profiles) and each lands
+        // on the LMS under the right name.
+        var classes = new ClassLmsAccounts();
+        var createRunner = runner ?? (group => new LmsSessionRunner(classes.StoreFor(group)));
         _runAction = runAction ?? (async (item, present, dryRun, token) =>
         {
-            var lms = createRunner();
+            var lms = createRunner(item.Group);
             if (item.Step == LmsFollowUpStep.TakeAttendance)
             {
                 var result = await lms.TakeAttendanceAsync(item.Group, present, item.SessionStart,

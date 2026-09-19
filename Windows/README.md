@@ -35,6 +35,16 @@ Windows/
     └── ZoomAutoAdmit.WebAutomation.Tests/ # Profile, mocked DOM, policy & verification tests
 ```
 
+## Whose class is this?
+
+A PC runs its own classes, and - on the admin's copy - the classes of the coordinators the admin
+turns on. Each class carries its owner: their Zoom account opens the meeting, and their LMS account
+presses Run Session, writes the attendance and puts the recording link on it. The LMS sign-in is not
+a global setting: `ClassLmsAccounts` maps each group to the account its classes go up under, and
+every LMS step asks it first, falling back to the account in use for a group nobody claimed. Two
+coordinators' classes therefore run at the same time, each on its own browser profile and its own
+lock. See [DELEGATED-CLASSES.md](../DELEGATED-CLASSES.md).
+
 ## Auto-Admit Engines
 
 The continuous command supports two isolated engines through the shared

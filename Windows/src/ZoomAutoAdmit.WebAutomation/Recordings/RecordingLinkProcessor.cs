@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using ZoomAutoAdmit.WebAutomation.Lms;
 using ZoomAutoAdmit.WebAutomation.Zoom;
 
@@ -109,10 +109,18 @@ public sealed class RecordingLinkProcessor(
     Func<string, CancellationToken, Task<string?>>? accountProfile = null,
     Action<string>? log = null,
     TimeSpan? lockWait = null,
-    Func<DateOnly>? today = null) : IRecordingLinkProcessor
+    Func<DateOnly>? today = null,
+    Func<string, string>? dashboardProfile = null) : IRecordingLinkProcessor
 {
-    /// <summary>The browser profile the dashboard is driven with.</summary>
+    /// <summary>The browser profile the dashboard is driven with, for a group nobody else claims.</summary>
     public static string DashboardProfile => LmsSessionRunner.DashboardProfile;
+
+    /// <summary>
+    /// The dashboard profile this group is written with: its own coordinator's, when this PC runs
+    /// other people's classes. The lock is taken on that name, so one coordinator's recording step
+    /// does not wait behind another's - and never drives another's signed-in browser.
+    /// </summary>
+    private readonly Func<string, string> _dashboardProfile = dashboardProfile ?? (_ => DashboardProfile);
 
     /// <summary>How long to wait for a busy profile before answering "busy".</summary>
     public static readonly TimeSpan DefaultLockWait = TimeSpan.FromMinutes(2);
@@ -231,7 +239,7 @@ public sealed class RecordingLinkProcessor(
             Group = group,
             Date = day,
             StartTime = request.StartTime,
-            Profile = DashboardProfile,
+            Profile = _dashboardProfile(group),
             ShareLinkPreview = preview,
         };
         var kind = RecordingLinks.Classify(link);
@@ -259,7 +267,8 @@ public sealed class RecordingLinkProcessor(
     {
         string group = found.Group;
         LmsRunResult attached;
-        await using (var dashboard = await locks.TryAcquireAsync(DashboardProfile, _wait, cancellationToken))
+        string profile = _dashboardProfile(group);
+        await using (var dashboard = await locks.TryAcquireAsync(profile, _wait, cancellationToken))
         {
             if (dashboard == null)
             {
@@ -320,11 +329,14 @@ public sealed class ZoomRecordingSource(ZoomRecordingLinkReader reader) : IRecor
         reader.ReadAsync(group, profile, day, startTime, headed, keepBrowserOpen: false, cancellationToken);
 }
 
-/// <summary>The real dashboard side.</summary>
-public sealed class LmsRecordingTarget(LmsSessionRunner runner) : IRecordingLinkTarget
+/// <summary>The real dashboard side, signed in as whoever the group belongs to.</summary>
+public sealed class LmsRecordingTarget(Func<string, LmsSessionRunner> runnerFor) : IRecordingLinkTarget
 {
+    /// <summary>The same sign-in for every group: a PC that runs only its own classes.</summary>
+    public LmsRecordingTarget(LmsSessionRunner runner) : this(_ => runner) { }
+
     public Task<LmsRunResult> AttachAsync(string group, string recordLink, TimeOnly? startTime, DateOnly day, bool headed,
         bool dryRun, bool keepBrowserOpen, bool replaceExisting, CancellationToken cancellationToken) =>
-        runner.AttachRecordLinkAsync(group, recordLink, startTime, day, headed, dryRun, keepBrowserOpen,
+        runnerFor(group).AttachRecordLinkAsync(group, recordLink, startTime, day, headed, dryRun, keepBrowserOpen,
             replaceExisting, cancellationToken);
 }

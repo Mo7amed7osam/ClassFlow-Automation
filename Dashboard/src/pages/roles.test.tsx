@@ -51,7 +51,7 @@ const adminGroups = (call: Call) =>
 
 describe('menus by role', () => {
   it('gives the admin users and agents, a coordinator only their groups', () => {
-    expect(navFor('admin', 2).map((i) => i.label)).toEqual(['Overview', 'Recordings', 'Attendance', 'Students', 'Groups', 'Users', 'Agents'])
+    expect(navFor('admin', 2).map((i) => i.label)).toEqual(['Overview', 'Recordings', 'Attendance', 'Students', 'Groups', 'Users', 'Run classes', 'Agents'])
     expect(navFor('admin', 2).find((i) => i.label === 'Users')?.badge).toBe(2)
     expect(navFor('coordinator').map((i) => i.label)).toEqual(['Overview', 'Recordings', 'Attendance', 'Students', 'My groups'])
   })

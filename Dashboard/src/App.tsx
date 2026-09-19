@@ -10,6 +10,7 @@ import { LoginPage } from './pages/LoginPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { RecordingsPage } from './pages/RecordingsPage'
 import { RegisterPage } from './pages/RegisterPage'
+import { RunsPage } from './pages/RunsPage'
 import { StudentsPage } from './pages/StudentsPage'
 import { UsersPage } from './pages/UsersPage'
 
@@ -46,6 +47,7 @@ export function App() {
         <Route element={<RequireAdmin />}>
           <Route path="agents" element={<AgentsPage />} />
           <Route path="users" element={<UsersPage />} />
+          <Route path="runs" element={<RunsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

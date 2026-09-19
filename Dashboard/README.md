@@ -15,6 +15,7 @@ recording API are unchanged.
 | Recordings | Edit, attach to the LMS, move to any group | Edit and attach within their groups; move a recording only between their own groups |
 | Agents page | Yes | No (the backend answers 403) |
 | Users page | Approve/reject registrations, create coordinators, assign groups, disable/enable, set a new password | No |
+| Run classes page | Turn a coordinator on so the admin's PC opens and finishes their classes under their own Zoom and LMS accounts; fill in each group's Zoom link; choose what a class opens with, or skip it | No |
 | Groups page | All groups, their coordinators; add, label, archive | "My groups" |
 | Attendance, Students | Every group's sessions and rosters | Their groups' sessions and rosters, with the same tools |
 
@@ -193,3 +194,10 @@ meanwhile leaves it as it was.
 | `GET /api/v1/admin/groups` | Every group (archived too) with its counts and `coordinators`. |
 | `POST /api/v1/admin/groups` | `{name, displayName?}` → `201`. |
 | `PATCH /api/v1/admin/groups/{id}` | `{displayName?, archived?}`. |
+| `GET /api/v1/admin/delegations` | Every coordinator with their groups, their LMS sign-ins (never a password), whether this PC runs their classes, and how many of those still need a Zoom link. |
+| `PUT /api/v1/admin/delegations/{coordinatorId}` | `{enabled, lmsAccountId?, zoomAccount?}`: run their classes, or stop. |
+| `GET /api/v1/admin/run-plan?from=&to=&coordinator=` | The classes to run. `coordinator` may be repeated, which is how the page narrows to a few people. |
+| `PATCH /api/v1/admin/run-plan/{id}` | `{meetingUrl?, zoomAccount?, preferredEngine?, status?, applyToGroup?}`. `applyToGroup` writes the link to every class of that group that has not happened yet. |
+
+The page never asks for a sign-in: the password stays on the server and goes only to the PC that
+runs the classes. See [DELEGATED-CLASSES.md](../DELEGATED-CLASSES.md).

@@ -23,3 +23,13 @@ public sealed class ScheduleDaysConverter : IValueConverter
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+/// <summary>What a class opens with first, as the list shows it: Auto, Zoom app or Web.</summary>
+public sealed class OpensWithConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        SchedulesViewModel.OpensWithLabel(value as ZoomAutoAdmit.Core.Sessions.SessionEngineType?);
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}

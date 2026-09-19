@@ -3,6 +3,8 @@ import { api, query, UnauthorizedError } from './client'
 import type {
   AdminGroup,
   Agent,
+  ClassPlan,
+  Delegation,
   AttachOptions,
   AttachResult,
   CancelResult,
@@ -16,6 +18,7 @@ import type {
   RecordingDetails,
   RecordingPage,
   RecordingQuery,
+  RunPlan,
   User,
   UserList,
   UserStatus,
@@ -243,3 +246,56 @@ export const useUpdateGroup = () =>
   useAdminMutation(({ id, ...body }: { id: string; displayName?: string | null; archived?: boolean }) =>
     api(`/api/v1/admin/groups/${id}`, send('PATCH', body)),
   )
+
+// ------------------------------------------------- the coordinators whose classes this PC runs
+
+/** Every coordinator, with their groups, their LMS sign-in, and whether we run their classes. */
+export function useDelegations(enabled = true) {
+  return useQuery({
+    queryKey: ['delegations'],
+    queryFn: () => api<{ delegations: Delegation[] }>('/api/v1/admin/delegations'),
+    refetchInterval: REFRESH.groups,
+    enabled,
+  })
+}
+
+/**
+ * The classes to run between two days. `coordinators` narrows it to some of the people turned on;
+ * empty means all of them. The ids go in as repeated parameters, which is what the backend reads.
+ */
+export function useRunPlan(from: string, to: string, coordinators: string[] = [], enabled = true) {
+  const who = coordinators.map((id) => `&coordinator=${encodeURIComponent(id)}`).join('')
+  return useQuery({
+    queryKey: ['run-plan', from, to, [...coordinators].sort().join(',')],
+    queryFn: () => api<RunPlan>(`/api/v1/admin/run-plan?from=${from}&to=${to}${who}`),
+    refetchInterval: REFRESH.groups,
+    placeholderData: keepPreviousData,
+    enabled,
+  })
+}
+
+/** After turning somebody on or off, or changing a class, both lists are read again. */
+function refreshRuns(client: QueryClient) {
+  for (const key of ['delegations', 'run-plan']) client.invalidateQueries({ queryKey: [key] })
+}
+
+function useRunMutation<Vars, Result>(request: (vars: Vars) => Promise<Result>) {
+  const client = useQueryClient()
+  return useMutation({ mutationFn: request, onSuccess: () => refreshRuns(client) })
+}
+
+export const useSetDelegation = () =>
+  useRunMutation(({ coordinatorId, ...body }: { coordinatorId: string; enabled: boolean; lmsAccountId?: string | null; zoomAccount?: string | null }) =>
+    api<{ coordinatorId: string; enabled: boolean }>(`/api/v1/admin/delegations/${coordinatorId}`, send('PUT', body)),
+  )
+
+export const useUpdateClassPlan = () =>
+  useRunMutation(({ id, ...body }: {
+    id: string
+    meetingUrl?: string | null
+    zoomAccount?: string | null
+    preferredEngine?: 'desktop' | 'web' | 'auto' | null
+    status?: ClassPlan['status']
+    note?: string | null
+    applyToGroup?: boolean
+  }) => api<ClassPlan & { alsoInGroup: number }>(`/api/v1/admin/run-plan/${id}`, send('PATCH', body)))

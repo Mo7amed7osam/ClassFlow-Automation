@@ -1,4 +1,4 @@
-using ZoomAutoAdmit.Core.Central;
+﻿using ZoomAutoAdmit.Core.Central;
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.WebAutomation.Lms;
@@ -59,8 +59,10 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
         _classStart = classStart;
         // Headless: an unattended class must not have a browser window pop over the Zoom window
         // the admission automation is driving.
+        // Signed in as whoever the group belongs to: a class this PC runs for a coordinator is
+        // started on the LMS under their name, not under whichever account happens to be chosen.
         _runSession = runSession ?? ((group, start, day, token) =>
-            new LmsSessionRunner(new LmsCredentialStore()).RunAsync(group, start, day, headed: false, dryRun: false, cancellationToken: token));
+            new LmsSessionRunner(new ClassLmsAccounts().StoreFor(group)).RunAsync(group, start, day, headed: false, dryRun: false, cancellationToken: token));
         _queue = queue ?? new LmsFollowUpQueue();
         _hasLogin = hasLogin ?? (() => { try { return new LmsCredentialStore().Read() != null; } catch { return false; } });
         // Also into scheduler.log: a meeting opened by a Windows task has no window to show it in.

@@ -72,7 +72,12 @@ public sealed record MeetingSchedule(
     string? GroupName = null,
     // The engine this class opens with first (null: the account's choice, normally the Zoom app).
     // When it fails, the other one is tried.
-    ZoomAutoAdmit.Core.Sessions.SessionEngineType? PreferredEngine = null);
+    ZoomAutoAdmit.Core.Sessions.SessionEngineType? PreferredEngine = null,
+    // Whose class this is, when this PC runs other people's as well as its own. Coordinator is the
+    // name shown in the list; CoordinatorId is their account on the central server, and the class
+    // is dropped from here when they are turned off there. Null on this PC's own classes.
+    string? Coordinator = null,
+    string? CoordinatorId = null);
 
 public static class ScheduleDaysExtensions
 {

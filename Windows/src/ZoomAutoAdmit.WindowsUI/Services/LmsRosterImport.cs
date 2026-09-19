@@ -1,4 +1,4 @@
-using ZoomAutoAdmit.AttendanceMatching;
+﻿using ZoomAutoAdmit.AttendanceMatching;
 using ZoomAutoAdmit.Roster;
 using ZoomAutoAdmit.WebAutomation.Lms;
 
@@ -9,15 +9,21 @@ public sealed record LmsRosterImportResult(bool Ok, string Message, string Group
 
 /// <summary>
 /// A group's roster from the LMS: its students are read from one of its sessions (this month's
-/// first) with the LMS account in use - the admin's or the coordinator's - and saved as that
-/// group's roster. Students already on the roster keep their place and their spelling; only new
-/// names are added, in the LMS's order, and nobody is removed.
+/// first) and saved as that group's roster. Students already on the roster keep their place and
+/// their spelling; only new names are added, in the LMS's order, and nobody is removed.
+///
+/// It signs in as whoever the group belongs to - the coordinator whose class it is, or this PC's
+/// own account for its own groups. A PC that runs several people's classes therefore fetches each
+/// group's students from the account that can actually see them, instead of asking one account for
+/// a group it was never given.
 /// </summary>
-public sealed class LmsRosterImport(IGroupRosterService? rosters = null, Func<LmsSessionRunner>? runner = null)
+public sealed class LmsRosterImport(IGroupRosterService? rosters = null, Func<string?, LmsSessionRunner>? runner = null)
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private readonly IGroupRosterService _rosters = rosters ?? new GroupRosterStore(log: ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Info);
-    private readonly Func<LmsSessionRunner> _runner = runner ?? (() => new LmsSessionRunner(new LmsCredentialStore()));
+    private readonly ClassLmsAccounts _classes = new();
+    private readonly Func<string?, LmsSessionRunner> _runner =
+        runner ?? (group => new LmsSessionRunner(new ClassLmsAccounts().StoreFor(group)));
 
     /// <summary>A group's roster changed here; pages that show rosters read them again.</summary>
     public static event Action<string>? Changed;
@@ -55,6 +61,10 @@ public sealed class LmsRosterImport(IGroupRosterService? rosters = null, Func<Lm
                 names.AddRange(main.LmsSessions.Rows.Select(r => r.Group));
                 if (main.Central.IsAdmin) names.AddRange(main.Central.Groups.Where(g => !g.Archived).Select(g => g.Group));
             }
+            // The groups of the coordinators whose classes this PC runs. Each is read with that
+            // coordinator's own sign-in, so they belong on the list even though they are not this
+            // account's own groups.
+            try { names.AddRange(new ClassLmsAccounts().List().Select(c => c.Group)); } catch { }
         }
         return [.. names.Where(n => !string.IsNullOrWhiteSpace(n) && !n.Contains(" | ")).Select(n => n.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)];
@@ -68,7 +78,10 @@ public sealed class LmsRosterImport(IGroupRosterService? rosters = null, Func<Lm
             return new(false, "A roster is already being read from the LMS; wait for it to finish.", group, []);
         try
         {
-            var read = await _runner().ReadRosterAsync(group, cancellationToken: token);
+            string whose = _classes.Whose(group);
+            if (whose.Length > 0)
+                ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Info($"[LMS] {group}: reading its students as {whose}, who the group belongs to.");
+            var read = await _runner(group).ReadRosterAsync(group, cancellationToken: token);
             if (!read.IsSuccess) return new(false, read.Message, group, []);
             return await SaveAsync(group, read.Names, read.Message, token);
         }

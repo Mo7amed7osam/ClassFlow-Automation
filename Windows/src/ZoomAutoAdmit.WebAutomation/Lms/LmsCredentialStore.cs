@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -27,7 +27,7 @@ public interface ILmsCredentialStore
 /// copy: the password reaches Zoom Auto Admit only to type it into the LMS login form, and
 /// nothing else ever reads it.
 /// </summary>
-public sealed class LmsCredentialStore(string? target = null) : ILmsCredentialStore
+public sealed class LmsCredentialStore(string? target = null, string? profile = null) : ILmsCredentialStore
 {
     private const int NotFound = 1168;
     private const int MaximumBlobBytes = 2560;
@@ -35,10 +35,13 @@ public sealed class LmsCredentialStore(string? target = null) : ILmsCredentialSt
     /// <summary>Without a target, the account chosen in the app (<see cref="LmsAccountDirectory"/>).</summary>
     private string Target => target ?? new LmsAccountDirectory().Active().Target;
 
-    /// <summary>The browser profile this sign-in uses, so two accounts never share one LMS session.</summary>
-    public string Profile => target == null
+    /// <summary>
+    /// The browser profile this sign-in uses, so two accounts never share one LMS session. A caller
+    /// that already knows the account gives it here; otherwise it is looked up by target.
+    /// </summary>
+    public string Profile => profile ?? (target == null
         ? new LmsAccountDirectory().Active().Profile
-        : new LmsAccountDirectory().List().FirstOrDefault(a => a.Target == target)?.Profile ?? LmsAccountDirectory.LegacyProfile;
+        : new LmsAccountDirectory().List().FirstOrDefault(a => a.Target == target)?.Profile ?? LmsAccountDirectory.LegacyProfile);
 
     public LmsAccount? Read()
     {

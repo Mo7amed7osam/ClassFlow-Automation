@@ -315,6 +315,31 @@ leave time and time in the meeting (from the reads, so no finer than their spaci
 
 Every change is written to `admin_audit_log` (`student.*`, `attendance.*`).
 
+## Other coordinators' classes, run from one PC
+
+The admin's PC opens and finishes classes for the coordinators the admin turns on, each under that
+coordinator's own Zoom and LMS accounts. Migration `0009_delegated_runs` adds `run_delegations` (who
+is turned on, and the two accounts their classes use) and `class_plans` (one row per class of theirs).
+Admin only; every write also needs `X-Dashboard-Request: 1`, and answers are never cached.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/v1/admin/delegations` | every coordinator, their groups, their LMS sign-ins (never a password), whether we run theirs, and how many of their classes are planned or still need a link |
+| `PUT /api/v1/admin/delegations/{coordinatorId}` | `{enabled, lmsAccountId?, zoomAccount?}`. A coordinator whose account is not active is refused (409); an LMS account belonging to somebody else is refused (404) |
+| `GET /api/v1/admin/users/{userId}/lms-accounts` | that coordinator's sign-ins and which is in use |
+| `POST /api/v1/admin/users/{userId}/lms-accounts/{accountId}/secret` | the email and password, for the running PC to sign in to the LMS as them. Only for a coordinator who is turned on (403 otherwise); written to `admin_audit_log` as `lms_secret.read`; never logged, never cached |
+| `GET /api/v1/admin/run-plan?from=&to=&coordinator=&status=` | the classes to run. `coordinator` may be given more than once; `onlyDelegated=false` also shows a coordinator who has been turned off |
+| `POST /api/v1/admin/run-plan/import` | `{coordinatorId, classes:[{group, date, startTime?, title?, meetingUrl?, zoomAccount?, preferredEngine?}]}` — what that coordinator's own LMS session list showed, read by the app signed in as them. At most 500 rows |
+| `PATCH /api/v1/admin/run-plan/{planId}` | `{meetingUrl?, zoomAccount?, preferredEngine?, status?, note?, applyToGroup?}` |
+
+The timetable comes from the LMS, so `import` owns when a class is; a person owns how it opens.
+Re-importing therefore updates the title and never touches a link, a Zoom account or a decision to
+skip. A class the LMS lists for a group that already has a link inherits it, so a group's link is
+filled in once; `applyToGroup` writes it across every class of that group that has not happened yet.
+
+`preferredEngine` is `desktop`, `web` or absent (auto); `auto` in a PATCH clears it. A meeting link
+must be `https://`. Full description: [DELEGATED-CLASSES.md](../DELEGATED-CLASSES.md).
+
 ## Agent authentication and registration
 
 1. An operator runs `create-enrollment-token`. It is single use and expires; only its hash is stored.

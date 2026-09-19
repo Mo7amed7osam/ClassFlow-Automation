@@ -40,6 +40,57 @@ public sealed record CentralUser(string Id, string Username, string DisplayName,
 }
 public sealed record CentralUserList(List<CentralUser> Users, int Count);
 
+// ---------------------------------------------------------------------- other people's classes
+
+/// <summary>How many classes of one coordinator are waiting, done, or still need a meeting link.</summary>
+public sealed record CentralDelegationClasses(int Planned, int Done, int Skipped, int NeedsLink);
+
+/// <summary>A coordinator, and whether this PC runs their classes under their own two accounts.</summary>
+public sealed record CentralDelegation(string CoordinatorId, string Username, string DisplayName, string Status, bool Enabled,
+    List<CentralGroupRef>? Groups, CentralLmsAccount? LmsAccount, List<CentralLmsAccount>? LmsAccounts, string? ZoomAccount,
+    CentralDelegationClasses? Classes, DateTimeOffset? UpdatedAt)
+{
+    public IReadOnlyList<CentralGroupRef> GroupList => Groups ?? [];
+    public string GroupsText => GroupList.Count == 0 ? "no groups" : string.Join(", ", GroupList.Select(g => g.Name));
+    /// <summary>Everything needed to actually run their classes is there.</summary>
+    public bool IsReady => Enabled && LmsAccount != null;
+}
+
+public sealed record CentralDelegationList(List<CentralDelegation> Delegations);
+
+/// <summary>One class of a coordinator as the server holds it, before this PC turns it into a schedule.</summary>
+public sealed record CentralClassPlan(string Id, string CoordinatorId, string Group, string Date, string? StartTime, string? Title,
+    string? MeetingUrl, string? ZoomAccount, string? PreferredEngine, string Source, string Status, string? Note, bool NeedsLink,
+    DateTimeOffset? ImportedAt, DateTimeOffset UpdatedAt)
+{
+    public DateOnly? Day => DateOnly.TryParse(Date, out var day) ? day : null;
+    public TimeOnly? Start => TimeOnly.TryParse(StartTime, out var start) ? start : null;
+}
+
+public sealed record CentralRunCoordinator(string CoordinatorId, string DisplayName, string Username, bool Enabled,
+    string? ZoomAccount, CentralLmsAccount? LmsAccount);
+
+public sealed record CentralRunPlan(List<CentralClassPlan>? Classes, List<CentralRunCoordinator>? Coordinators)
+{
+    public IReadOnlyList<CentralClassPlan> ClassList => Classes ?? [];
+    public IReadOnlyList<CentralRunCoordinator> CoordinatorList => Coordinators ?? [];
+}
+
+/// <summary>
+/// The little of the server that running other people's classes needs. The app's own client is
+/// what implements it; naming it separately is what lets that part be exercised without a server,
+/// a signed-in session or this PC's saved accounts.
+/// </summary>
+public interface IDelegatedRunsApi
+{
+    /// <summary>Only an admin has other people's classes to run.</summary>
+    bool IsAdmin { get; }
+    Task<CentralDelegationList> DelegationsAsync(CancellationToken token);
+    Task<CentralCoordinatorSecret> CoordinatorLmsSecretAsync(string coordinatorId, string accountId, CancellationToken token);
+    Task<JsonElement> ImportRunPlanAsync(string coordinatorId, IEnumerable<object> classes, CancellationToken token);
+    Task<CentralRunPlan> RunPlanAsync(DateOnly from, DateOnly to, IEnumerable<string>? coordinators, CancellationToken token);
+}
+
 public sealed class CentralApiException(HttpStatusCode status, string message) : Exception(message)
 {
     public HttpStatusCode Status { get; } = status;
@@ -123,7 +174,7 @@ public sealed class CentralLoginStore(string target = "ZoomAutoAdmit/Central/Das
 /// coordinator), keeps the session cookie in memory only, and signs in again by itself from the
 /// saved sign-in when the session ends. Every change carries X-Dashboard-Request: 1.
 /// </summary>
-public sealed class CentralApiClient
+public sealed class CentralApiClient : IDelegatedRunsApi
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -159,6 +210,7 @@ public sealed class CentralApiClient
     }
 
     public CentralMe? Me { get; private set; }
+    public bool IsAdmin => Me?.IsAdmin == true;
     public bool HasSavedLogin => (_session is { } s && SafeRead(s) != null) || _logins.Read() != null || SavedPassword(_known.Current) != null;
 
     /// <summary>The accounts that signed in on this PC, newest first; each can continue without typing when it has a session or a saved password.</summary>
@@ -443,6 +495,39 @@ public sealed class CentralApiClient
         (await SendAsync<JsonElement>(HttpMethod.Post, "api/v1/me/devices/enroll", new { name }, token))
             .GetProperty("enrollmentToken").GetString() ?? throw new CentralApiException(0, "The server sent no enrollment token.");
 
+    // ------------------------------------------------------------------ other people's classes (admin)
+
+    /// <summary>Every coordinator, their groups and sign-ins, and whether this PC runs their classes.</summary>
+    public Task<CentralDelegationList> DelegationsAsync(CancellationToken token = default) =>
+        GetAsync<CentralDelegationList>("api/v1/admin/delegations", token);
+
+    /// <summary>Run this coordinator's classes (or stop), under the LMS and Zoom account named.</summary>
+    public Task<JsonElement> SetDelegationAsync(string coordinatorId, bool enabled, string? lmsAccountId = null,
+        string? zoomAccount = null, CancellationToken token = default) =>
+        SendAsync<JsonElement>(HttpMethod.Put, $"api/v1/admin/delegations/{coordinatorId}",
+            new { enabled, lmsAccountId, zoomAccount }, token);
+
+    /// <summary>That coordinator's LMS sign-in, so their classes go up as theirs. Never logged.</summary>
+    public Task<CentralCoordinatorSecret> CoordinatorLmsSecretAsync(string coordinatorId, string accountId, CancellationToken token = default) =>
+        SendAsync<CentralCoordinatorSecret>(HttpMethod.Post, $"api/v1/admin/users/{coordinatorId}/lms-accounts/{accountId}/secret", null, token);
+
+    /// <summary>The classes to run between two days, for everyone turned on or only the ones asked for.</summary>
+    public Task<CentralRunPlan> RunPlanAsync(DateOnly from, DateOnly to, IEnumerable<string>? coordinators = null,
+        CancellationToken token = default)
+    {
+        string who = string.Concat((coordinators ?? []).Select(id => $"&coordinator={Uri.EscapeDataString(id)}"));
+        return GetAsync<CentralRunPlan>($"api/v1/admin/run-plan?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}{who}", token);
+    }
+
+    /// <summary>What that coordinator's own LMS session list showed. Re-sending it changes nothing else.</summary>
+    public Task<JsonElement> ImportRunPlanAsync(string coordinatorId, IEnumerable<object> classes, CancellationToken token = default) =>
+        SendAsync<JsonElement>(HttpMethod.Post, "api/v1/admin/run-plan/import",
+            new { coordinatorId, classes = classes.ToArray() }, token);
+
+    /// <summary>One class's meeting link, Zoom account, what it opens with, or skipping it.</summary>
+    public Task<CentralClassPlan> UpdateClassPlanAsync(string planId, object body, CancellationToken token = default) =>
+        SendAsync<CentralClassPlan>(HttpMethod.Patch, $"api/v1/admin/run-plan/{planId}", body, token);
+
     public async Task<JsonElement?> SettingAsync(string key, CancellationToken token = default)
     {
         var answer = await GetAsync<JsonElement>($"api/v1/settings/{key}", token);
@@ -513,6 +598,18 @@ public sealed class CentralKnownAccounts(string? path = null)
     }
 }
 public sealed record CentralLmsAccounts(List<CentralLmsAccount> Accounts, bool CanKeepPasswords);
+// Never a plain record ToString in a log: the password is in it.
+public sealed class CentralCoordinatorSecret
+{
+    public string Id { get; init; } = "";
+    public string CoordinatorId { get; init; } = "";
+    public string Email { get; init; } = "";
+    public string Role { get; init; } = "coordinator";
+    public string Label { get; init; } = "";
+    public string Password { get; init; } = "";
+    public override string ToString() => "A coordinator's LMS sign-in (secret redacted)";
+}
+
 // Never a plain record ToString in a log: the password is in it.
 public sealed class CentralLmsSecret
 {

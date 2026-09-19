@@ -86,6 +86,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 .FirstOrDefault();
             return (match?.DriveLink, match?.FileName);
         };
+        // The classes this PC runs for other coordinators, kept in step with the server: their
+        // sign-ins, their groups, their timetables and the schedules that open by themselves.
+        Runs = new DelegatedRuns(Central.Api, service);
         StartMeeting = new StartMeetingViewModel(service);
         Accounts = new AccountsViewModel(service);
         Schedules = new SchedulesViewModel(service);
@@ -114,6 +117,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             RefreshAdmissionState();
         });
         RefreshAdmissionState();
+        // Reads every turned-on coordinator's timetable again now, rather than waiting for the
+        // next few hours to pass.
+        SyncRunsCommand = new AsyncRelayCommand(async _ =>
+        {
+            RunsStatus = "Reading the coordinators' timetables from the LMS…";
+            _lastRunsSync = DateTimeOffset.Now;
+            try
+            {
+                var report = await Runs.SyncAsync(readTimetables: true);
+                RunsStatus = report.Summary + string.Concat(report.Problems.Select(p => Environment.NewLine + p));
+                await Schedules.RefreshAsync();
+            }
+            catch (Exception ex) { RunsStatus = "That did not work: " + CentralApiException.Explain(ex); }
+        });
         NavigateCommand = new RelayCommand(value =>
         {
             if (int.TryParse(value?.ToString(), out var index)) SelectedTabIndex = index;
@@ -133,6 +150,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StartMeetingViewModel StartMeeting { get; }
     public AccountsViewModel Accounts { get; }
     public SchedulesViewModel Schedules { get; }
+    /// <summary>The coordinators whose classes this PC opens and finishes as well as its own.</summary>
+    public DelegatedRuns Runs { get; }
+    public System.Windows.Input.ICommand SyncRunsCommand { get; }
+    /// <summary>What the last pass over those coordinators did, for the Schedules page to show.</summary>
+    public string RunsStatus { get => _runsStatus; private set => SetProperty(ref _runsStatus, value); }
+    private string _runsStatus = "";
+    private DateTimeOffset _lastRunsSync = DateTimeOffset.MinValue;
+    /// <summary>How often the server is asked again who this PC runs and what their classes are.</summary>
+    public static readonly TimeSpan SyncRunsEvery = TimeSpan.FromMinutes(5);
     public LogsViewModel Logs { get; }
     public AiMatchingViewModel AiMatching { get; }
     public AttendanceViewModel Attendance { get; }
@@ -347,6 +373,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     // Asks the server every few hours whether a newer version of the app is published.
                     _ = Updater.CheckAsync(settings, Central.Api);
                 }
+                // Whose classes this PC runs, and theirs for the days ahead. Only in the app
+                // itself, and only the admin's copy has anybody else's to run.
+                if (System.Windows.Application.Current is App && Central.IsAdmin
+                    && DateTimeOffset.Now - _lastRunsSync >= SyncRunsEvery)
+                {
+                    _lastRunsSync = DateTimeOffset.Now;
+                    _ = SyncDelegatedRunsAsync();
+                }
                 await Lms.ProcessDueFollowUpAsync();
                 if (_disposed) return;
                 await LmsSessions.TickAsync();
@@ -354,6 +388,25 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         finally { _refreshing = false; }
     }
+    /// <summary>
+    /// One pass over the coordinators the admin runs. It is not awaited by the refresh: reading a
+    /// timetable opens a browser and takes its time, and nothing on the page waits for it.
+    /// </summary>
+    private async Task SyncDelegatedRunsAsync()
+    {
+        try
+        {
+            var report = await Runs.SyncAsync();
+            if (_disposed) return;
+            RunsStatus = report.Summary;
+            if (report.Scheduled > 0 || report.Removed > 0) await Schedules.RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            RunsStatus = "The coordinators' classes could not be brought here: " + CentralApiException.Explain(ex);
+        }
+    }
+
     private async void OnAccountsChanged()
     {
         await StartMeeting.RefreshAccountsAsync();

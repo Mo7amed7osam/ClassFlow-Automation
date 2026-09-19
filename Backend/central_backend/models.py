@@ -415,6 +415,84 @@ class LmsAccount(Base):
     )
 
 
+RUN_PLAN_STATUSES = ("planned", "skipped", "opened", "done", "failed")
+RUN_PLAN_SOURCES = ("lms", "manual")
+RUN_ENGINES = ("desktop", "web")
+
+
+class RunDelegation(Base):
+    """A coordinator whose classes the admin's PC opens and finishes instead of theirs.
+
+    The admin chooses the coordinator; nothing here holds a password. lms_account_id names which of
+    that coordinator's LMS sign-ins the class steps use (null: the one they have in use), and
+    zoom_account the Zoom account on the running PC that opens their meetings. Two coordinators run
+    side by side because each carries its own pair.
+    """
+
+    __tablename__ = "run_delegations"
+
+    coordinator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    lms_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("lms_accounts.id", ondelete="SET NULL")
+    )
+    zoom_account: Mapped[str | None] = mapped_column(String(100))
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ClassPlan(Base):
+    """One class of a delegated coordinator: when it is, which group, and what opens it.
+
+    The rows come from that coordinator's own LMS session list, read with their sign-in, so the
+    timetable is theirs and not a copy somebody has to keep up to date. The LMS does not carry a
+    Zoom link, so meeting_url (and the Zoom account that opens it) is filled in here or inherited
+    from the delegation; a class without one is shown as needing it rather than failing at its time.
+    """
+
+    __tablename__ = "class_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    coordinator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    group_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    start_time: Mapped[str | None] = mapped_column(String(5))
+    title: Mapped[str | None] = mapped_column(String(200))
+    meeting_url: Mapped[str | None] = mapped_column(Text)
+    zoom_account: Mapped[str | None] = mapped_column(String(100))
+    preferred_engine: Mapped[str | None] = mapped_column(String(8))
+    source: Mapped[str] = mapped_column(String(16), nullable=False, server_default="lms")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="planned")
+    note: Mapped[str | None] = mapped_column(String(300))
+    imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("source IN ('lms', 'manual')", name="ck_class_plans_source"),
+        CheckConstraint(
+            "status IN ('planned', 'skipped', 'opened', 'done', 'failed')", name="ck_class_plans_status"
+        ),
+        CheckConstraint(
+            "preferred_engine IS NULL OR preferred_engine IN ('desktop', 'web')", name="ck_class_plans_engine"
+        ),
+        Index(
+            "uq_class_plans_class",
+            "coordinator_id",
+            "group_name",
+            "session_date",
+            text("coalesce(start_time, '')"),
+            unique=True,
+        ),
+        Index("ix_class_plans_date", "session_date", "start_time"),
+    )
+
+
 class AppSetting(Base):
     """A setting shared by every copy of the app (e.g. the recordings sheet's link). Never a secret."""
 
@@ -460,6 +538,11 @@ class DeviceActivity(Base):
 
 __all__ = [
     "ACTIVITY_OUTCOMES",
+    "RUN_ENGINES",
+    "RUN_PLAN_SOURCES",
+    "RUN_PLAN_STATUSES",
+    "ClassPlan",
+    "RunDelegation",
     "AppSetting",
     "DeviceActivity",
     "LmsAccount",

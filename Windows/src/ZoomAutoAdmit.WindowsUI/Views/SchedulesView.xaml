@@ -1,6 +1,11 @@
 <UserControl xmlns:infra="clr-namespace:ZoomAutoAdmit.WindowsUI.Infrastructure" x:Class="ZoomAutoAdmit.WindowsUI.Views.SchedulesView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:ZoomAutoAdmit.WindowsUI.ViewModels">
-<UserControl.Resources><vm:ScheduleDaysConverter x:Key="ScheduleDaysText"/></UserControl.Resources>
+<UserControl.Resources>
+    <vm:ScheduleDaysConverter x:Key="ScheduleDaysText"/>
+    <vm:OpensWithConverter x:Key="OpensWithText"/>
+    <BooleanToVisibilityConverter x:Key="BoolToVisible"/>
+    <Style x:Key="GridCellMuted" TargetType="TextBlock"><Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/></Style>
+</UserControl.Resources>
 <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
 <!-- One session by hand: the same form that edits a picked row. -->
 <Border Style="{DynamicResource Card}" Margin="0,0,0,16" DataContext="{Binding Schedules}"><StackPanel IsEnabled="{Binding IsIdle}">
@@ -78,11 +83,34 @@
                                 <Button Content="Refresh" Command="{Binding RefreshCommand}" VerticalAlignment="Center"/>
                                 <Button Content="Enable all shown" Command="{Binding EnableAllShownCommand}" VerticalAlignment="Center"/>
                                 <Button Content="Disable all shown" Command="{Binding DisableAllShownCommand}" VerticalAlignment="Center"/>
+                                <!-- What the shown classes open with, for all of them at once. -->
+                                <ComboBox ItemsSource="{Binding OpensWithChoices}" SelectedItem="{Binding OpensWith}" Width="170"
+                                          VerticalAlignment="Center" Margin="12,3,0,3" AutomationProperties.Name="Opens with, for all shown"/>
+                                <Button Content="Use for all shown" Command="{Binding SetOpensWithForShownCommand}" VerticalAlignment="Center"
+                                        ToolTip="Every schedule in the table below opens with this first."/>
                                 <TextBlock Text="SHOW" Style="{DynamicResource FieldLabel}" VerticalAlignment="Center" Margin="12,0,6,0"/>
                                 <ComboBox ItemsSource="{Binding ScheduleFilters}" SelectedItem="{Binding ScheduleFilter}" Width="150"
                                           VerticalAlignment="Center" Margin="0,3" AutomationProperties.Name="Schedule day filter"/>
+                                <!-- Whose classes. Hidden until this PC runs somebody else's as well as its own. -->
+                                <TextBlock Text="WHOSE" Style="{DynamicResource FieldLabel}" VerticalAlignment="Center" Margin="12,0,6,0"
+                                           Visibility="{Binding HasCoordinators, Converter={StaticResource BoolToVisible}}"/>
+                                <ComboBox ItemsSource="{Binding Coordinators}" SelectedItem="{Binding CoordinatorFilter}" Width="170"
+                                          VerticalAlignment="Center" Margin="0,3" AutomationProperties.Name="Schedule coordinator filter"
+                                          Visibility="{Binding HasCoordinators, Converter={StaticResource BoolToVisible}}"/>
                                 <TextBlock Text="{Binding FilterSummary}" Style="{DynamicResource Muted}" VerticalAlignment="Center" Margin="12,0,0,0"/>
                             </WrapPanel>
+                            <!-- The coordinators this PC runs for. Bound past the Schedules context,
+                                 because whose classes these are is the window's business, not one page's. -->
+                            <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        Margin="-3,8,0,0"
+                                        Visibility="{Binding Central.IsAdmin, Converter={StaticResource BoolToVisible}}">
+                                <WrapPanel>
+                                    <Button Content="Read coordinators' timetables" Command="{Binding SyncRunsCommand}" VerticalAlignment="Center"
+                                            ToolTip="Signs in as each coordinator you run, reads their LMS timetable, and puts their classes here."/>
+                                </WrapPanel>
+                                <TextBlock Text="{Binding RunsStatus}" Style="{DynamicResource Muted}" TextWrapping="Wrap" Margin="3,6,0,0"
+                                           AutomationProperties.LiveSetting="Polite"/>
+                            </StackPanel>
                         </StackPanel>
                         <Border Grid.Column="1" Style="{DynamicResource InsetCard}" VerticalAlignment="Top" Padding="14,12">
                             <StackPanel>
@@ -120,9 +148,14 @@
                             <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
                             <DataGridTextColumn Header="URL" Binding="{Binding MeetingUrl}" Width="2*" />
                             <DataGridTextColumn Header="Account" Binding="{Binding AccountId}" Width="*" />
+                            <DataGridTextColumn Header="Coordinator" Binding="{Binding Coordinator}" Width="*"
+                                                ElementStyle="{DynamicResource GridCellMuted}" />
                             <DataGridTextColumn Header="Time" Binding="{Binding Time, StringFormat=HH\\:mm}" Width="*" />
                             <DataGridTextColumn Header="Date" Binding="{Binding OccurrenceDate, StringFormat=yyyy-MM-dd}" Width="*" />
                             <DataGridTextColumn Header="Day" Binding="{Binding Converter={StaticResource ScheduleDaysText}}" Width="*" />
+                            <!-- What each class opens with, set for the whole schedule in the form above. -->
+                            <DataGridTextColumn Header="Opens with" Binding="{Binding PreferredEngine, Converter={StaticResource OpensWithText}}" Width="*"
+                                                ElementStyle="{DynamicResource GridCellMuted}" />
                             <DataGridTemplateColumn Header="Enabled" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
                                 <CheckBox IsChecked="{Binding Enabled, Mode=OneWay}" Margin="0" HorizontalAlignment="Left"
                                           Command="{Binding DataContext.ToggleEnabledCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
