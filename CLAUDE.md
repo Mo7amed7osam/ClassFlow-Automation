@@ -10,8 +10,20 @@ One repository, five parts. They ship separately and share the central backend's
 | Dashboard | React 19 + TypeScript + Vite + Tailwind 4 | `Dashboard/src/` | anywhere; served by the backend from `Dashboard/dist` |
 | Chrome extension | JS | `Windows/ZoomAutoAdmit.ChromeExtension/` | Chrome |
 
-The active branch is `Windows_and_web`. `main` is behind it — branch from `Windows_and_web` unless
-told otherwise.
+This file describes the `Windows_and_web` branch, where the Windows agent, the backend and the
+dashboard are built. Branch from it unless told otherwise.
+
+`main` is the repository's default branch and has **diverged**, not fallen behind: from the common
+ancestor `415593a`, `main` carries 39 commits and `Windows_and_web` 51, and neither contains the
+other. They have been developed in largely separate trees — `main` in `Sources/` (the macOS app),
+`web-extension/` and `automation/`; `Windows_and_web` in `Windows/`, `Backend/` and `Dashboard/`, with
+a small overlap in `Sources/ZoomAutoAdmitCore`. `main` also renames the project to **ClassFlow
+Automation** in its README, a name this branch's documents do not yet use, and the GitHub repository
+itself is now `Mo7amed7osam/ClassFlow-Automation`.
+
+So check which branch is checked out before trusting a path or a name from memory, and do not assume
+work present on one side exists on the other. A session that starts from `main` is not looking at the
+Windows, backend or dashboard work described here.
 
 ## Build and test
 
