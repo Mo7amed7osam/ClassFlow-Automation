@@ -99,6 +99,15 @@
                                           Visibility="{Binding HasCoordinators, Converter={StaticResource BoolToVisible}}"/>
                                 <TextBlock Text="{Binding FilterSummary}" Style="{DynamicResource Muted}" VerticalAlignment="Center" Margin="12,0,0,0"/>
                             </WrapPanel>
+                            <!-- What signing in brought to this PC: its Zoom accounts and its own
+                                 classes, when it had none of its own (a new PC, or a cloud one). -->
+                            <TextBlock DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                       Text="{Binding RestoredStatus}" Foreground="{DynamicResource AccentBrush}"
+                                       TextWrapping="Wrap" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite">
+                                <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
+                                    <DataTrigger Binding="{Binding RestoredStatus}" Value=""><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                </Style.Triggers></Style></TextBlock.Style>
+                            </TextBlock>
                             <!-- The coordinators this PC runs for. Bound past the Schedules context,
                                  because whose classes these are is the window's business, not one page's. -->
                             <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}"

@@ -66,6 +66,34 @@ knows it by, or - when it was added here under another name - by the e-mail it s
 Failing both, the class says so by name (`this PC has no Zoom account called "CAI5_AIS4_S7" and none
 signed in as mona@zoom.example.com`) instead of failing quietly.
 
+## Setting up another PC
+
+Everything a PC needs is kept against the person who signs in to it, so a second PC - a cloud one,
+or a replacement - is set up by signing in and nothing else:
+
+| Comes down by itself | Still done once on that PC |
+|---|---|
+| Their LMS sign-in (decrypted for their own app) | Signing in to **Zoom** itself, for each account |
+| Their Zoom accounts: the group each hosts, its e-mail, the link its classes open | The address of the server (there is nowhere to read it from yet) |
+| Their own classes, exactly as they were, registered so they open by themselves | Registering the PC as a device, if its attendance should reach the server |
+| The coordinators being run, their accounts and their timetables | |
+| A group's roster, read from the LMS the first time a class needs it | |
+
+Both the Zoom accounts and the classes travel in whichever direction that PC needs: a PC that has
+them is the one that knows, and sends them; a PC that has none takes what was kept. Neither can
+quietly empty the other, because a PC only takes when it has nothing of its own to lose, and an
+empty list is never sent. What arrives is said on the Schedules page.
+
+Only their own classes travel. The ones run for other coordinators are rebuilt from the run plan
+every few minutes, and sending them too would give them two owners. A restored class is never
+marked as already opened today, so a class due on the new PC still opens there.
+
+A cloud Windows PC has two constraints worth knowing before relying on one: Zoom's desktop
+automation needs a desktop session that stays open (a disconnected RDP session locks and UI
+Automation stops), and a scheduled class needs a logged-in interactive user. A PC in that position
+should open its classes with the browser engine - **Use for all shown** on the Schedules page sets
+that for every class at once.
+
 ## Two at once
 
 * **Zoom.** The existing allocation policy already gives the first live class the Zoom desktop app
@@ -124,11 +152,15 @@ Turning a coordinator off closes it again immediately.
 | `POST /api/v1/admin/run-plan/import` | what a coordinator's LMS listed |
 | `PATCH /api/v1/admin/run-plan/{id}` | its link, Zoom account, what it opens with, or skipping it |
 
-Each person's own app keeps its accounts with `GET`/`PUT /api/v1/me/zoom-accounts` (the whole set:
-an account removed on their PC stops being offered here) and the existing `/api/v1/me/lms-accounts`.
+Each person's own app keeps what its PC has against their account: `GET`/`PUT
+/api/v1/me/zoom-accounts` (the whole set, so an account removed there stops being offered here),
+`GET`/`PUT /api/v1/me/schedules` for their own classes, and the existing `/api/v1/me/lms-accounts`.
+The server never reads what is in a class - its days, its time and what it opens with are the app's
+own shape, and modelling them twice would only let the two drift apart.
 
-Migrations `0009_delegated_runs` (`run_delegations`, `class_plans`) and `0010_zoom_accounts`
-(`zoom_accounts`, and the delegation column naming one); nothing existing is touched. Re-importing a timetable never duplicates a class and never overwrites what a person put on
+Migrations `0009_delegated_runs` (`run_delegations`, `class_plans`), `0010_zoom_accounts`
+(`zoom_accounts`, and the delegation column naming one) and `0011_user_schedules`
+(`user_schedules`); nothing existing is touched. Re-importing a timetable never duplicates a class and never overwrites what a person put on
 it — the LMS knows the timetable, and this side knows how a class opens.
 
 ## What was checked, and what needs a real machine
@@ -136,17 +168,18 @@ it — the LMS knows the timetable, and this side knows how a class opens.
 Run by the tests: the server's whole contract (33 cases), the app's side of it — whose account each
 class uses, two coordinators side by side, finding their Zoom account here by name or by the e-mail
 it signs in with, a missing link or account, turning somebody off, reading each timetable with its
-own sign-in (15 cases) — the group-to-account file (8 cases), sending this PC's Zoom accounts up
-(7 cases), the Schedules page's coordinator column, filter and engine choice (7 cases), and the
-Dashboard page (13 cases).
+own sign-in (15 cases) — the group-to-account file (8 cases), this PC's Zoom accounts going up and
+coming back (12 cases), its own classes doing the same (10 cases), the Schedules page's coordinator
+column, filter and engine choice (7 cases), and the Dashboard page (13 cases).
 
 Run as a dry run against a real server: a throwaway PostgreSQL migrated from nothing to `0010`, the
 backend under uvicorn on `127.0.0.1`, and the whole journey over real HTTP — both coordinators'
 accounts saved by their own sign-ins, the admin ticking them, a sign-in refused before and handed
 over after, both timetables imported, every class arriving with its link and its account already
 filled in, two 19:00 classes with different pairs, the filter, skipping, a hand-written link
-surviving a re-read, turning somebody off closing their sign-in again, and a coordinator refused all
-of it. Nothing touched Zoom or the LMS.
+surviving a re-read, turning somebody off closing their sign-in again, a brand new PC signing in as
+the admin and finding the accounts, the links, its own classes and the coordinators being run all
+waiting for it, and a coordinator refused all of it. Nothing touched Zoom or the LMS.
 
 Not run by the tests, because they need a real desktop with Zoom and the LMS signed in: the LMS
 session list actually being read for a second coordinator, two meetings genuinely live at once on one

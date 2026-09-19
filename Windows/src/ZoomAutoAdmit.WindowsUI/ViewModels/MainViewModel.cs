@@ -1,4 +1,4 @@
-﻿using ZoomAutoAdmit.WindowsUI.Infrastructure;
+using ZoomAutoAdmit.WindowsUI.Infrastructure;
 using ZoomAutoAdmit.WindowsUI.Services;
 using ZoomAutoAdmit.Roster;
 using ZoomAutoAdmit.Core.Formatting;
@@ -93,6 +93,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // each one hosts and the link its classes open. Whoever runs their classes picks from that
         // instead of being told a link twice.
         ZoomAccounts = new ZoomServerAccounts(Central.Api);
+        // And the classes this PC opens by itself, so a new PC - a cloud one - finds them there
+        // instead of being set up again.
+        OwnSchedules = new ScheduleServerSync(Central.Api);
         StartMeeting = new StartMeetingViewModel(service);
         Accounts = new AccountsViewModel(service);
         Schedules = new SchedulesViewModel(service);
@@ -158,6 +161,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public DelegatedRuns Runs { get; }
     /// <summary>This PC's Zoom accounts, kept against the signed-in person's dashboard account.</summary>
     public ZoomServerAccounts ZoomAccounts { get; }
+    /// <summary>This PC's own classes, kept there too.</summary>
+    public ScheduleServerSync OwnSchedules { get; }
+    /// <summary>What the last pass brought here from the dashboard account, for the pages to show.</summary>
+    public string RestoredStatus { get => _restoredStatus; private set => SetProperty(ref _restoredStatus, value); }
+    private string _restoredStatus = "";
     public System.Windows.Input.ICommand SyncRunsCommand { get; }
     /// <summary>What the last pass over those coordinators did, for the Schedules page to show.</summary>
     public string RunsStatus { get => _runsStatus; private set => SetProperty(ref _runsStatus, value); }
@@ -381,7 +389,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 }
                 // Whose classes this PC runs, and theirs for the days ahead. Only in the app
                 // itself, and only the admin's copy has anybody else's to run.
-                if (System.Windows.Application.Current is App && Central.IsSignedIn) _ = PushZoomAccountsAsync();
+                if (System.Windows.Application.Current is App && Central.IsSignedIn) _ = SyncThisPcAsync();
                 if (System.Windows.Application.Current is App && Central.IsAdmin
                     && DateTimeOffset.Now - _lastRunsSync >= SyncRunsEvery)
                 {
@@ -414,20 +422,48 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>Sends this PC's Zoom accounts when they have changed (or an hour has passed).</summary>
-    private async Task PushZoomAccountsAsync()
+    /// <summary>
+    /// What this PC and the dashboard account owe each other: its Zoom accounts and its own classes.
+    /// A PC that has them sends them; a PC that has none - a new one - takes what was kept. Never
+    /// load-bearing: the classes here run whether or not the server heard.
+    /// </summary>
+    private async Task SyncThisPcAsync()
     {
-        try { await ZoomAccounts.PushAsync(await _service.GetAccountsAsync()); }
+        var said = new List<string>();
+        try
+        {
+            if (await ZoomAccounts.SyncAsync(await _service.GetAccountsAsync(), _service.SaveAccountAsync) is { } accounts)
+                said.Add(accounts);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Never load-bearing: the classes on this PC run whether or not the server heard.
-            ConsoleLogger.Warn($"[ACCOUNTS] This PC's Zoom accounts were not saved to the server: {CentralApiException.Explain(ex)}");
+            ConsoleLogger.Warn($"[ACCOUNTS] This PC's Zoom accounts and the server are not in step: {CentralApiException.Explain(ex)}");
+        }
+        try
+        {
+            if (await OwnSchedules.SyncAsync(await _service.GetSchedulesAsync(), _service.SaveScheduleAsync) is { } classes)
+                said.Add(classes);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ConsoleLogger.Warn($"[SCHEDULES] This PC's classes and the server are not in step: {CentralApiException.Explain(ex)}");
+        }
+        if (_disposed || said.Count == 0) return;
+        RestoredStatus = string.Join(" ", said);
+        // Something arrived: the accounts and the timetable pages are showing the old, empty list.
+        if (said.Any(line => line.Contains("came from", StringComparison.Ordinal)))
+        {
+            await Accounts.RefreshAsync();
+            await Schedules.RefreshAsync();
+            await StartMeeting.RefreshAccountsAsync();
+            PublishAccountsToRoles();
         }
     }
 
     private async void OnAccountsChanged()
     {
         ZoomAccounts.Changed();
+        OwnSchedules.Changed();
         await StartMeeting.RefreshAccountsAsync();
         await Schedules.RefreshAsync();
         PublishAccountsToRoles();

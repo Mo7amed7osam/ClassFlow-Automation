@@ -145,3 +145,57 @@ def test_keep_me_signed_in_is_a_long_session_in_the_database(dash, clock):  # no
     # Nine days later only the remembered session still works.
     clock.advance(timedelta(days=9).total_seconds())
     assert dash.get("/api/v1/auth/me").status_code == 200
+
+
+# =========================================================================== their own classes
+
+
+def test_a_new_pc_finds_the_classes_the_old_one_kept(dash):
+    """Signing in somewhere else - a cloud PC - brings the timetable with it."""
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    assert dash.get("/api/v1/me/schedules").json() == {"schedules": [], "count": 0, "deviceName": None, "updatedAt": None}
+
+    classes = [
+        {"id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "name": "CAI5_AIS4_S7 • 36", "meetingUrl": "https://zoom.us/j/91473108490",
+         "accountId": "CAI5_AIS4_S7", "time": "19:00", "days": "None", "enabled": True, "occurrenceDate": "2026-09-22"},
+        {"id": "3f2504e0-4f89-11d3-9a0c-0305e82c3302", "name": "CAI5_AIS4_S7 • 39", "meetingUrl": "https://zoom.us/j/91473108490",
+         "accountId": "CAI5_AIS4_S7", "time": "19:00", "days": "Tuesday", "enabled": False},
+    ]
+    kept = dash.put("/api/v1/me/schedules", headers=DASH, json={"schedules": classes, "deviceName": "PC-01"})
+    assert kept.status_code == 200 and kept.json()["count"] == 2
+
+    back = dash.get("/api/v1/me/schedules").json()
+    assert back["schedules"] == classes                     # given back exactly as the app wrote them
+    assert back["count"] == 2 and back["deviceName"] == "PC-01"
+    assert dash.get("/api/v1/me/schedules").headers["Cache-Control"] == "no-store"
+
+
+def test_the_list_is_replaced_whole_so_a_deleted_class_stays_deleted(dash):
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    dash.put("/api/v1/me/schedules", headers=DASH, json={"schedules": [{"id": "a", "name": "one"}, {"id": "b", "name": "two"}]})
+    dash.put("/api/v1/me/schedules", headers=DASH, json={"schedules": [{"id": "a", "name": "one"}]})
+    assert [s["id"] for s in dash.get("/api/v1/me/schedules").json()["schedules"]] == ["a"]
+
+
+def test_one_persons_classes_are_never_anothers(dash, settings):
+    make_user(settings.database_url, "omar", COORDINATOR_PASSWORD)
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    dash.put("/api/v1/me/schedules", headers=DASH, json={"schedules": [{"id": "a", "name": "the admin's"}]})
+
+    as_user(dash, "omar", COORDINATOR_PASSWORD)
+    assert dash.get("/api/v1/me/schedules").json()["schedules"] == []
+    dash.put("/api/v1/me/schedules", headers=DASH, json={"schedules": [{"id": "b", "name": "omar's"}]})
+
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    assert dash.get("/api/v1/me/schedules").json()["schedules"][0]["name"] == "the admin's"
+
+
+def test_a_timetable_longer_than_a_term_is_refused(dash):
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    too_many = [{"id": str(n), "name": "x"} for n in range(401)]
+    assert dash.put("/api/v1/me/schedules", headers=DASH, json={"schedules": too_many}).status_code == 400
+
+
+def test_saving_classes_needs_the_dashboard_header(dash):
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    assert dash.put("/api/v1/me/schedules", json={"schedules": []}).status_code == 403

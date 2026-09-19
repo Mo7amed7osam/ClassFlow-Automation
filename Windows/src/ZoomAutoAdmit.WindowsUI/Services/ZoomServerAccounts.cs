@@ -7,6 +7,7 @@ namespace ZoomAutoAdmit.WindowsUI.Services;
 public interface IZoomAccountsApi
 {
     bool IsSignedIn { get; }
+    Task<List<CentralZoomAccount>> ZoomAccountsAsync(CancellationToken token);
     Task<System.Text.Json.JsonElement> SaveZoomAccountsAsync(IEnumerable<object> accounts, CancellationToken token);
 }
 
@@ -19,9 +20,14 @@ public interface IZoomAccountsApi
 /// a meeting link a second time, and the admin chooses from what that person actually has rather
 /// than from a box they could spell wrong.
 ///
-/// No Zoom sign-in is sent. The password (or the saved Desktop account, or the browser profile)
-/// stays on the PC exactly as it was; what goes to the server is the account's name, its e-mail,
-/// its group and its link.
+/// It goes both ways. A PC that already has accounts is the one that knows: it sends them. A PC
+/// that has none - a new one, a cloud one - takes what the server kept instead, so signing in is
+/// all it takes to find the accounts and the links there. Neither direction can quietly throw the
+/// other away, because a PC only takes when it has nothing of its own to lose.
+///
+/// No Zoom sign-in is sent either way. The password (or the saved Desktop account, or the browser
+/// profile) stays on the PC exactly as it was; what travels is the account's name, its e-mail, its
+/// group and its link. Signing in to Zoom itself is still done once on each PC.
 /// </summary>
 public sealed class ZoomServerAccounts(IZoomAccountsApi api, Action<string>? log = null)
 {
@@ -60,6 +66,10 @@ public sealed class ZoomServerAccounts(IZoomAccountsApi api, Action<string>? log
             })
             .ToArray();
 
+        // An empty list is never sent: on a PC that has not been set up yet it would wipe what the
+        // server holds for that person, which is exactly what a new PC is there to take.
+        if (rows.Length == 0) return null;
+
         string shape = string.Join("|", rows.Select(row => $"{row.accountId}:{row.group}:{row.meetingUrl}:{row.preferredEngine}"));
         if (shape == _lastShape && DateTimeOffset.Now - _lastSent < SendEvery) return null;
 
@@ -68,6 +78,75 @@ public sealed class ZoomServerAccounts(IZoomAccountsApi api, Action<string>? log
         _lastSent = DateTimeOffset.Now;
         _log($"{rows.Length} Zoom account(s) of this PC were saved to your dashboard account.");
         return rows.Length;
+    }
+
+    /// <summary>
+    /// Both directions, whichever this PC needs: nothing here and something there means the
+    /// accounts come down; otherwise what is here goes up. Returns what to tell the person, or null
+    /// when there was nothing to do.
+    /// </summary>
+    public async Task<string?> SyncAsync(
+        IReadOnlyList<WindowsMeetingAccountMetadata> here,
+        Func<WindowsMeetingAccountMetadata, CancellationToken, Task> save,
+        CancellationToken token = default)
+    {
+        if (!api.IsSignedIn) return null;
+        if (here.Count == 0)
+        {
+            // Take, and stop there. Sending an empty list afterwards would delete on the server the
+            // very accounts this PC has just failed to take. What is here goes up on the next pass.
+            int restored = await RestoreAsync(save, token);
+            return restored > 0
+                ? $"{restored} Zoom account(s) came from your dashboard account; sign in to Zoom as each of them once."
+                : null;
+        }
+        int? sent = await PushAsync(here, token);
+        return sent is > 0 ? $"{sent} Zoom account(s) of this PC were saved to your dashboard account." : null;
+    }
+
+    /// <summary>
+    /// The accounts the server kept for this person, written here. Only ever called for a PC with
+    /// none of its own, so nothing can be overwritten. The Zoom sign-in is not among them: each
+    /// account still has to be signed in to Zoom on this PC once.
+    /// </summary>
+    public async Task<int> RestoreAsync(Func<WindowsMeetingAccountMetadata, CancellationToken, Task> save, CancellationToken token = default)
+    {
+        var theirs = await api.ZoomAccountsAsync(token);
+        int restored = 0;
+        foreach (var account in theirs)
+        {
+            if (string.IsNullOrWhiteSpace(account.AccountId)) continue;
+            try
+            {
+                await save(new WindowsMeetingAccountMetadata(
+                    account.AccountId,
+                    string.IsNullOrWhiteSpace(account.Label) ? account.AccountId : account.Label,
+                    "",
+                    account.PreferredEngine switch
+                    {
+                        "desktop" => AccountEnginePreference.Desktop,
+                        "web" => AccountEnginePreference.Web,
+                        _ => AccountEnginePreference.Auto,
+                    })
+                {
+                    ZoomEmail = account.ZoomEmail,
+                    GroupName = account.Group,
+                    DefaultMeetingUrl = IsLink(account.MeetingUrl) ? account.MeetingUrl!.Trim() : null,
+                }, token);
+                restored++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log($"{account.AccountId} could not be added here: {ex.Message}");
+            }
+        }
+        if (restored > 0)
+        {
+            // What is here now is what the server has, so there is nothing to send back.
+            _lastShape = "";
+            _log($"{restored} Zoom account(s) came from your dashboard account.");
+        }
+        return restored;
     }
 
     /// <summary>The next send goes even if nothing changed (the accounts page was just used).</summary>

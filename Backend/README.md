@@ -333,11 +333,17 @@ Admin only; every write also needs `X-Dashboard-Request: 1`, and answers are nev
 | `POST /api/v1/admin/run-plan/import` | `{coordinatorId, classes:[{group, date, startTime?, title?, meetingUrl?, zoomAccount?, preferredEngine?}]}` — what that coordinator's own LMS session list showed, read by the app signed in as them. At most 500 rows |
 | `PATCH /api/v1/admin/run-plan/{planId}` | `{meetingUrl?, zoomAccount?, preferredEngine?, status?, note?, applyToGroup?}` |
 
-Neither account is typed in twice. Every copy of the app keeps what its PC has against the signed-in
-person's account — `GET`/`PUT /api/v1/me/zoom-accounts` for the Zoom ones (the whole set, so an
-account removed there stops being offered; never a Zoom sign-in, only the account, its e-mail, its
-group and its link) and `/api/v1/me/lms-accounts` for the LMS one. A class's meeting link therefore
-comes from that coordinator's own Zoom account for the group.
+Nothing is typed in twice, and nothing is typed in again on another PC. Every copy of the app keeps
+what its PC has against the signed-in person's account:
+
+| Endpoint | What it keeps |
+|---|---|
+| `GET`/`PUT /api/v1/me/zoom-accounts` | their Zoom accounts, as a whole set: which account, its e-mail, the group it hosts and the link its classes open. Never a Zoom sign-in — that stays in the Zoom app or a browser profile on the PC |
+| `GET`/`PUT /api/v1/me/schedules` | the classes their own PC opens by itself, as the app writes them. The server keeps them and gives them back; it never reads what is in one |
+| `POST /api/v1/me/lms-accounts` … | their LMS sign-in, the password AES-GCM encrypted |
+
+A class's meeting link therefore comes from that coordinator's own Zoom account for the group, and
+signing in on a new PC — a cloud one — brings the accounts and the classes with it.
 
 The timetable comes from the LMS, so `import` owns when a class is; a person owns how it opens.
 Re-importing therefore updates the title and never touches a link, a Zoom account or a decision to

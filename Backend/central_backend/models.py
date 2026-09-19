@@ -450,6 +450,32 @@ RUN_PLAN_SOURCES = ("lms", "manual")
 RUN_ENGINES = ("desktop", "web")
 
 
+class UserSchedule(Base):
+    """The classes a person's own PC opens by itself, kept against their dashboard account.
+
+    One row per user, holding that PC's schedule list as it stands. The server never reasons about
+    what is in it - the times, the days and the engine are the Windows app's own shape - so it is
+    kept as one document rather than modelled twice and left to drift. It is what lets a person sign
+    in on a new PC and find their classes there instead of setting them up again.
+
+    Only their own classes are here. The ones this PC runs for other coordinators live in
+    class_plans, which the server does reason about.
+    """
+
+    __tablename__ = "user_schedules"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    schedules: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    """Each entry as the app writes it: id, name, meetingUrl, accountId, time, days, enabled, …"""
+    count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    """How many are in it, so a listing does not have to open the document."""
+    device_name: Mapped[str | None] = mapped_column(String(100))
+    """Which PC sent them last, for a person wondering where these came from."""
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class RunDelegation(Base):
     """A coordinator whose classes the admin's PC opens and finishes instead of theirs.
 
@@ -579,6 +605,7 @@ __all__ = [
     "RUN_PLAN_STATUSES",
     "ClassPlan",
     "RunDelegation",
+    "UserSchedule",
     "ZoomAccount",
     "AppSetting",
     "DeviceActivity",

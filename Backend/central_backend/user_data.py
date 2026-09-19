@@ -12,6 +12,10 @@ app's saved accounts or a browser profile on that PC):
     GET    /api/v1/me/zoom-accounts                list
     PUT    /api/v1/me/zoom-accounts                the whole set, as that PC has them
 
+The classes their own PC opens by itself, so a new PC finds them instead of being set up again:
+    GET    /api/v1/me/schedules                    what was last kept
+    PUT    /api/v1/me/schedules                    this PC's list, as a whole
+
 Settings every copy of the app shares (read by anyone signed in, written by the admin):
     GET    /api/v1/settings/{key}
     PUT    /api/v1/settings/{key}
@@ -40,7 +44,7 @@ from sqlalchemy import func, select, update
 from .api import ApiError, _json
 from .auth import CurrentUser, current_user, require_dashboard_header
 from .config import ConfigurationError
-from .models import AppSetting, LmsAccount, ZoomAccount
+from .models import AppSetting, LmsAccount, UserSchedule, ZoomAccount
 from .observability import emit
 
 SECRETS_KEY_VARIABLE = "CENTRAL_SECRETS_KEY"
@@ -297,6 +301,55 @@ async def save_zoom_accounts(body: ZoomAccountsBody, request: Request, user: Cur
         kept = [zoom_view(account) for key, account in sorted(existing.items()) if key in seen]
     emit("zoom_accounts.saved", username=user.username, count=len(kept))
     return _no_store({"accounts": kept})
+
+
+# ----------------------------------------------------------------------------- their own classes
+
+
+MAX_SCHEDULES = 400
+"""A term of classes for a few groups. More than this is a mistake, not a timetable."""
+MAX_SCHEDULE_BYTES = 512 * 1024
+
+
+class SchedulesBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schedules: list[dict[str, Any]] = Field(max_length=MAX_SCHEDULES)
+    deviceName: str | None = Field(default=None, max_length=100)
+
+
+@router.get("/api/v1/me/schedules")
+async def read_schedules(request: Request, user: CurrentUser = Depends(current_user)) -> JSONResponse:
+    async with request.app.state.sessionmaker() as session:
+        row = await session.get(UserSchedule, user.id)
+    return _no_store({"schedules": row.schedules if row else [], "count": row.count if row else 0,
+                      "deviceName": row.device_name if row else None,
+                      "updatedAt": row.updated_at if row else None})
+
+
+@router.put("/api/v1/me/schedules", dependencies=[Depends(require_dashboard_header)])
+async def save_schedules(body: SchedulesBody, request: Request, user: CurrentUser = Depends(current_user)) -> JSONResponse:
+    """The classes this PC opens by itself, as a whole list.
+
+    The server keeps them and gives them back; it never reads what is in one. What a class means -
+    its days, its time, what it opens with - is the app's own shape, and modelling it twice would
+    only let the two drift apart.
+    """
+    import json
+
+    if len(json.dumps(body.schedules)) > MAX_SCHEDULE_BYTES:
+        raise ApiError(400, "Invalid request", "That is more than a timetable.")
+    now = request.app.state.clock()
+    async with request.app.state.sessionmaker() as session, session.begin():
+        row = await session.get(UserSchedule, user.id, with_for_update=True)
+        if row is None:
+            row = UserSchedule(user_id=user.id)
+            session.add(row)
+        row.schedules = body.schedules
+        row.count = len(body.schedules)
+        row.device_name = (body.deviceName or "").strip()[:100] or None
+        row.updated_at = now
+    emit("schedules.saved", username=user.username, count=len(body.schedules))
+    return _no_store({"count": len(body.schedules), "updatedAt": now})
 
 
 # ----------------------------------------------------------------------------- shared settings

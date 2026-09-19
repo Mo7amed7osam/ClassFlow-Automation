@@ -16,6 +16,11 @@ public sealed class ZoomServerAccountsTests
     {
         public bool IsSignedIn { get; set; } = true;
         public List<string> Sent { get; } = [];
+        /// <summary>What the server already holds for this person, for a PC that has none.</summary>
+        public List<CentralZoomAccount> Kept { get; } = [];
+
+        public Task<List<CentralZoomAccount>> ZoomAccountsAsync(CancellationToken token) =>
+            Task.FromResult(Kept.ToList());
 
         public Task<JsonElement> SaveZoomAccountsAsync(IEnumerable<object> accounts, CancellationToken token)
         {
@@ -114,5 +119,81 @@ public sealed class ZoomServerAccountsTests
         string sent = Assert.Single(api.Sent);
         Assert.DoesNotContain("Secret", sent);
         Assert.DoesNotContain("password", sent, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ------------------------------------------------------------------ a PC that has none yet
+
+    [Fact]
+    public async Task ANewPcTakesTheAccountsAndTheirLinksFromTheDashboardAccount()
+    {
+        var api = new FakeApi();
+        api.Kept.Add(new CentralZoomAccount("z1", "CAI5_AIS4_S7", "S7", "mona@zoom.example.com", "CAI5_AIS4_S7",
+            "https://zoom.us/j/91473108490", "web", true));
+        var here = new List<WindowsMeetingAccountMetadata>();
+
+        string? said = await new ZoomServerAccounts(api, _ => { })
+            .SyncAsync([], (account, _) => { here.Add(account); return Task.CompletedTask; });
+
+        var restored = Assert.Single(here);
+        Assert.Equal("CAI5_AIS4_S7", restored.AccountId);
+        Assert.Equal("mona@zoom.example.com", restored.ZoomEmail);
+        Assert.Equal("https://zoom.us/j/91473108490", restored.DefaultMeetingUrl);
+        Assert.Equal("CAI5_AIS4_S7", restored.GroupName);
+        Assert.Equal(AccountEnginePreference.Web, restored.PreferredEngine);
+        Assert.Contains("came from your dashboard account", said);
+        Assert.Contains("sign in to Zoom", said);          // the one thing that cannot travel
+    }
+
+    [Fact]
+    public async Task APcWithNoAccountsNeverEmptiesWhatTheServerKept()
+    {
+        var api = new FakeApi();
+        api.Kept.Add(new CentralZoomAccount("z1", "CAI5_AIS4_S7", "S7", null, null, null, null, true));
+
+        await new ZoomServerAccounts(api, _ => { }).SyncAsync([], (_, _) => Task.CompletedTask);
+
+        Assert.Empty(api.Sent);                            // nothing was sent, least of all an empty list
+    }
+
+    [Fact]
+    public async Task APcWithNothingAnywhereSaysNothingHappened()
+    {
+        var api = new FakeApi();
+        Assert.Null(await new ZoomServerAccounts(api, _ => { }).SyncAsync([], (_, _) => Task.CompletedTask));
+        Assert.Empty(api.Sent);
+    }
+
+    [Fact]
+    public async Task APcThatHasItsOwnAccountsSendsThemAndTakesNothing()
+    {
+        var api = new FakeApi();
+        api.Kept.Add(new CentralZoomAccount("z1", "SOMETHING_ELSE", "Else", null, null, null, null, true));
+        var took = new List<WindowsMeetingAccountMetadata>();
+
+        string? said = await new ZoomServerAccounts(api, _ => { })
+            .SyncAsync([Account("CAI5_AIS4_S7")], (account, _) => { took.Add(account); return Task.CompletedTask; });
+
+        Assert.Empty(took);                                // its own accounts are the ones that count
+        Assert.Contains("CAI5_AIS4_S7", Assert.Single(api.Sent));
+        Assert.Contains("were saved to your dashboard account", said);
+    }
+
+    [Fact]
+    public async Task OneAccountThatCannotBeWrittenDoesNotStopTheRest()
+    {
+        var api = new FakeApi();
+        api.Kept.Add(new CentralZoomAccount("z1", "BAD", "Bad", null, null, null, null, false));
+        api.Kept.Add(new CentralZoomAccount("z2", "GOOD", "Good", null, null, null, null, true));
+        var here = new List<WindowsMeetingAccountMetadata>();
+
+        int restored = await new ZoomServerAccounts(api, _ => { }).RestoreAsync((account, _) =>
+        {
+            if (account.AccountId == "BAD") throw new InvalidOperationException("that name is taken");
+            here.Add(account);
+            return Task.CompletedTask;
+        });
+
+        Assert.Equal(1, restored);
+        Assert.Equal("GOOD", Assert.Single(here).AccountId);
     }
 }

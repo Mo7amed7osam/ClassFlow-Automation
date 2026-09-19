@@ -189,7 +189,7 @@ public sealed class CentralLoginStore(string target = "ZoomAutoAdmit/Central/Das
 /// coordinator), keeps the session cookie in memory only, and signs in again by itself from the
 /// saved sign-in when the session ends. Every change carries X-Dashboard-Request: 1.
 /// </summary>
-public sealed class CentralApiClient : IDelegatedRunsApi, IZoomAccountsApi
+public sealed class CentralApiClient : IDelegatedRunsApi, IZoomAccountsApi, IScheduleSyncApi
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -484,6 +484,18 @@ public sealed class CentralApiClient : IDelegatedRunsApi, IZoomAccountsApi
     /// </summary>
     public Task<JsonElement> SaveZoomAccountsAsync(IEnumerable<object> accounts, CancellationToken token = default) =>
         SendAsync<JsonElement>(HttpMethod.Put, "api/v1/me/zoom-accounts", new { accounts = accounts.ToArray() }, token);
+
+    /// <summary>The classes this person's own PC opens by itself, as the server last kept them.</summary>
+    public async Task<List<JsonElement>> SchedulesAsync(CancellationToken token = default) =>
+        (await GetAsync<JsonElement>("api/v1/me/schedules", token)).GetProperty("schedules").Deserialize<List<JsonElement>>(Json) ?? [];
+
+    /// <summary>
+    /// This PC's own classes, as a whole list, so signing in on another PC finds them there. The
+    /// server keeps them and gives them back; it never reads what is in one.
+    /// </summary>
+    public Task<JsonElement> SaveSchedulesAsync(IEnumerable<object> schedules, string deviceName, CancellationToken token = default) =>
+        SendAsync<JsonElement>(HttpMethod.Put, "api/v1/me/schedules",
+            new { schedules = schedules.ToArray(), deviceName }, token);
 
     /// <summary>A coordinator's Zoom accounts, for the admin's app that runs their classes.</summary>
     public async Task<List<CentralZoomAccount>> CoordinatorZoomAccountsAsync(string coordinatorId, CancellationToken token = default) =>
