@@ -67,9 +67,9 @@ for `net8.0` to find out what is genuinely portable.
 | `WindowsUI` | 13,044 | No | WPF. **Stays on Windows** |
 | `Inspector`, `WaitingRoom*`, `Setup` | 9,407 | No | Desktop diagnostics and installer. **Stay on Windows** |
 
-### The trap in that table
+### The trap in that table — now closed
 
-`WebAutomation` **built for `net8.0` with zero errors and zero warnings**, and that proves nothing.
+`WebAutomation` **built for `net8.0` with zero errors and zero warnings**, and that proved nothing.
 `Lms/LmsCredentialStore.cs` and `ZoomWebSignIn.cs` hold six `[DllImport("advapi32.dll")]`
 declarations for `CredRead`/`CredWrite`. A P/Invoke declaration compiles on every platform and
 throws `DllNotFoundException` only when it is called. The platform-compatibility analyzer stayed
@@ -78,16 +78,27 @@ silent because the project still carries a Windows target.
 This is exactly why "change `TargetFramework`" is not a migration. The real work is replacing the
 credential backend.
 
-**The seam already exists.** `ILmsCredentialStore` (`Read`/`Save`/`Delete`) is declared next to the
-concrete class. What defeats it is that callers construct the concrete type directly —
-`ClassLmsAccounts.StoreFor()` returns `LmsCredentialStore`, `LmsAccountDirectory` news it up in
-three places, `DelegatedRuns` takes it as a parameter type. Those call sites have to move to the
-interface before a Linux implementation can be injected.
+**This is fixed.** The fix was not to thread a dependency through a dozen call sites, but to move
+the choice of store down one level: `ILmsCredentialBackend` (`Read`/`Save`/`Delete` by target) is
+selected once by `LmsCredentialBackend.Current`. A Windows process gets Credential Manager without
+arranging anything, so every existing PC is unchanged; a process anywhere else sets it at startup,
+and one that forgets gets a sentence saying so instead of a `DllNotFoundException` from inside a
+P/Invoke. `LmsCredentialStore` keeps its public surface and now only says *which* account is meant.
 
-On Linux the implementation reads from the server: `lms_accounts` already stores the password
-AES-GCM encrypted under `CENTRAL_SECRETS_KEY`, and `POST /api/v1/admin/users/{id}/lms-accounts/{aid}/secret`
-already hands it to an authorised caller and audits the read. So no new secret store is needed —
-the cloud worker becomes another authorised reader of the one that exists.
+`ZoomWebSignIn` had the same problem in a different shape: it read `wincred:<target>` references
+directly. It now offers any reference it cannot read itself to a `Resolver` the host sets — including
+a `wincred:` one reaching a server, which is a coordinator's PC reference travelling with their
+account rather than an error.
+
+On Linux the passwords come from the server: `lms_accounts` already stores them AES-GCM encrypted
+under `CENTRAL_SECRETS_KEY`, and `POST /api/v1/admin/users/{id}/lms-accounts/{aid}/secret` already
+hands one to an authorised caller and audits the read. No new secret store was needed — the cloud
+worker becomes another authorised reader of the one that exists, and holds what it is given in
+memory only (`InMemoryLmsCredentialBackend`), so a restart asks again rather than keeping anything.
+
+**Measured:** the `net8.0` build of `ZoomAutoAdmit.WebAutomation.Tests` runs **322 tests, all
+passing**, with no Windows API on any path. That is the evidence that the automation logic runs off
+Windows — not that a build succeeded.
 
 ---
 
@@ -222,3 +233,6 @@ Credentials are never to be sent in chat; they belong in the server's own secret
 | Date | Change |
 |---|---|
 | 2026-09-19 | `Core` and `WebAutomation` multi-target `net8.0;net8.0-windows10.0.19041.0`. Both build for `net8.0`; the full Windows solution still builds with 0 errors and 0 warnings. The `net8.0` build of `WebAutomation` is **not** runnable yet — see §2 |
+| 2026-09-19 | The credential seam is built and the `net8.0` build is runnable: `ILmsCredentialBackend`, `LmsCredentialBackend.Current`, `InMemoryLmsCredentialBackend`, and a resolver for Zoom sign-in references. 322 WebAutomation tests pass on `net8.0`. `CentralAgent` multi-targets too, with `FileDeviceTokenStore` for a machine that has no Credential Manager |
+| 2026-09-19 | `ZoomAutoAdmit.CloudWorker` added: `net8.0` only, on purpose, so a Windows-only reference cannot creep in unnoticed. Settings from the environment, a six-check preflight that actually launches Chromium, in-memory credentials, and enrolment against the existing device-token flow. It does **not** connect yet, because there are no job types for the class stages to answer for |
+| 2026-09-19 | `deploy/`: Dockerfiles for the backend and the worker, `docker-compose.coolify.yml`, `.env.example`, and `COOLIFY_DEPLOYMENT.md`. The compose file is validated; **the images have never been built** — no Docker daemon was available |

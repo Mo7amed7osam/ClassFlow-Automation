@@ -14,14 +14,31 @@ public sealed class ZoomSignInCredential(string email, string password)
     public override string ToString() => $"Zoom sign-in {Email} (password redacted)";
 
     /// <summary>
-    /// The account's Zoom email and password, as the Accounts page keeps them in Windows Credential
-    /// Manager ("wincred:ZoomAutoAdmit/ZoomProfile/&lt;account&gt;": the email as its user name, the
-    /// password as its secret). Null when no password was saved for the account.
+    /// Where a Zoom password comes from when the reference is not a "wincred:" one. A server has no
+    /// Credential Manager, so the cloud worker sets this to ask the central backend instead; it is
+    /// given the whole reference and answers null for one it does not recognise.
+    /// </summary>
+    public static Func<string, ZoomSignInCredential?>? Resolver { get; set; }
+
+    /// <summary>
+    /// The account's Zoom email and password. On a PC that is Windows Credential Manager
+    /// ("wincred:ZoomAutoAdmit/ZoomProfile/&lt;account&gt;": the email as its user name, the
+    /// password as its secret); anywhere else it is whatever <see cref="Resolver"/> was set to.
+    /// Null when no password was saved for the account.
     /// </summary>
     public static ZoomSignInCredential? Read(string? reference)
     {
+        if (string.IsNullOrWhiteSpace(reference)) return null;
+        reference = reference.Trim();
+
         const string prefix = "wincred:";
-        if (string.IsNullOrWhiteSpace(reference) || !reference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        if (!reference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return Resolver?.Invoke(reference);
+
+        // A wincred reference off Windows is not an error to shout about: it is a PC's reference
+        // reaching a server, and the resolver is the one that may know what to do with it.
+        if (!OperatingSystem.IsWindows()) return Resolver?.Invoke(reference);
+
         string target = reference[prefix.Length..].Trim();
         if (target.Length == 0 || !CredRead(target, 1, 0, out var pointer)) return null;
         try

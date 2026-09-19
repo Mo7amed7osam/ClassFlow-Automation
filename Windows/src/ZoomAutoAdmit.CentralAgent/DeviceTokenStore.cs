@@ -17,6 +17,7 @@ public interface IDeviceTokenStore
 /// LMS sign-in - so it is in no file, no log and no command line. It is not the local recording
 /// API's key and is never used as one.
 /// </summary>
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class CredentialManagerDeviceTokenStore(string target = CredentialManagerDeviceTokenStore.DefaultTarget) : IDeviceTokenStore
 {
     public const string DefaultTarget = "ZoomAutoAdmit/Central/DeviceToken";

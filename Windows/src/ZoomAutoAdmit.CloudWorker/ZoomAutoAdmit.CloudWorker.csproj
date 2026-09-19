@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- net8.0 only, and deliberately: this is the half that runs where there is no Windows. A
+         reference that drags a Windows-only project in will not compile, which is the point. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ZoomAutoAdmit.CloudWorker</RootNamespace>
+    <AssemblyName>ZoomAutoAdmit.CloudWorker</AssemblyName>
+    <!-- Not invariant: without ICU, TimeZoneInfo cannot resolve an IANA id such as Africa/Cairo,
+         and the class times this worker exists to keep are written in one. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- The container has no user to answer a prompt, so an unobserved failure must be loud. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ZoomAutoAdmit.CentralAgent\ZoomAutoAdmit.CentralAgent.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ZoomAutoAdmit.CloudWorker.Tests" />
+  </ItemGroup>
+
+</Project>
