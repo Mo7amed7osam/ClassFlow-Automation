@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git branch:*)",
+      "Bash(git fetch:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet test:*)",
+      "Bash(dotnet restore:*)",
+      "Bash(dotnet --info)",
+      "Bash(dotnet --list-sdks)",
+      "Bash(npm ci)",
+      "Bash(npm install)",
+      "Bash(npm test:*)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run build)",
+      "Bash(npx tsc:*)",
+      "Bash(python -m venv:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(swift build:*)",
+      "Bash(swift test:*)"
+    ],
+    "deny": [
+      "Read(./api.env)",
+      "Read(./api_key.env)",
+      "Read(./**/*.env)"
+    ]
+  }
+}
