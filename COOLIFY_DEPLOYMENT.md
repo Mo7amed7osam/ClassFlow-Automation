@@ -27,10 +27,16 @@ The worker runs three of them — `lms.run_session`, `lms.attendance` and `lms.c
 Zoom's own report afterwards) are never given to it: those jobs stay queued, which is visible, rather
 than being taken and failed, which reads as a class that went wrong.
 
-It also does not connect yet. The account source that fetches a coordinator's LMS sign-in from the
-server has no route to it — the endpoint exists and is audited, but it accepts a dashboard session
-and not a device token. A connected worker would take an LMS stage and fail it for want of a
-sign-in, which is worse than not connecting. `FEATURE_PARITY.md` has the full inventory.
+A worker off Windows has no Credential Manager, so a class's LMS sign-in comes from the server:
+`POST /api/v1/agent/jobs/{jobId}/lms-secret`, with the device's own token. What keeps that from
+being a standing key to every coordinator's account is that it is tied to the work — the server
+answers only for a job **that device** holds and has not finished, only for the account that job's
+payload names, and only while that coordinator is turned on. Turning one off closes their sign-in
+again at once, even to a worker already holding one of their jobs. Every read is written to
+`admin_audit_log` under the device's name, and the password never reaches a log. The worker keeps
+it in memory for the one stage and asks again after a restart.
+
+`FEATURE_PARITY.md` has the full inventory.
 
 So: **this deployment gets the backend, the dashboard and a worker that is ready to be given work.**
 It does not yet run a class by itself. `ZoomAutoAdmit.CloudWorker/Program.cs` says the same thing and

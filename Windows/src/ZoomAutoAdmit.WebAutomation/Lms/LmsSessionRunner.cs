@@ -57,7 +57,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     /// The browser profile the dashboard is driven with: the chosen LMS account's own, so switching
     /// accounts never reuses another account's kept sign-in.
     /// </summary>
-    private string ProfileName => credentials is LmsCredentialStore store ? store.Profile : LmsAccountDirectory.LegacyProfile;
+    private string ProfileName => credentials.Profile;
     /// <summary>The active account's browser profile, for anything that must not share it (the lock).</summary>
     public static string DashboardProfile => new LmsCredentialStore().Profile;
     private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(30);

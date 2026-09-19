@@ -219,6 +219,7 @@ public sealed class LmsRecordLinkAcceptanceTests
 {
     private sealed class NoSignIn : ILmsCredentialStore
     {
+        public string Profile => LmsAccountDirectory.LegacyProfile;
         public LmsAccount? Read() => null;
         public void Save(LmsAccount account) { }
         public void Delete() { }

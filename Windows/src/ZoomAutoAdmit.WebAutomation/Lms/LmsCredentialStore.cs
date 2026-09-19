@@ -13,6 +13,14 @@ public interface ILmsCredentialStore
     LmsAccount? Read();
     void Save(LmsAccount account);
     void Delete();
+
+    /// <summary>
+    /// The browser profile this account signs in with. Two accounts must never share one: an LMS
+    /// session belongs to whoever signed in last, so a shared profile signs one coordinator out
+    /// every time the other runs. It is on the interface because it belongs to the account, not to
+    /// where the password happens to be kept.
+    /// </summary>
+    string Profile { get; }
 }
 
 /// <summary>

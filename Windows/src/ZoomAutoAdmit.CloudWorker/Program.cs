@@ -95,7 +95,13 @@ Log("enrolled" + (tokens.Read() is null ? " (will register with the enrolment to
 // tested; FEATURE_PARITY.md keeps them as IMPLEMENTED_NOT_LIVE_VERIFIED until somebody watches one
 // work on a class that is safe to run against.
 // ---------------------------------------------------------------------------------------------
-var accountSource = new ServerLmsAccounts();
+// The job a stage is being run for. The server ties a sign-in to it, so the handler that is
+// running sets this and the account source reads it back - the alternative was threading a job id
+// through every stage's signature for the sake of one of them.
+Guid? runningJob = null;
+
+using var http = new HttpClient { BaseAddress = settings.BackendUrl, Timeout = TimeSpan.FromSeconds(30) };
+var accountSource = new ServerLmsAccounts(http, tokens.Read, () => runningJob, Log);
 var attendanceNames = new NoAttendanceCollected();
 
 var handlers = new IJobHandler[]

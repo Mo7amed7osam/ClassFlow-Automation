@@ -9,6 +9,9 @@ API clients (n8n), X-API-Key or Authorization: Bearer <client key>:
 Agents, with a single-use enrollment token (not a client key):
     POST /api/v1/agents/register       issue this installation's device token
 
+Agents, with their device token:
+    POST /api/v1/agent/jobs/{jobId}/lms-secret   the LMS sign-in that job's class is written up under
+
 No key:
     GET  /health                       {"status": "ok"} when the database answers
 """
@@ -28,7 +31,7 @@ from sqlalchemy import select, text
 
 from .devices import RegistrationRefused, device_view, register_device
 from .jobs import IdempotencyConflict, cancel_job, create_job, job_view
-from .models import Device, Job
+from .models import AdminAuditLog, Device, Job
 from .observability import emit
 from .security import bearer_token, matches_any
 from .validation import PayloadError, validate_payload
@@ -190,6 +193,92 @@ async def post_register(body: AgentRegistration, request: Request) -> JSONRespon
         status_code=201,
         headers={"Cache-Control": "no-store"},
     )
+
+
+# ----------------------------------------------------------------------------- an agent's credentials
+
+
+@router.post("/api/v1/agent/jobs/{job_id}/lms-secret")
+async def job_lms_secret(job_id: str, request: Request) -> JSONResponse:
+    """The LMS sign-in for the class this job is a stage of, for the device running it.
+
+    A worker off Windows has no Credential Manager, so the password has to come from here. What
+    keeps that from being a standing key to every coordinator's account is that it is tied to the
+    work: this answers only for a job **this device** was given and has not finished, and only for
+    the account that job's own payload names.
+
+    So a device that is never given a class never gets a password, and one whose token leaks can
+    read only what it was already told to do. Every read is written to admin_audit_log under the
+    device's name, like the admin's own reads, and the password is never logged.
+
+    The rules are the admin path's rules, plus the job:
+      * the job exists, belongs to this device, and is assigned or running;
+      * its payload names an lmsAccountId, and that account is the coordinator's;
+      * that coordinator is turned on - a sign-in is never a side effect of holding a job.
+    """
+    from .admin import audit
+    from .delegated_runs import _no_store
+    from .devices import authenticate_device
+    from .models import LmsAccount, RunDelegation, User
+    from .user_data import _box
+
+    token = bearer_token(request.headers.get("authorization"))
+    box = _box(request)
+    now = request.app.state.clock()
+
+    async with request.app.state.sessionmaker() as session, session.begin():
+        device = await authenticate_device(session, token)
+        if device is None:
+            raise ApiError(401, "Unauthorized")
+
+        try:
+            job = await session.get(Job, uuid.UUID(job_id))
+        except ValueError:
+            job = None
+        # One answer for "no such job" and "not yours": a device must not be able to learn which
+        # job ids exist by asking for them.
+        if job is None or job.device_id != device.id:
+            raise ApiError(404, "Not found")
+        if job.status not in ("assigned", "running"):
+            raise ApiError(409, "Conflict", f"This job is {job.status}; a sign-in is only given for one being run.")
+
+        account_id = (job.payload or {}).get("lmsAccountId")
+        if not account_id:
+            raise ApiError(409, "Conflict", "This job names no LMS account.")
+        try:
+            account = await session.get(LmsAccount, uuid.UUID(str(account_id)))
+        except ValueError:
+            account = None
+        if account is None:
+            raise ApiError(404, "Not found")
+
+        # The same refusal the admin path makes: turning a coordinator off closes their sign-in
+        # again at once, even to a device already holding one of their jobs.
+        delegation = await session.get(RunDelegation, account.user_id)
+        if delegation is None or not delegation.enabled:
+            raise ApiError(403, "Forbidden", "That coordinator is not turned on.")
+
+        coordinator = await session.get(User, account.user_id)
+        if coordinator is None or coordinator.status != "active":
+            raise ApiError(403, "Forbidden", "That coordinator's account is not active.")
+
+        try:
+            password = box.open(account.password_encrypted, f"{account.user_id}:{account.id}")
+        except Exception as exc:  # noqa: BLE001 - a changed key or a damaged row; the value never reaches a log
+            raise ApiError(409, "Cannot decrypt", "That coordinator has to save their LMS password again.") from exc
+
+        session.add(AdminAuditLog(
+            username=f"device:{device.name}", user_id=None, action="lms_secret.read_by_device",
+            details={"deviceId": str(device.id), "jobId": str(job.id), "jobType": job.type,
+                     "coordinator": coordinator.username, "account": str(account.id), "email": account.email},
+            created_at=now))
+
+        body = {"id": str(account.id), "coordinatorId": str(account.user_id), "email": account.email,
+                "role": account.role, "label": account.label, "password": password}
+
+    emit("lms_account.secret_read_by_device", deviceId=str(device.id), jobId=str(job.id),
+         coordinator=coordinator.username, account=str(account.id))
+    return _no_store(body)
 
 
 def _json(value: Any) -> Any:

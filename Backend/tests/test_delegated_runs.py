@@ -529,3 +529,142 @@ def test_a_person_reads_their_own_zoom_sign_in_but_not_anothers(dash, two):
 
 def zoom_id_for_self(client: TestClient, account_id: str) -> str:
     return next(a["id"] for a in client.get("/api/v1/me/zoom-accounts").json()["accounts"] if a["accountId"] == account_id)
+
+
+# ===================================================== a worker's sign-in, tied to the job it holds
+
+
+def a_job_for(client: TestClient, device_id: str, account_id: str, status: str = "assigned",
+              job_type: str = "lms.run_session") -> str:
+    """A class stage in the database, already given to that device. The dispatcher is not involved:
+    what is being tested is who may read a sign-in, not how a job got there."""
+    import uuid as _uuid
+
+    job_id = str(_uuid.uuid4())
+    run_sql(
+        client.app.state.settings.database_url,
+        """
+        INSERT INTO jobs (id, type, device_id, payload, status, attempts, max_attempts,
+                          available_at, created_at, updated_at)
+        VALUES ($1::uuid, $2, $3::uuid, $4::jsonb, $5, 0, 3, now(), now(), now())
+        """,
+        job_id, job_type, device_id,
+        f'{{"classPlanId":"{_uuid.uuid4()}","group":"CAI5_AIS4_S7","date":"2026-09-20",'
+        f'"coordinatorId":"{_uuid.uuid4()}","lmsAccountId":"{account_id}"}}',
+        status,
+    )
+    return job_id
+
+
+def secret_for(client: TestClient, job_id: str, token: str):  # noqa: ANN201
+    return client.post(f"/api/v1/agent/jobs/{job_id}/lms-secret",
+                       headers={"Authorization": f"Bearer {token}"})
+
+
+def test_a_worker_gets_the_sign_in_for_the_class_it_was_given(dash, two):
+    """A worker off Windows has no Credential Manager, so the password comes from here - but only
+    for a job it actually holds, and only while it is running it."""
+    from conftest import register
+
+    mona, _ = two
+    account = dash.get(f"/api/v1/admin/users/{mona}/lms-accounts").json()["accounts"][0]["id"]
+    turn_on(dash, mona, lmsAccountId=account)
+
+    device_id, token = register(dash, "cloud-worker-1")
+    job = a_job_for(dash, device_id, account)
+
+    answer = secret_for(dash, job, token)
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["password"] == MONA_LMS
+    assert answer.json()["email"] == "mona@example.com"
+    assert answer.headers["cache-control"] == "no-store"
+
+    # Written down under the device's name, as the admin's own reads are.
+    rows = run_sql(dash.app.state.settings.database_url,
+                   "SELECT username, action, details FROM admin_audit_log WHERE action = $1",
+                   "lms_secret.read_by_device")
+    assert len(rows) == 1
+    assert rows[0]["username"] == "device:cloud-worker-1"
+    assert MONA_LMS not in str(rows[0]["details"])
+
+
+def test_a_worker_cannot_read_a_sign_in_for_a_job_that_is_not_its_own(dash, two):
+    """The whole point of tying it to a job: a device's token opens only what it was told to do."""
+    from conftest import register
+
+    mona, _ = two
+    account = dash.get(f"/api/v1/admin/users/{mona}/lms-accounts").json()["accounts"][0]["id"]
+    turn_on(dash, mona, lmsAccountId=account)
+
+    theirs, _ = register(dash, "worker-with-the-job")
+    _, other_token = register(dash, "worker-without-it")
+    job = a_job_for(dash, theirs, account)
+
+    # 404, not 403: a device must not learn which job ids exist by asking for them.
+    assert secret_for(dash, job, other_token).status_code == 404
+
+
+def test_a_finished_job_stops_opening_the_sign_in(dash, two):
+    from conftest import register
+
+    mona, _ = two
+    account = dash.get(f"/api/v1/admin/users/{mona}/lms-accounts").json()["accounts"][0]["id"]
+    turn_on(dash, mona, lmsAccountId=account)
+    device_id, token = register(dash, "cloud-worker-1")
+
+    for status in ("succeeded", "failed", "cancelled", "queued"):
+        job = a_job_for(dash, device_id, account, status=status)
+        refused = secret_for(dash, job, token)
+        assert refused.status_code == 409, f"{status} still gave a sign-in"
+        assert status in refused.json()["details"]
+
+    assert secret_for(dash, a_job_for(dash, device_id, account, status="running"), token).status_code == 200
+
+
+def test_turning_a_coordinator_off_closes_their_sign_in_to_a_worker_holding_their_job(dash, two):
+    """Even a device already holding one of their jobs stops getting it, at once."""
+    from conftest import register
+
+    mona, _ = two
+    account = dash.get(f"/api/v1/admin/users/{mona}/lms-accounts").json()["accounts"][0]["id"]
+    turn_on(dash, mona, lmsAccountId=account)
+    device_id, token = register(dash, "cloud-worker-1")
+    job = a_job_for(dash, device_id, account)
+    assert secret_for(dash, job, token).status_code == 200
+
+    dash.put(f"/api/v1/admin/delegations/{mona}", headers=DASH, json={"enabled": False})
+    assert secret_for(dash, job, token).status_code == 403
+
+
+def test_a_sign_in_needs_a_real_device_token(dash, two):
+    from conftest import register
+
+    mona, _ = two
+    account = dash.get(f"/api/v1/admin/users/{mona}/lms-accounts").json()["accounts"][0]["id"]
+    turn_on(dash, mona, lmsAccountId=account)
+    device_id, _ = register(dash, "cloud-worker-1")
+    job = a_job_for(dash, device_id, account)
+
+    assert dash.post(f"/api/v1/agent/jobs/{job}/lms-secret").status_code == 401
+    assert secret_for(dash, job, "zaad_made-up").status_code == 401
+    # A dashboard session is not a device: this endpoint is the agent's, and only the agent's.
+    assert dash.post(f"/api/v1/agent/jobs/{job}/lms-secret", headers=DASH).status_code == 401
+
+
+def test_a_job_that_names_no_account_gives_nothing(dash, two):
+    from conftest import register
+    import uuid as _uuid
+
+    mona, _ = two
+    turn_on(dash, mona)
+    device_id, token = register(dash, "cloud-worker-1")
+    job_id = str(_uuid.uuid4())
+    run_sql(dash.app.state.settings.database_url,
+            """INSERT INTO jobs (id, type, device_id, payload, status, attempts, max_attempts,
+                                 available_at, created_at, updated_at)
+               VALUES ($1::uuid, 'class.admit', $2::uuid, '{}'::jsonb, 'assigned', 0, 3, now(), now(), now())""",
+            job_id, device_id)
+
+    refused = secret_for(dash, job_id, token)
+    assert refused.status_code == 409
+    assert "names no LMS account" in refused.json()["details"]
