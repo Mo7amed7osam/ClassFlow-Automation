@@ -31,12 +31,12 @@ function when(item: ClassPlan): string {
 }
 
 /**
- * The admin's own PC opens and finishes classes for the coordinators chosen here. Everything each
- * class needs to belong to its owner comes from the server: their LMS sign-in (kept encrypted, read
- * only for a coordinator turned on here) and their timetable, which the running PC reads from that
- * coordinator's own LMS session list. The one thing the LMS does not publish is the Zoom link, so
- * that is the only thing filled in on this page - once per group, since it carries on to that
- * group's next classes.
+ * The admin's own PC opens and finishes classes for the coordinators chosen here, and nothing about
+ * a class is typed in twice: their LMS sign-in is kept encrypted on the server (read only for a
+ * coordinator turned on here), their timetable is read from their own LMS session list, and the
+ * meeting link comes from their own Zoom account for the group - all of it theirs, set up once in
+ * their own copy of the app. A class whose group has no Zoom account of theirs is the only one that
+ * still asks for a link, and filling it in once carries it across the group.
  */
 export function RunsPage() {
   const delegations = useDelegations()
@@ -52,7 +52,11 @@ export function RunsPage() {
 
   function toggle(person: Delegation) {
     setDelegation.mutate(
-      { coordinatorId: person.coordinatorId, enabled: !person.enabled, zoomAccount: person.zoomAccount },
+      {
+        coordinatorId: person.coordinatorId,
+        enabled: !person.enabled,
+        zoomAccountId: person.zoomAccountId ?? person.zoomAccounts[0]?.id ?? null,
+      },
       {
         onSuccess: () =>
           toast.success(
@@ -66,11 +70,10 @@ export function RunsPage() {
     )
   }
 
-  function saveZoomAccount(person: Delegation, account: string) {
-    if ((person.zoomAccount ?? '') === account.trim()) return
+  function chooseZoomAccount(person: Delegation, zoomAccountId: string) {
     setDelegation.mutate(
-      { coordinatorId: person.coordinatorId, enabled: person.enabled, zoomAccount: account.trim() || null },
-      { onError: (error) => toast.error('Could not save the Zoom account', reason(error)) },
+      { coordinatorId: person.coordinatorId, enabled: person.enabled, zoomAccountId: zoomAccountId || null },
+      { onError: (error) => toast.error('Could not choose that Zoom account', reason(error)) },
     )
   }
 
@@ -110,16 +113,33 @@ export function RunsPage() {
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <label className="text-xs text-slate-500" htmlFor={`zoom-${person.coordinatorId}`}>
-                    Zoom account on this PC
-                  </label>
-                  <input
-                    id={`zoom-${person.coordinatorId}`}
-                    className={`${input} w-44`}
-                    defaultValue={person.zoomAccount ?? ''}
-                    placeholder="CAI5_AIS4_S7"
-                    onBlur={(event) => saveZoomAccount(person, event.target.value)}
-                  />
+                  {/* Their own Zoom accounts, as their copy of the app keeps them. The meeting link
+                      comes from the one chosen here, so nobody types a link twice. */}
+                  {person.zoomAccounts.length > 0 ? (
+                    <>
+                      <label className="text-xs text-slate-500" htmlFor={`zoom-${person.coordinatorId}`}>
+                        Opens with their
+                      </label>
+                      <select
+                        id={`zoom-${person.coordinatorId}`}
+                        className={`${input} w-52`}
+                        value={person.zoomAccountId ?? ''}
+                        disabled={setDelegation.isPending}
+                        onChange={(event) => chooseZoomAccount(person, event.target.value)}
+                      >
+                        {person.zoomAccounts.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.accountId}
+                            {account.meetingUrl ? '' : ' — no link yet'}
+                          </option>
+                        ))}
+                      </select>
+                    </>
+                  ) : (
+                    <span className="text-xs text-amber-700">
+                      No Zoom account of theirs yet — they add it in their own copy of the app.
+                    </span>
+                  )}
                   <button
                     type="button"
                     className={person.enabled ? button.small : button.smallPrimary}

@@ -82,6 +82,8 @@ public sealed class CentralViewModel : ObservableObject
     public ObservableCollection<CentralRecording> Recordings { get; } = [];
     public ObservableCollection<CentralGroup> Groups { get; } = [];
     public ObservableCollection<CentralUser> Users { get; } = [];
+    /// <summary>Whose classes this PC runs besides its own, and the accounts each one would use.</summary>
+    public ObservableCollection<CentralDelegation> Delegations { get; } = [];
     public ObservableCollection<GroupChoice> GroupChoices { get; } = [];
     public ObservableCollection<string> GroupNames { get; } = [];
     public IReadOnlyList<string> LmsFilters { get; } = ["", "pending", "attached", "failed"];
@@ -205,12 +207,17 @@ public sealed class CentralViewModel : ObservableObject
 
             Users.Clear();
             GroupChoices.Clear();
+            Delegations.Clear();
             if (me.IsAdmin)
             {
                 var users = await _api.UsersAsync();
                 foreach (var u in users.Users) Users.Add(u);
                 foreach (var g in groups.Where(g => !g.Archived)) GroupChoices.Add(new GroupChoice(g.Id, g.Group));
                 PendingUsers = users.Users.Count(u => u.Status == "pending");
+                // Whose classes this PC runs. A server that predates this simply has none to give,
+                // and the Coordinators page then shows no tick box rather than an error.
+                try { foreach (var d in (await _api.DelegationsAsync()).Delegations) Delegations.Add(d); }
+                catch (CentralApiException) { }
             }
             foreach (var name in new[] { nameof(Total), nameof(OnLms), nameof(Pending), nameof(DriveCount), nameof(ZoomOnly), nameof(Missing), nameof(PendingUsers) })
                 OnPropertyChanged(name);
@@ -218,6 +225,21 @@ public sealed class CentralViewModel : ObservableObject
         }
         catch (Exception ex) { Status = CentralApiException.Explain(ex); }
         finally { IsBusy = false; }
+    }
+
+    /// <summary>Runs (or stops running) one coordinator's classes, under one of their own Zoom accounts.</summary>
+    public async Task<string> SetDelegationAsync(string coordinatorId, bool enabled, string? zoomAccountId = null)
+    {
+        var known = Delegations.FirstOrDefault(d => d.CoordinatorId == coordinatorId);
+        await _api.SetDelegationAsync(coordinatorId, enabled, lmsAccountId: null,
+            zoomAccountId: zoomAccountId ?? known?.ZoomAccountId ?? known?.Zoom?.Id);
+        await RefreshAsync();
+        string who = known?.DisplayName ?? "That coordinator";
+        if (!enabled) return $"{who}'s classes are theirs again; nothing of theirs opens on this PC.";
+        var now = Delegations.FirstOrDefault(d => d.CoordinatorId == coordinatorId);
+        if (now?.LmsAccount == null) return $"{who} has no LMS sign-in saved, so their classes cannot go up as theirs yet.";
+        if (now.Zoom == null) return $"{who} has no Zoom account saved in their own copy of the app, so there is no link to open their classes with.";
+        return $"{who}'s classes run here, opened by {now.Zoom.AccountId} and signed off as {now.LmsAccount.Email}.";
     }
 
     private async Task AttachAsync(CentralRecording? recording, bool replace, bool dryRun)

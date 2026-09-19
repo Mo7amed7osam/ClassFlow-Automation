@@ -228,7 +228,14 @@ public sealed class DelegatedRuns
             return (0, existing.Count);
         }
 
-        var accounts = (await _service.GetAccountsAsync(token)).Select(a => a.AccountId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // The Zoom accounts on this PC, by the name they are known by here and by the e-mail they
+        // sign in with: a coordinator's account can have been added here under a different name, and
+        // the e-mail is what actually says which Zoom account it is.
+        var here = await _service.GetAccountsAsync(token);
+        var byName = here.ToDictionary(a => a.AccountId, a => a.AccountId, StringComparer.OrdinalIgnoreCase);
+        var byEmail = here.Where(a => !string.IsNullOrWhiteSpace(a.ZoomEmail))
+            .GroupBy(a => a.ZoomEmail!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().AccountId, StringComparer.OrdinalIgnoreCase);
         var plan = await _api.RunPlanAsync(_today().AddDays(-DaysBack), _today().AddDays(DaysAhead),
             ready.Select(r => r.Delegation.CoordinatorId), token);
         var whose = ready.ToDictionary(r => r.Delegation.CoordinatorId, r => r.Delegation, StringComparer.OrdinalIgnoreCase);
@@ -246,15 +253,23 @@ public sealed class DelegatedRuns
                 problems.Add($"{who} · {item.Group} {day:ddd d MMM} {start:HH\\:mm}: no Zoom link yet. Add it on the Coordinators page and it carries on to that group's next classes.");
                 continue;
             }
-            string? account = item.ZoomAccount;
-            if (string.IsNullOrWhiteSpace(account))
+            string? wanted = item.ZoomAccount;
+            if (string.IsNullOrWhiteSpace(wanted))
             {
-                problems.Add($"{who} · {item.Group} {day:ddd d MMM} {start:HH\\:mm}: no Zoom account chosen to open it with.");
+                problems.Add($"{who} · {item.Group} {day:ddd d MMM} {start:HH\\:mm}: no Zoom account of theirs is chosen to open it with.");
                 continue;
             }
-            if (!accounts.Contains(account))
+            // Their account as it is known here: by its own name, or by the e-mail their own copy
+            // of the app says it signs in to Zoom with.
+            string? theirEmail = delegation.ZoomAccountList
+                .FirstOrDefault(a => a.AccountId.Equals(wanted, StringComparison.OrdinalIgnoreCase))?.ZoomEmail;
+            string? account = byName.GetValueOrDefault(wanted!)
+                ?? (theirEmail is { Length: > 0 } mail ? byEmail.GetValueOrDefault(mail) : null);
+            if (account == null)
             {
-                problems.Add($"{who} · {item.Group}: this PC has no Zoom account called \"{account}\". Add it on the Accounts page, signed in as them.");
+                problems.Add($"{who} · {item.Group}: this PC has no Zoom account called \"{wanted}\"" +
+                             $"{(theirEmail is { Length: > 0 } e ? $" and none signed in as {e}" : "")}. " +
+                             "Add it on the Accounts page, signed in to Zoom as them.");
                 continue;
             }
             if (!Guid.TryParse(item.Id, out var id)) continue;

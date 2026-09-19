@@ -7,6 +7,18 @@ import { RunsPage } from './RunsPage'
 
 const lmsAccount = (email: string) => ({ id: `a-${email}`, label: 'Coordinator', email, role: 'coordinator', active: true })
 
+const zoomAccount = (accountId: string, overrides: Record<string, unknown> = {}) => ({
+  id: `z-${accountId}`,
+  accountId,
+  label: accountId,
+  zoomEmail: `${accountId.toLowerCase()}@zoom.example.com`,
+  group: accountId,
+  meetingUrl: 'https://zoom.us/j/91473108490',
+  preferredEngine: null,
+  active: true,
+  ...overrides,
+})
+
 const person = (overrides: Record<string, unknown> = {}) => ({
   coordinatorId: 'u-mona',
   username: 'mona',
@@ -16,7 +28,9 @@ const person = (overrides: Record<string, unknown> = {}) => ({
   groups: [{ id: 'g1', name: 'CAI5_AIS4_S7', displayName: null, archived: false }],
   lmsAccount: lmsAccount('mona@example.com'),
   lmsAccounts: [lmsAccount('mona@example.com')],
-  zoomAccount: null,
+  zoomAccountId: 'z-CAI5_AIS4_S7',
+  zoomAccount: 'CAI5_AIS4_S7',
+  zoomAccounts: [zoomAccount('CAI5_AIS4_S7')],
   classes: { planned: 0, done: 0, skipped: 0, needsLink: 0 },
   updatedAt: null,
   ...overrides,
@@ -91,24 +105,47 @@ describe('running other coordinators’ classes', () => {
     await waitFor(() => {
       const put = calls.find((call) => call.url === '/api/v1/admin/delegations/u-mona' && call.method === 'PUT')
       expect(put).toBeDefined()
-      expect(JSON.parse(put!.body!)).toMatchObject({ enabled: true })
+      expect(JSON.parse(put!.body!)).toMatchObject({ enabled: true, zoomAccountId: 'z-CAI5_AIS4_S7' })
       expect(put!.headers.get('X-Dashboard-Request')).toBe('1')
     })
     expect(await screen.findByText("Running Mona's classes")).toBeInTheDocument()
   })
 
-  it('the Zoom account that opens their meetings is saved when the box is left', async () => {
-    const calls = fakeBackend(signedInAs(adminMe), delegations([person({ enabled: true })]), runPlan([]), accepted)
+  it('their meetings are opened by one of their own Zoom accounts, chosen from what they have', async () => {
+    const calls = fakeBackend(
+      signedInAs(adminMe),
+      delegations([person({ enabled: true, zoomAccounts: [zoomAccount('CAI5_AIS4_S7'), zoomAccount('CAI5_AIS4_S9')] })]),
+      runPlan([]),
+      accepted,
+    )
     renderPage(<RunsPage />)
 
-    const box = await screen.findByLabelText('Zoom account on this PC')
-    await userEvent.type(box, 'CAI5_AIS4_S7')
-    await userEvent.tab()
+    const choice = await screen.findByLabelText('Opens with their')
+    expect(within(choice).getAllByRole('option').map((o) => o.textContent)).toEqual(['CAI5_AIS4_S7', 'CAI5_AIS4_S9'])
+    await userEvent.selectOptions(choice, 'z-CAI5_AIS4_S9')
 
     await waitFor(() => {
       const put = calls.find((call) => call.method === 'PUT')
-      expect(JSON.parse(put!.body!)).toMatchObject({ enabled: true, zoomAccount: 'CAI5_AIS4_S7' })
+      expect(JSON.parse(put!.body!)).toMatchObject({ enabled: true, zoomAccountId: 'z-CAI5_AIS4_S9' })
     })
+  })
+
+  it('an account with no link of its own says so before it is chosen', async () => {
+    fakeBackend(
+      signedInAs(adminMe),
+      delegations([person({ enabled: true, zoomAccounts: [zoomAccount('CAI5_AIS4_S7', { meetingUrl: null })] })]),
+      runPlan([]),
+    )
+    renderPage(<RunsPage />)
+
+    expect(await screen.findByRole('option', { name: 'CAI5_AIS4_S7 — no link yet' })).toBeInTheDocument()
+  })
+
+  it('a coordinator with no Zoom account of their own is told where it comes from', async () => {
+    fakeBackend(signedInAs(adminMe), delegations([person({ zoomAccounts: [], zoomAccountId: null, zoomAccount: null })]), runPlan([]))
+    renderPage(<RunsPage />)
+
+    expect(await screen.findByText(/they add it in their own copy of the app/)).toBeInTheDocument()
   })
 
   it('a class with no Zoom link says so, because it cannot open without one', async () => {

@@ -285,7 +285,7 @@ function useRunMutation<Vars, Result>(request: (vars: Vars) => Promise<Result>) 
 }
 
 export const useSetDelegation = () =>
-  useRunMutation(({ coordinatorId, ...body }: { coordinatorId: string; enabled: boolean; lmsAccountId?: string | null; zoomAccount?: string | null }) =>
+  useRunMutation(({ coordinatorId, ...body }: { coordinatorId: string; enabled: boolean; lmsAccountId?: string | null; zoomAccountId?: string | null }) =>
     api<{ coordinatorId: string; enabled: boolean }>(`/api/v1/admin/delegations/${coordinatorId}`, send('PUT', body)),
   )
 

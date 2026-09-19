@@ -64,10 +64,13 @@ public sealed class CentralApiShapesTests
                "groups":[{"id":"g1","name":"CAI5_AIS4_S7","displayName":null,"archived":false}],
                "lmsAccount":{"id":"a1","label":"Mona","email":"mona@example.com","role":"coordinator","active":true},
                "lmsAccounts":[{"id":"a1","label":"Mona","email":"mona@example.com","role":"coordinator","active":true}],
-               "zoomAccount":"CAI5_AIS4_S7","classes":{"planned":4,"done":1,"skipped":0,"needsLink":2},
+               "zoomAccountId":"z1","zoomAccount":"CAI5_AIS4_S7",
+               "zoomAccounts":[{"id":"z1","accountId":"CAI5_AIS4_S7","label":"S7","zoomEmail":"mona@zoom.example.com",
+                 "group":"CAI5_AIS4_S7","meetingUrl":"https://zoom.us/j/91473108490","preferredEngine":null,"active":true}],
+               "classes":{"planned":4,"done":1,"skipped":0,"needsLink":2},
                "updatedAt":"2026-09-19T10:00:00Z"},
               {"coordinatorId":"u2","username":"sami","displayName":"Sami","status":"active","enabled":false,
-               "groups":[],"lmsAccount":null,"lmsAccounts":[],"zoomAccount":null,
+               "groups":[],"lmsAccount":null,"lmsAccounts":[],"zoomAccountId":null,"zoomAccount":null,"zoomAccounts":[],
                "classes":{"planned":0,"done":0,"skipped":0,"needsLink":0},"updatedAt":null}]}
             """, Json)!;
 
@@ -76,9 +79,14 @@ public sealed class CentralApiShapesTests
         Assert.Equal("CAI5_AIS4_S7", mona.GroupsText);
         Assert.Equal("mona@example.com", mona.LmsAccount!.Email);
         Assert.Equal(2, mona.Classes!.NeedsLink);
+        // Her own Zoom account, and the link a class of that group opens with.
+        Assert.Equal("CAI5_AIS4_S7", mona.Zoom!.AccountId);
+        Assert.Equal("https://zoom.us/j/91473108490", mona.Zoom.MeetingUrl);
+        Assert.Equal("mona@zoom.example.com", mona.Zoom.ZoomEmail);
 
         var sami = listed.Delegations[1];
-        Assert.False(sami.IsReady);                       // turned off, and no sign-in of their own
+        Assert.False(sami.IsReady);                       // turned off, and neither account of their own
+        Assert.Null(sami.Zoom);
         Assert.Equal("no groups", sami.GroupsText);
     }
 
@@ -97,7 +105,7 @@ public sealed class CentralApiShapesTests
                "source":"lms","status":"planned","note":null,"needsLink":true,"importedAt":null,
                "updatedAt":"2026-09-19T10:00:00Z"}],
              "coordinators":[{"coordinatorId":"u1","displayName":"Mona","username":"mona","enabled":true,
-               "zoomAccount":"CAI5_AIS4_S7",
+               "zoomAccount":"CAI5_AIS4_S7","zoomAccounts":[],
                "lmsAccount":{"id":"a1","label":"Mona","email":"mona@example.com","role":"coordinator","active":true}}]}
             """, Json)!;
 

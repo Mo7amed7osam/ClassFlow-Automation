@@ -213,6 +213,24 @@ export interface LmsAccountRef {
   active: boolean
 }
 
+export type PreferredEngine = 'desktop' | 'web'
+
+/**
+ * One Zoom account a user opens classes with, kept against their dashboard account by their own
+ * copy of the app. No sign-in is kept: that stays in the Zoom app or a browser profile on their PC.
+ */
+export interface ZoomAccountRef {
+  id: string
+  accountId: string
+  label: string
+  zoomEmail: string | null
+  group: string | null
+  /** the link this account's classes open, which is where a class's link comes from */
+  meetingUrl: string | null
+  preferredEngine: PreferredEngine | null
+  active: boolean
+}
+
 /** A coordinator, and whether the admin's PC opens and finishes their classes for them. */
 export interface Delegation {
   coordinatorId: string
@@ -224,14 +242,15 @@ export interface Delegation {
   /** the sign-in their classes go up under: the one chosen, or the one they have in use */
   lmsAccount: LmsAccountRef | null
   lmsAccounts: LmsAccountRef[]
-  /** the Zoom account on the running PC that opens their meetings */
+  /** which of their own Zoom accounts opens their meetings */
+  zoomAccountId: string | null
   zoomAccount: string | null
+  zoomAccounts: ZoomAccountRef[]
   classes: { planned: number; done: number; skipped: number; needsLink: number }
   updatedAt: string | null
 }
 
 export type ClassPlanStatus = 'planned' | 'skipped' | 'opened' | 'done' | 'failed'
-export type PreferredEngine = 'desktop' | 'web'
 
 /** One class of a delegated coordinator, read from their own LMS session list. */
 export interface ClassPlan {
@@ -259,6 +278,7 @@ export interface RunCoordinator {
   username: string
   enabled: boolean
   zoomAccount: string | null
+  zoomAccounts: ZoomAccountRef[]
   lmsAccount: LmsAccountRef | null
 }
 

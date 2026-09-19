@@ -7,6 +7,11 @@ Their LMS accounts (the sign-ins their app uses on the LMS), signed-in user only
     DELETE /api/v1/me/lms-accounts/{id}            remove it
     POST   /api/v1/me/lms-accounts/{id}/secret     its email and password, for their own app
 
+The Zoom accounts their app opens classes with (no password: the Zoom sign-in stays in the Zoom
+app's saved accounts or a browser profile on that PC):
+    GET    /api/v1/me/zoom-accounts                list
+    PUT    /api/v1/me/zoom-accounts                the whole set, as that PC has them
+
 Settings every copy of the app shares (read by anyone signed in, written by the admin):
     GET    /api/v1/settings/{key}
     PUT    /api/v1/settings/{key}
@@ -35,7 +40,7 @@ from sqlalchemy import func, select, update
 from .api import ApiError, _json
 from .auth import CurrentUser, current_user, require_dashboard_header
 from .config import ConfigurationError
-from .models import AppSetting, LmsAccount
+from .models import AppSetting, LmsAccount, ZoomAccount
 from .observability import emit
 
 SECRETS_KEY_VARIABLE = "CENTRAL_SECRETS_KEY"
@@ -195,6 +200,103 @@ async def account_secret(account_id: uuid.UUID, request: Request, user: CurrentU
             raise ApiError(409, "Cannot decrypt", "Save this account's password again.") from exc
     emit("lms_account.secret_read", username=user.username, account=str(account_id))
     return _no_store({"id": str(account_id), "email": account.email, "password": password})
+
+
+# ----------------------------------------------------------------------------- Zoom accounts
+
+
+MAX_ZOOM_ACCOUNTS = 50
+
+
+def zoom_view(account: ZoomAccount) -> dict[str, Any]:
+    return {"id": str(account.id), "accountId": account.account_id, "label": account.label,
+            "zoomEmail": account.zoom_email, "group": account.group_name,
+            "meetingUrl": account.default_meeting_url, "preferredEngine": account.preferred_engine,
+            "active": account.active, "updatedAt": account.updated_at}
+
+
+class ZoomAccountBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    accountId: str = Field(min_length=1, max_length=100)
+    label: str = Field(default="", max_length=100)
+    zoomEmail: str | None = Field(default=None, max_length=320)
+    group: str | None = Field(default=None, max_length=100)
+    meetingUrl: str | None = None
+    preferredEngine: str | None = Field(default=None, pattern="^(desktop|web)$")
+    active: bool = False
+
+
+class ZoomAccountsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    accounts: list[ZoomAccountBody] = Field(max_length=MAX_ZOOM_ACCOUNTS)
+
+
+def _meeting_url(value: str | None) -> str | None:
+    """A link the app can open, or nothing. What it points at is Zoom's business, not ours."""
+    if value is None:
+        return None
+    url = value.strip()
+    if not url:
+        return None
+    if len(url) > 2048 or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url):
+        raise ApiError(400, "Invalid request", "That meeting link is not a link.")
+    if not url.lower().startswith("https://"):
+        raise ApiError(400, "Invalid request", "A meeting link must start with https://.")
+    return url
+
+
+@router.get("/api/v1/me/zoom-accounts")
+async def list_zoom_accounts(request: Request, user: CurrentUser = Depends(current_user)) -> JSONResponse:
+    async with request.app.state.sessionmaker() as session:
+        rows = (await session.execute(
+            select(ZoomAccount).where(ZoomAccount.user_id == user.id)
+            .order_by(ZoomAccount.active.desc(), ZoomAccount.account_id)
+        )).scalars().all()
+    return _no_store({"accounts": [zoom_view(a) for a in rows]})
+
+
+@router.put("/api/v1/me/zoom-accounts", dependencies=[Depends(require_dashboard_header)])
+async def save_zoom_accounts(body: ZoomAccountsBody, request: Request, user: CurrentUser = Depends(current_user)) -> JSONResponse:
+    """The accounts this person's app has, as a whole set: what their PC knows is what is kept.
+
+    An account is matched by the id its PC knows it by, so re-sending the same list changes nothing
+    and an account removed there stops being offered to whoever runs their classes.
+    """
+    now = request.app.state.clock()
+    seen: set[str] = set()
+    async with request.app.state.sessionmaker() as session, session.begin():
+        existing = {
+            account.account_id.lower(): account
+            for account in (await session.execute(
+                select(ZoomAccount).where(ZoomAccount.user_id == user.id).with_for_update()
+            )).scalars()
+        }
+        for item in body.accounts:
+            account_id = item.accountId.strip()
+            key = account_id.lower()
+            if not account_id or key in seen:
+                continue
+            seen.add(key)
+            account = existing.get(key)
+            if account is None:
+                account = ZoomAccount(id=uuid.uuid4(), user_id=user.id, account_id=account_id, created_at=now)
+                session.add(account)
+                existing[key] = account
+            account.account_id = account_id
+            account.label = item.label.strip()[:100] or account_id
+            account.zoom_email = (item.zoomEmail or "").strip() or None
+            account.group_name = (item.group or "").strip() or None
+            account.default_meeting_url = _meeting_url(item.meetingUrl)
+            account.preferred_engine = item.preferredEngine
+            account.active = item.active
+            account.updated_at = now
+        for key, account in existing.items():
+            if key not in seen:
+                await session.delete(account)
+        await session.flush()
+        kept = [zoom_view(account) for key, account in sorted(existing.items()) if key in seen]
+    emit("zoom_accounts.saved", username=user.username, count=len(kept))
+    return _no_store({"accounts": kept})
 
 
 # ----------------------------------------------------------------------------- shared settings

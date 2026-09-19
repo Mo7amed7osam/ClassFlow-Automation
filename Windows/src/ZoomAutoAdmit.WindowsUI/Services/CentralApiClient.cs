@@ -45,15 +45,30 @@ public sealed record CentralUserList(List<CentralUser> Users, int Count);
 /// <summary>How many classes of one coordinator are waiting, done, or still need a meeting link.</summary>
 public sealed record CentralDelegationClasses(int Planned, int Done, int Skipped, int NeedsLink);
 
+/// <summary>
+/// One Zoom account a person opens classes with, kept against their dashboard account. No sign-in:
+/// that lives in the Zoom app's saved accounts or a browser profile on their PC. What is here is
+/// which account, the group it hosts and the link its classes open.
+/// </summary>
+public sealed record CentralZoomAccount(string Id, string AccountId, string Label, string? ZoomEmail, string? Group,
+    string? MeetingUrl, string? PreferredEngine, bool Active);
+
 /// <summary>A coordinator, and whether this PC runs their classes under their own two accounts.</summary>
 public sealed record CentralDelegation(string CoordinatorId, string Username, string DisplayName, string Status, bool Enabled,
-    List<CentralGroupRef>? Groups, CentralLmsAccount? LmsAccount, List<CentralLmsAccount>? LmsAccounts, string? ZoomAccount,
+    List<CentralGroupRef>? Groups, CentralLmsAccount? LmsAccount, List<CentralLmsAccount>? LmsAccounts,
+    string? ZoomAccountId, string? ZoomAccount, List<CentralZoomAccount>? ZoomAccounts,
     CentralDelegationClasses? Classes, DateTimeOffset? UpdatedAt)
 {
+    public IReadOnlyList<CentralZoomAccount> ZoomAccountList => ZoomAccounts ?? [];
+    /// <summary>The Zoom account their classes open with, as the running PC knows it by name.</summary>
+    public CentralZoomAccount? Zoom =>
+        ZoomAccountList.FirstOrDefault(a => a.Id == ZoomAccountId)
+        ?? ZoomAccountList.FirstOrDefault(a => a.AccountId.Equals(ZoomAccount, StringComparison.OrdinalIgnoreCase))
+        ?? ZoomAccountList.FirstOrDefault(a => a.Active);
     public IReadOnlyList<CentralGroupRef> GroupList => Groups ?? [];
     public string GroupsText => GroupList.Count == 0 ? "no groups" : string.Join(", ", GroupList.Select(g => g.Name));
     /// <summary>Everything needed to actually run their classes is there.</summary>
-    public bool IsReady => Enabled && LmsAccount != null;
+    public bool IsReady => Enabled && LmsAccount != null && Zoom != null;
 }
 
 public sealed record CentralDelegationList(List<CentralDelegation> Delegations);
@@ -68,7 +83,7 @@ public sealed record CentralClassPlan(string Id, string CoordinatorId, string Gr
 }
 
 public sealed record CentralRunCoordinator(string CoordinatorId, string DisplayName, string Username, bool Enabled,
-    string? ZoomAccount, CentralLmsAccount? LmsAccount);
+    string? ZoomAccount, List<CentralZoomAccount>? ZoomAccounts, CentralLmsAccount? LmsAccount);
 
 public sealed record CentralRunPlan(List<CentralClassPlan>? Classes, List<CentralRunCoordinator>? Coordinators)
 {
@@ -174,7 +189,7 @@ public sealed class CentralLoginStore(string target = "ZoomAutoAdmit/Central/Das
 /// coordinator), keeps the session cookie in memory only, and signs in again by itself from the
 /// saved sign-in when the session ends. Every change carries X-Dashboard-Request: 1.
 /// </summary>
-public sealed class CentralApiClient : IDelegatedRunsApi
+public sealed class CentralApiClient : IDelegatedRunsApi, IZoomAccountsApi
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -211,6 +226,7 @@ public sealed class CentralApiClient : IDelegatedRunsApi
 
     public CentralMe? Me { get; private set; }
     public bool IsAdmin => Me?.IsAdmin == true;
+    public bool IsSignedIn => Me != null;
     public bool HasSavedLogin => (_session is { } s && SafeRead(s) != null) || _logins.Read() != null || SavedPassword(_known.Current) != null;
 
     /// <summary>The accounts that signed in on this PC, newest first; each can continue without typing when it has a session or a saved password.</summary>
@@ -458,6 +474,22 @@ public sealed class CentralApiClient : IDelegatedRunsApi
     public Task<JsonElement> DeleteLmsAccountAsync(string id, CancellationToken token = default) =>
         SendAsync<JsonElement>(HttpMethod.Delete, $"api/v1/me/lms-accounts/{id}", null, token);
 
+    /// <summary>The Zoom accounts this person keeps on the server (never a Zoom sign-in).</summary>
+    public async Task<List<CentralZoomAccount>> ZoomAccountsAsync(CancellationToken token = default) =>
+        (await GetAsync<JsonElement>("api/v1/me/zoom-accounts", token)).GetProperty("accounts").Deserialize<List<CentralZoomAccount>>(Json) ?? [];
+
+    /// <summary>
+    /// The Zoom accounts this PC has, as a whole set. What a person's own app knows is what is kept,
+    /// so whoever runs their classes picks the account and the link from there instead of typing it.
+    /// </summary>
+    public Task<JsonElement> SaveZoomAccountsAsync(IEnumerable<object> accounts, CancellationToken token = default) =>
+        SendAsync<JsonElement>(HttpMethod.Put, "api/v1/me/zoom-accounts", new { accounts = accounts.ToArray() }, token);
+
+    /// <summary>A coordinator's Zoom accounts, for the admin's app that runs their classes.</summary>
+    public async Task<List<CentralZoomAccount>> CoordinatorZoomAccountsAsync(string coordinatorId, CancellationToken token = default) =>
+        (await GetAsync<JsonElement>($"api/v1/admin/users/{coordinatorId}/zoom-accounts", token))
+            .GetProperty("accounts").Deserialize<List<CentralZoomAccount>>(Json) ?? [];
+
     /// <summary>The account's email and password, for this app to sign in to the LMS with. Never logged.</summary>
     public Task<CentralLmsSecret> LmsSecretAsync(string id, CancellationToken token = default) =>
         SendAsync<CentralLmsSecret>(HttpMethod.Post, $"api/v1/me/lms-accounts/{id}/secret", null, token);
@@ -503,9 +535,9 @@ public sealed class CentralApiClient : IDelegatedRunsApi
 
     /// <summary>Run this coordinator's classes (or stop), under the LMS and Zoom account named.</summary>
     public Task<JsonElement> SetDelegationAsync(string coordinatorId, bool enabled, string? lmsAccountId = null,
-        string? zoomAccount = null, CancellationToken token = default) =>
+        string? zoomAccountId = null, CancellationToken token = default) =>
         SendAsync<JsonElement>(HttpMethod.Put, $"api/v1/admin/delegations/{coordinatorId}",
-            new { enabled, lmsAccountId, zoomAccount }, token);
+            new { enabled, lmsAccountId, zoomAccountId }, token);
 
     /// <summary>That coordinator's LMS sign-in, so their classes go up as theirs. Never logged.</summary>
     public Task<CentralCoordinatorSecret> CoordinatorLmsSecretAsync(string coordinatorId, string accountId, CancellationToken token = default) =>

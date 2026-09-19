@@ -89,6 +89,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // The classes this PC runs for other coordinators, kept in step with the server: their
         // sign-ins, their groups, their timetables and the schedules that open by themselves.
         Runs = new DelegatedRuns(Central.Api, service);
+        // This PC's own Zoom accounts go to the signed-in person's dashboard account: which group
+        // each one hosts and the link its classes open. Whoever runs their classes picks from that
+        // instead of being told a link twice.
+        ZoomAccounts = new ZoomServerAccounts(Central.Api);
         StartMeeting = new StartMeetingViewModel(service);
         Accounts = new AccountsViewModel(service);
         Schedules = new SchedulesViewModel(service);
@@ -152,6 +156,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public SchedulesViewModel Schedules { get; }
     /// <summary>The coordinators whose classes this PC opens and finishes as well as its own.</summary>
     public DelegatedRuns Runs { get; }
+    /// <summary>This PC's Zoom accounts, kept against the signed-in person's dashboard account.</summary>
+    public ZoomServerAccounts ZoomAccounts { get; }
     public System.Windows.Input.ICommand SyncRunsCommand { get; }
     /// <summary>What the last pass over those coordinators did, for the Schedules page to show.</summary>
     public string RunsStatus { get => _runsStatus; private set => SetProperty(ref _runsStatus, value); }
@@ -375,6 +381,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 }
                 // Whose classes this PC runs, and theirs for the days ahead. Only in the app
                 // itself, and only the admin's copy has anybody else's to run.
+                if (System.Windows.Application.Current is App && Central.IsSignedIn) _ = PushZoomAccountsAsync();
                 if (System.Windows.Application.Current is App && Central.IsAdmin
                     && DateTimeOffset.Now - _lastRunsSync >= SyncRunsEvery)
                 {
@@ -407,8 +414,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Sends this PC's Zoom accounts when they have changed (or an hour has passed).</summary>
+    private async Task PushZoomAccountsAsync()
+    {
+        try { await ZoomAccounts.PushAsync(await _service.GetAccountsAsync()); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Never load-bearing: the classes on this PC run whether or not the server heard.
+            ConsoleLogger.Warn($"[ACCOUNTS] This PC's Zoom accounts were not saved to the server: {CentralApiException.Explain(ex)}");
+        }
+    }
+
     private async void OnAccountsChanged()
     {
+        ZoomAccounts.Changed();
         await StartMeeting.RefreshAccountsAsync();
         await Schedules.RefreshAsync();
         PublishAccountsToRoles();
@@ -421,6 +440,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     // An account added from Start Meeting is already selected there; the other pages just reload it.
     private async void OnStartMeetingAccountsChanged()
     {
+        ZoomAccounts.Changed();
         await Accounts.RefreshAsync();
         await Schedules.RefreshAsync();
         PublishAccountsToRoles();

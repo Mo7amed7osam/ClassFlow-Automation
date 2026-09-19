@@ -38,26 +38,51 @@ def as_user(client: TestClient, username: str, password: str = COORDINATOR_PASSW
     return client
 
 
-def coordinator(client: TestClient, username: str, *, groups: tuple[str, ...], lms_email: str, lms_password: str) -> str:
-    """A coordinator with groups and one LMS sign-in of their own, saved as themselves."""
+def coordinator(client: TestClient, username: str, *, groups: tuple[str, ...], lms_email: str, lms_password: str,
+                zoom: tuple[str, ...] = ()) -> str:
+    """A coordinator with groups, one LMS sign-in and their own Zoom accounts, saved as themselves."""
     user_id = make_user(client.app.state.settings.database_url, username, COORDINATOR_PASSWORD, groups=groups)
     as_user(client, username)
     saved = client.post("/api/v1/me/lms-accounts", headers=DASH,
                         json={"label": username.title(), "email": lms_email, "password": lms_password})
     assert saved.status_code == 201, saved.text
+    if zoom:
+        # The app keeps this PC's Zoom accounts here: one per group, each with the link its
+        # classes open. Nobody types a link twice.
+        kept = client.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": [
+            {"accountId": group, "label": group, "group": group, "zoomEmail": f"{username}@zoom.example.com",
+             "meetingUrl": f"https://zoom.us/j/9147310849{n}", "active": n == 0}
+            for n, group in enumerate(zoom)
+        ]})
+        assert kept.status_code == 200, kept.text
     return user_id
 
 
 @pytest.fixture
 def two(dash):  # noqa: ANN001, ANN201
     """Two coordinators, each with their own group and their own LMS sign-in, and the admin signed in."""
-    mona = coordinator(dash, "mona", groups=("CAI5_AIS4_S7",), lms_email="mona@example.com", lms_password=MONA_LMS)
-    sami = coordinator(dash, "sami", groups=("CAI5_AIS4_S8",), lms_email="sami@example.com", lms_password=SAMI_LMS)
+    mona = coordinator(dash, "mona", groups=("CAI5_AIS4_S7",), lms_email="mona@example.com", lms_password=MONA_LMS,
+                       zoom=("CAI5_AIS4_S7",))
+    sami = coordinator(dash, "sami", groups=("CAI5_AIS4_S8",), lms_email="sami@example.com", lms_password=SAMI_LMS,
+                       zoom=("CAI5_AIS4_S8",))
     as_user(dash, "admin", ADMIN_PASSWORD)
     return mona, sami
 
 
-def turn_on(client: TestClient, coordinator_id: str, **body):  # noqa: ANN003, ANN201
+def zoom_accounts(client: TestClient, coordinator_id: str):  # noqa: ANN201
+    answer = client.get(f"/api/v1/admin/users/{coordinator_id}/zoom-accounts")
+    assert answer.status_code == 200, answer.text
+    return answer.json()["accounts"]
+
+
+def zoom_id(client: TestClient, coordinator_id: str, account_id: str) -> str:
+    return next(a["id"] for a in zoom_accounts(client, coordinator_id) if a["accountId"] == account_id)
+
+
+def turn_on(client: TestClient, coordinator_id: str, zoom: str | None = None, **body):  # noqa: ANN003, ANN201
+    """Run this coordinator's classes, optionally with one of their own Zoom accounts named."""
+    if zoom is not None:
+        body["zoomAccountId"] = zoom_id(client, coordinator_id, zoom)
     return client.put(f"/api/v1/admin/delegations/{coordinator_id}", headers=DASH, json={"enabled": True, **body})
 
 
@@ -110,7 +135,7 @@ def test_every_coordinator_is_listed_with_their_groups_and_sign_ins_and_none_is_
 def test_turning_one_on_keeps_the_lms_and_zoom_account_their_classes_go_up_under(dash, two):
     mona, _ = two
     account = dash.get(f"/api/v1/admin/users/{mona}/lms-accounts").json()["accounts"][0]["id"]
-    answer = turn_on(dash, mona, lmsAccountId=account, zoomAccount="CAI5_AIS4_S7")
+    answer = turn_on(dash, mona, zoom="CAI5_AIS4_S7", lmsAccountId=account)
     assert answer.status_code == 200, answer.text
     assert answer.json()["enabled"] is True and answer.json()["zoomAccount"] == "CAI5_AIS4_S7"
 
@@ -199,7 +224,10 @@ def test_what_the_lms_listed_becomes_the_plan(dash, two):
     classes = plan(dash)["classes"]
     assert [(c["group"], c["date"], c["startTime"]) for c in classes] == [
         ("CAI5_AIS4_S7", "2026-09-22", "19:00"), ("CAI5_AIS4_S7", "2026-09-29", "19:00")]
-    assert all(c["needsLink"] for c in classes)          # the LMS has no Zoom link to give
+    # The LMS gives no Zoom link, but her own Zoom account for the group does, so nothing is owed.
+    assert not any(c["needsLink"] for c in classes)
+    assert all(c["meetingUrl"] == "https://zoom.us/j/91473108490" for c in classes)
+    assert all(c["zoomAccount"] == "CAI5_AIS4_S7" for c in classes)
 
 
 def test_the_same_class_listed_again_is_the_same_line_and_keeps_what_a_person_put_on_it(dash, two):
@@ -271,8 +299,8 @@ def test_a_link_that_is_not_one_is_refused(dash, two):
 
 def test_two_coordinators_run_side_by_side_each_with_their_own_pair(dash, two):
     mona, sami = two
-    turn_on(dash, mona, zoomAccount="CAI5_AIS4_S7")
-    turn_on(dash, sami, zoomAccount="CAI5_AIS4_S8")
+    turn_on(dash, mona, zoom="CAI5_AIS4_S7")
+    turn_on(dash, sami, zoom="CAI5_AIS4_S8")
     imported(dash, mona, [LESSON])
     imported(dash, sami, [{"group": "CAI5_AIS4_S8", "date": "2026-09-22", "startTime": "19:00", "title": "33"}])
 
@@ -331,3 +359,89 @@ def test_a_timetable_longer_than_a_term_is_refused(dash, two):
     turn_on(dash, mona)
     too_many = [{**LESSON, "date": f"2026-{(i % 12) + 1:02d}-{(i % 28) + 1:02d}"} for i in range(501)]
     assert imported(dash, mona, too_many).status_code == 400
+
+
+# =========================================================================== their Zoom accounts
+
+
+def test_a_coordinators_own_zoom_accounts_are_what_the_admin_picks_from(dash, two):
+    mona, _ = two
+    listed = {d["username"]: d for d in dash.get("/api/v1/admin/delegations").json()["delegations"]}
+    accounts = listed["mona"]["zoomAccounts"]
+    assert [(a["accountId"], a["group"], a["meetingUrl"]) for a in accounts] == [
+        ("CAI5_AIS4_S7", "CAI5_AIS4_S7", "https://zoom.us/j/91473108490")]
+    assert "password" not in str(accounts)            # a Zoom sign-in is never kept here
+
+
+def test_another_coordinators_zoom_account_cannot_be_pinned_to_this_one(dash, two):
+    mona, sami = two
+    theirs = zoom_id(dash, sami, "CAI5_AIS4_S8")
+    assert dash.put(f"/api/v1/admin/delegations/{mona}", headers=DASH,
+                    json={"enabled": True, "zoomAccountId": theirs}).status_code == 404
+
+
+def test_the_accounts_a_pc_sends_are_the_whole_set_so_one_removed_there_goes_here(dash, two):
+    mona, _ = two
+    as_user(dash, "mona")
+    dash.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": [
+        {"accountId": "CAI5_AIS4_S9", "label": "S9", "group": "CAI5_AIS4_S9",
+         "meetingUrl": "https://zoom.us/j/914731084999", "active": True}]})
+    as_user(dash, "admin", ADMIN_PASSWORD)
+
+    assert [a["accountId"] for a in zoom_accounts(dash, mona)] == ["CAI5_AIS4_S9"]
+
+
+def test_a_coordinator_with_no_zoom_account_for_the_group_is_asked_for_its_link(dash, two):
+    mona, _ = two
+    as_user(dash, "mona")
+    dash.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": []})
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    turn_on(dash, mona)
+    imported(dash, mona, [LESSON])
+
+    only = plan(dash)["classes"][0]
+    assert only["needsLink"] is True and only["meetingUrl"] is None
+
+
+def test_the_group_the_zoom_account_names_is_what_matches_not_the_one_in_use(dash, two):
+    mona, _ = two
+    as_user(dash, "mona")
+    dash.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": [
+        {"accountId": "OTHER", "label": "Other", "group": "OTHER_GROUP",
+         "meetingUrl": "https://zoom.us/j/111111111", "active": True},
+        {"accountId": "S7", "label": "S7", "group": "CAI5_AIS4_S7",
+         "meetingUrl": "https://zoom.us/j/222222222", "active": False}]})
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    turn_on(dash, mona)
+    imported(dash, mona, [LESSON])
+
+    only = plan(dash)["classes"][0]
+    assert only["meetingUrl"] == "https://zoom.us/j/222222222"
+    assert only["zoomAccount"] == "S7"
+
+
+def test_a_link_put_on_a_class_by_hand_wins_over_the_accounts(dash, two):
+    mona, _ = two
+    turn_on(dash, mona, zoom="CAI5_AIS4_S7")
+    imported(dash, mona, [LESSON])
+    first = plan(dash)["classes"][0]
+    dash.patch(f"/api/v1/admin/run-plan/{first['id']}", headers=DASH,
+               json={"meetingUrl": "https://zoom.us/j/333333333"})
+
+    imported(dash, mona, [LESSON])                      # the timetable is read again
+    assert plan(dash)["classes"][0]["meetingUrl"] == "https://zoom.us/j/333333333"
+
+
+def test_a_zoom_account_is_only_ever_the_users_own(dash, two):
+    mona, sami = two
+    as_user(dash, "mona")
+    assert [a["accountId"] for a in dash.get("/api/v1/me/zoom-accounts").json()["accounts"]] == ["CAI5_AIS4_S7"]
+    as_user(dash, "sami")
+    assert [a["accountId"] for a in dash.get("/api/v1/me/zoom-accounts").json()["accounts"]] == ["CAI5_AIS4_S8"]
+
+
+def test_a_meeting_link_that_is_not_one_is_refused_when_a_pc_sends_its_accounts(dash, two):
+    as_user(dash, "mona")
+    refused = dash.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": [
+        {"accountId": "S7", "label": "S7", "meetingUrl": "zoom.us/j/1"}]})
+    assert refused.status_code == 400

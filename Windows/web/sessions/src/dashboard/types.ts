@@ -15,6 +15,19 @@ export interface DashState {
   recordings: null | { total: number; onLms: number; pending: number; drive: number; zoomOnly: number; missing: number }
   users: null | { id: string; username: string; displayName: string; role: string; status: string; lastLogin?: string | null; groups: { id: string; name: string }[] }[]
   groups: null | { id: string; name: string }[]
+  /** Whose classes this PC runs besides its own (absent on a server that predates it). */
+  runs?: null | {
+    id: string
+    enabled: boolean
+    /** Both of their accounts are there, so their classes can actually run. */
+    ready: boolean
+    lms?: string | null
+    zoomAccountId?: string | null
+    zoomAccount?: string | null
+    zoomAccounts: { id: string; name: string; group?: string | null; link: boolean }[]
+    planned: number
+    needsLink: number
+  }[]
   allGroups: null | { id: string; name: string; displayName?: string | null; archived: boolean; recordings: number; lastSession?: string | null; pending: number; onLms: number; missing: number; coordinators: string[] }[]
   /** The app's own update from the central server (absent in older builds). */
   update?: { current: string; version: string | null; sizeMb: number; status: string; progress: number | null; working: boolean }

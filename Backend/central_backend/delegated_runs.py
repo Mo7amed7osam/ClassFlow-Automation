@@ -8,6 +8,7 @@ same time each go up under the right name.
     GET    /api/v1/admin/delegations                     every coordinator, and whether we run theirs
     PUT    /api/v1/admin/delegations/{coordinator_id}    run theirs (or stop); their LMS and Zoom account
     GET    /api/v1/admin/users/{user_id}/lms-accounts    a coordinator's LMS sign-ins (never a password)
+    GET    /api/v1/admin/users/{user_id}/zoom-accounts   a coordinator's Zoom accounts and their links
     POST   /api/v1/admin/users/{user_id}/lms-accounts/{account_id}/secret     the sign-in itself
     GET    /api/v1/admin/run-plan?from=&to=&coordinator=  the classes to run, one line each
     POST   /api/v1/admin/run-plan/import                 what the LMS listed for one coordinator
@@ -19,6 +20,10 @@ The timetable is not kept by hand: the app signs in to the LMS as the coordinato
 session list, and sends it to `import`. The LMS does not publish a Zoom link, so that (and the Zoom
 account that opens it) is the one thing a person still fills in - once per group, since `import`
 carries a group's last known link on to its next classes and PATCH can write one across the group.
+
+Neither account is typed in twice. Each coordinator's app keeps its own Zoom accounts and LMS
+sign-ins on the server against their dashboard account, so the admin picks from what that person
+already has; a group's meeting link comes from their Zoom account for that group.
 
 Reading a coordinator's LMS sign-in is the admin's to do (they already set these passwords), and
 every read is written to admin_audit_log with who read whose. It is refused for a coordinator the
@@ -42,9 +47,9 @@ from .admin import audit, groups_by_user
 from .api import ApiError, _json
 from .auth import CurrentUser, current_user, require_admin, require_dashboard_header
 from .dashboard import parse_id
-from .models import ClassPlan, LmsAccount, RunDelegation, User
+from .models import ClassPlan, LmsAccount, RunDelegation, User, ZoomAccount
 from .observability import emit
-from .user_data import _box
+from .user_data import _box, zoom_view
 
 router = APIRouter(dependencies=[Depends(require_admin)])
 writes = [Depends(require_dashboard_header)]
@@ -126,6 +131,31 @@ def _plan_view(plan: ClassPlan, fallback_zoom: str | None = None) -> dict[str, A
     }
 
 
+async def _zoom_accounts(session: AsyncSession, user_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[ZoomAccount]]:
+    if not user_ids:
+        return {}
+    rows = (await session.execute(
+        select(ZoomAccount).where(ZoomAccount.user_id.in_(user_ids))
+        .order_by(ZoomAccount.active.desc(), ZoomAccount.account_id)
+    )).scalars().all()
+    found: dict[uuid.UUID, list[ZoomAccount]] = {}
+    for account in rows:
+        found.setdefault(account.user_id, []).append(account)
+    return found
+
+
+def _chosen_zoom(accounts: list[ZoomAccount], chosen: uuid.UUID | None, named: str | None) -> ZoomAccount | None:
+    """The account a delegation names - by reference, by the name it was given, or the active one."""
+    for account in accounts:
+        if chosen is not None and account.id == chosen:
+            return account
+    if named:
+        for account in accounts:
+            if account.account_id.lower() == named.lower():
+                return account
+    return next((a for a in accounts if a.active), None)
+
+
 async def _lms_accounts(session: AsyncSession, user_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[LmsAccount]]:
     if not user_ids:
         return {}
@@ -155,7 +185,8 @@ class DelegationBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: StrictBool
     lmsAccountId: str | None = None
-    zoomAccount: str | None = Field(default=None, max_length=100)
+    """One of that coordinator's own Zoom accounts. The name it is known by follows from it."""
+    zoomAccountId: str | None = None
 
 
 @router.get("/api/v1/admin/delegations")
@@ -172,6 +203,7 @@ async def list_delegations(request: Request) -> JSONResponse:
         } if ids else {}
         groups = await groups_by_user(session, ids)
         accounts = await _lms_accounts(session, ids)
+        zooms = await _zoom_accounts(session, ids)
         counts = {
             (coordinator_id, status): total
             for coordinator_id, status, total in (await session.execute(
@@ -193,6 +225,9 @@ async def list_delegations(request: Request) -> JSONResponse:
         delegation = delegations.get(user.id)
         mine = accounts.get(user.id, [])
         chosen = _chosen_account(mine, delegation.lms_account_id if delegation else None)
+        their_zooms = zooms.get(user.id, [])
+        zoom = _chosen_zoom(their_zooms, delegation.zoom_account_id if delegation else None,
+                            delegation.zoom_account if delegation else None)
         items.append({
             "coordinatorId": str(user.id),
             "username": user.username,
@@ -202,7 +237,9 @@ async def list_delegations(request: Request) -> JSONResponse:
             "groups": groups.get(user.id, []),
             "lmsAccount": _account_view(chosen) if chosen else None,
             "lmsAccounts": [_account_view(a) for a in mine],
-            "zoomAccount": delegation.zoom_account if delegation else None,
+            "zoomAccountId": str(zoom.id) if zoom else None,
+            "zoomAccount": zoom.account_id if zoom else (delegation.zoom_account if delegation else None),
+            "zoomAccounts": [zoom_view(a) for a in their_zooms],
             "classes": {
                 "planned": counts.get((user.id, "planned"), 0),
                 "done": counts.get((user.id, "done"), 0),
@@ -221,6 +258,7 @@ async def set_delegation(
     """Run this coordinator's classes (or stop), with the LMS and Zoom account they go up under."""
     now = request.app.state.clock()
     chosen_id = parse_id(body.lmsAccountId) if body.lmsAccountId else None
+    zoom_id = parse_id(body.zoomAccountId) if body.zoomAccountId else None
     async with request.app.state.sessionmaker() as session, session.begin():
         user = await _coordinator(session, coordinator_id)
         if body.enabled and user.status != "active":
@@ -229,18 +267,27 @@ async def set_delegation(
             account = await session.get(LmsAccount, chosen_id)
             if account is None or account.user_id != user.id:
                 raise ApiError(404, "Not found", "That is not one of this coordinator's LMS accounts.")
+        zoom = None
+        if zoom_id is not None:
+            zoom = await session.get(ZoomAccount, zoom_id)
+            if zoom is None or zoom.user_id != user.id:
+                raise ApiError(404, "Not found", "That is not one of this coordinator's Zoom accounts.")
         delegation = await session.get(RunDelegation, user.id, with_for_update=True)
         if delegation is None:
             delegation = RunDelegation(coordinator_id=user.id, created_by=admin.id, created_at=now)
             session.add(delegation)
         delegation.enabled = body.enabled
         delegation.lms_account_id = chosen_id
-        delegation.zoom_account = (body.zoomAccount or "").strip() or None
+        delegation.zoom_account_id = zoom_id
+        # The name the running PC knows the account by is kept beside the reference, so a class
+        # still says what it wanted if the account is removed later.
+        delegation.zoom_account = zoom.account_id if zoom else None
         delegation.updated_at = now
         audit(session, admin, "delegation.set",
               {"coordinator": user.username, "enabled": body.enabled, "zoomAccount": delegation.zoom_account}, now)
         view = {"coordinatorId": str(user.id), "enabled": delegation.enabled,
                 "lmsAccountId": str(chosen_id) if chosen_id else None,
+                "zoomAccountId": str(zoom_id) if zoom_id else None,
                 "zoomAccount": delegation.zoom_account, "updatedAt": now}
     return _no_store(view)
 
@@ -261,6 +308,22 @@ async def coordinator_accounts(user_id: str, request: Request) -> JSONResponse:
         "accounts": [_account_view(a) for a in accounts],
         "inUse": _account_view(chosen) if chosen else None,
         "canKeepPasswords": getattr(request.app.state, "secret_box", None) is not None,
+    })
+
+
+@router.get("/api/v1/admin/users/{user_id}/zoom-accounts")
+async def coordinator_zoom_accounts(user_id: str, request: Request) -> JSONResponse:
+    """The Zoom accounts that coordinator's own app keeps here, each with the link its classes open."""
+    async with request.app.state.sessionmaker() as session:
+        user = await _coordinator(session, user_id)
+        accounts = (await _zoom_accounts(session, [user.id])).get(user.id, [])
+        delegation = await session.get(RunDelegation, user.id)
+    chosen = _chosen_zoom(accounts, delegation.zoom_account_id if delegation else None,
+                          delegation.zoom_account if delegation else None)
+    return _no_store({
+        "coordinatorId": str(user.id),
+        "accounts": [zoom_view(a) for a in accounts],
+        "inUse": zoom_view(chosen) if chosen else None,
     })
 
 
@@ -376,6 +439,7 @@ async def run_plan(
             user.id: user for user in (await session.execute(select(User).where(User.id.in_(ids)))).scalars()
         } if ids else {}
         accounts = await _lms_accounts(session, ids)
+        zooms = await _zoom_accounts(session, ids)
 
     people = []
     for user_id in ids:
@@ -384,12 +448,15 @@ async def run_plan(
             continue
         delegation = delegations.get(user_id)
         chosen = _chosen_account(accounts.get(user_id, []), delegation.lms_account_id if delegation else None)
+        zoom = _chosen_zoom(zooms.get(user_id, []), delegation.zoom_account_id if delegation else None,
+                            delegation.zoom_account if delegation else None)
         people.append({
             "coordinatorId": str(user_id),
             "displayName": user.display_name,
             "username": user.username,
             "enabled": bool(delegation and delegation.enabled),
-            "zoomAccount": delegation.zoom_account if delegation else None,
+            "zoomAccount": zoom.account_id if zoom else (delegation.zoom_account if delegation else None),
+            "zoomAccounts": [zoom_view(a) for a in zooms.get(user_id, [])],
             "lmsAccount": _account_view(chosen) if chosen else None,
         })
     classes = [_plan_view(plan, (delegations.get(plan.coordinator_id).zoom_account
@@ -407,6 +474,18 @@ async def import_plan(body: ImportBody, request: Request, admin: CurrentUser = D
     now = request.app.state.clock()
     async with request.app.state.sessionmaker() as session, session.begin():
         user = await _coordinator(session, body.coordinatorId)
+        # That coordinator's own Zoom accounts. One is usually kept per group, carrying the link its
+        # classes open, so a class the LMS lists needs nothing typed in: the link and the account
+        # that opens it are already theirs. A group with no account of its own falls back to the one
+        # the delegation names.
+        delegation = await session.get(RunDelegation, user.id)
+        their_zooms = (await _zoom_accounts(session, [user.id])).get(user.id, [])
+        default_zoom = _chosen_zoom(their_zooms, delegation.zoom_account_id if delegation else None,
+                                    delegation.zoom_account if delegation else None)
+        zoom_for: dict[str, ZoomAccount] = {}
+        for account in their_zooms:
+            for key in {(account.group_name or "").lower(), account.account_id.lower()} - {""}:
+                zoom_for.setdefault(key, account)
         existing = {
             (plan.group_name.lower(), plan.session_date, plan.start_time or ""): plan
             for plan in (await session.execute(
@@ -429,13 +508,15 @@ async def import_plan(body: ImportBody, request: Request, admin: CurrentUser = D
             url = _meeting_url(item.meetingUrl)
             key = (group.lower(), item.date, start or "")
             plan = existing.get(key)
+            theirs = zoom_for.get(group.lower()) or default_zoom
             if plan is None:
                 plan = ClassPlan(
                     id=uuid.uuid4(), coordinator_id=user.id, group_name=group, session_date=item.date,
                     start_time=start, source=body.source, status="planned", created_at=now,
-                    meeting_url=url or known_link.get(group.lower()),
-                    zoom_account=(item.zoomAccount or "").strip() or known_zoom.get(group.lower()),
-                    preferred_engine=item.preferredEngine,
+                    meeting_url=url or known_link.get(group.lower()) or (theirs.default_meeting_url if theirs else None),
+                    zoom_account=(item.zoomAccount or "").strip() or known_zoom.get(group.lower())
+                                 or (theirs.account_id if theirs else None),
+                    preferred_engine=item.preferredEngine or (theirs.preferred_engine if theirs else None),
                 )
                 session.add(plan)
                 existing[key] = plan
@@ -443,8 +524,12 @@ async def import_plan(body: ImportBody, request: Request, admin: CurrentUser = D
             else:
                 if url:
                     plan.meeting_url = url
+                elif not plan.meeting_url and theirs is not None:
+                    plan.meeting_url = theirs.default_meeting_url
                 if item.zoomAccount:
                     plan.zoom_account = item.zoomAccount.strip() or None
+                elif not plan.zoom_account and theirs is not None:
+                    plan.zoom_account = theirs.account_id
                 if item.preferredEngine:
                     plan.preferred_engine = item.preferredEngine
                 updated += 1

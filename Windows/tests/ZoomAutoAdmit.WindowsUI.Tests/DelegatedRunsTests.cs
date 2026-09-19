@@ -78,10 +78,16 @@ public sealed class DelegatedRunsTests : IDisposable
         }
     }
 
-    private static CentralDelegation Person(string id, string name, string email, string[] groups, string? zoom, bool enabled = true) =>
+    /// <summary>A coordinator with their own groups, LMS sign-in and Zoom account (with its link).</summary>
+    private static CentralDelegation Person(string id, string name, string email, string[] groups, string? zoom,
+        bool enabled = true, string? zoomEmail = null) =>
         new(id, name.ToLowerInvariant(), name, "active", enabled,
             [.. groups.Select(g => new CentralGroupRef(g, g, null, false))],
-            new CentralLmsAccount($"a-{id}", name, email, "coordinator", true), null, zoom,
+            new CentralLmsAccount($"a-{id}", name, email, "coordinator", true), null,
+            zoom == null ? null : $"z-{zoom}", zoom,
+            zoom == null ? [] : [new CentralZoomAccount($"z-{zoom}", zoom, zoom,
+                zoomEmail ?? $"{name.ToLowerInvariant()}@zoom.example.com", zoom,
+                "https://zoom.us/j/91473108490", null, true)],
             new CentralDelegationClasses(0, 0, 0, 0), null);
 
     private static CentralClassPlan Class(string coordinator, string group, DateOnly day, TimeOnly start,
@@ -198,7 +204,8 @@ public sealed class DelegatedRunsTests : IDisposable
     {
         var api = new FakeCentral();
         api.Delegations.Add(new CentralDelegation("u-mona", "mona", "Mona", "active", true,
-            [new CentralGroupRef("CAI5_AIS4_S7", "CAI5_AIS4_S7", null, false)], null, null, "CAI5_AIS4_S7", null, null));
+            [new CentralGroupRef("CAI5_AIS4_S7", "CAI5_AIS4_S7", null, false)], null, null,
+            null, "CAI5_AIS4_S7", [], null, null));
 
         var report = await Runs(api, new UiService("CAI5_AIS4_S7")).SyncAsync();
 
@@ -221,6 +228,41 @@ public sealed class DelegatedRunsTests : IDisposable
         Assert.Equal(1, report.Coordinators);
         Assert.Equal("Sami", Assert.Single(service.Schedules).Coordinator);
         Assert.Contains(report.Problems, p => p.StartsWith("Mona:"));
+    }
+
+    [Fact]
+    public async Task TheirZoomAccountIsFoundHereByTheEmailItSignsInWithEvenUnderAnotherName()
+    {
+        var api = new FakeCentral();
+        api.Delegations.Add(Person("u-mona", "Mona", Email("mona"), ["CAI5_AIS4_S7"], "CAI5_AIS4_S7",
+            zoomEmail: "mona.teaches@zoom.example.com"));
+        api.Plan.Add(Class("u-mona", "CAI5_AIS4_S7", Today, new TimeOnly(19, 0), zoom: "CAI5_AIS4_S7"));
+        // On this PC her Zoom account was added under a different name, but the same sign-in.
+        var service = new UiService();
+        service.Add("mona-s7", "mona.teaches@zoom.example.com");
+
+        var report = await Runs(api, service).SyncAsync();
+
+        Assert.Empty(report.Problems);
+        Assert.Equal("mona-s7", Assert.Single(service.Schedules).AccountId);
+    }
+
+    [Fact]
+    public async Task AZoomAccountNeitherNamedNorSignedInHereIsReportedWithBoth()
+    {
+        var api = new FakeCentral();
+        api.Delegations.Add(Person("u-mona", "Mona", Email("mona"), ["CAI5_AIS4_S7"], "CAI5_AIS4_S7",
+            zoomEmail: "mona.teaches@zoom.example.com"));
+        api.Plan.Add(Class("u-mona", "CAI5_AIS4_S7", Today, new TimeOnly(19, 0), zoom: "CAI5_AIS4_S7"));
+        var service = new UiService();
+        service.Add("somebody-else", "else@zoom.example.com");
+
+        var report = await Runs(api, service).SyncAsync();
+
+        Assert.Empty(service.Schedules);
+        var problem = Assert.Single(report.Problems);
+        Assert.Contains("CAI5_AIS4_S7", problem);
+        Assert.Contains("mona.teaches@zoom.example.com", problem);
     }
 
     // ------------------------------------------------------------------ turning somebody off
@@ -343,14 +385,25 @@ public sealed class DelegatedRunsTests : IDisposable
 
     // ------------------------------------------------------------------ the fake app
 
-    private sealed class UiService(params string[] accounts) : IWindowsUiService
+    private sealed class UiService : IWindowsUiService
     {
+        private readonly List<WindowsMeetingAccountMetadata> _accounts = [];
+
+        public UiService(params string[] accounts)
+        {
+            foreach (var account in accounts) Add(account, null);
+        }
+
+        /// <summary>A Zoom account on this PC, optionally with the e-mail it signs in to Zoom with.</summary>
+        public void Add(string accountId, string? zoomEmail) =>
+            _accounts.Add(new WindowsMeetingAccountMetadata(accountId, accountId, "") { ZoomEmail = zoomEmail });
+
         public List<MeetingSchedule> Schedules { get; } = [];
         public event Action<UiActionStatus>? StatusChanged { add { } remove { } }
         public event Action<LiveMeeting>? MeetingBecameLive { add { } remove { } }
         public UiActionStatus CurrentStatus => new("Test", "Ready", "", false, DateTimeOffset.Now);
         public Task<IReadOnlyList<WindowsMeetingAccountMetadata>> GetAccountsAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<WindowsMeetingAccountMetadata>>([.. accounts.Select(a => new WindowsMeetingAccountMetadata(a, a, ""))]);
+            Task.FromResult<IReadOnlyList<WindowsMeetingAccountMetadata>>([.. _accounts]);
         public Task<IReadOnlyList<MeetingSchedule>> GetSchedulesAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<MeetingSchedule>>(Schedules.ToArray());
         public Task SaveScheduleAsync(MeetingSchedule schedule, CancellationToken cancellationToken = default)

@@ -15,7 +15,7 @@ recording API are unchanged.
 | Recordings | Edit, attach to the LMS, move to any group | Edit and attach within their groups; move a recording only between their own groups |
 | Agents page | Yes | No (the backend answers 403) |
 | Users page | Approve/reject registrations, create coordinators, assign groups, disable/enable, set a new password | No |
-| Run classes page | Turn a coordinator on so the admin's PC opens and finishes their classes under their own Zoom and LMS accounts; fill in each group's Zoom link; choose what a class opens with, or skip it | No |
+| Run classes page | Turn a coordinator on so the admin's PC opens and finishes their classes under their own Zoom and LMS accounts (both picked from what that coordinator's own app saved); fill in a link only where they have no Zoom account for the group; choose what a class opens with, or skip it | No |
 | Groups page | All groups, their coordinators; add, label, archive | "My groups" |
 | Attendance, Students | Every group's sessions and rosters | Their groups' sessions and rosters, with the same tools |
 
@@ -195,7 +195,7 @@ meanwhile leaves it as it was.
 | `POST /api/v1/admin/groups` | `{name, displayName?}` → `201`. |
 | `PATCH /api/v1/admin/groups/{id}` | `{displayName?, archived?}`. |
 | `GET /api/v1/admin/delegations` | Every coordinator with their groups, their LMS sign-ins (never a password), whether this PC runs their classes, and how many of those still need a Zoom link. |
-| `PUT /api/v1/admin/delegations/{coordinatorId}` | `{enabled, lmsAccountId?, zoomAccount?}`: run their classes, or stop. |
+| `PUT /api/v1/admin/delegations/{coordinatorId}` | `{enabled, lmsAccountId?, zoomAccountId?}`: run their classes, or stop, under one of their own accounts. |
 | `GET /api/v1/admin/run-plan?from=&to=&coordinator=` | The classes to run. `coordinator` may be repeated, which is how the page narrows to a few people. |
 | `PATCH /api/v1/admin/run-plan/{id}` | `{meetingUrl?, zoomAccount?, preferredEngine?, status?, applyToGroup?}`. `applyToGroup` writes the link to every class of that group that has not happened yet. |
 

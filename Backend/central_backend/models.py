@@ -415,6 +415,36 @@ class LmsAccount(Base):
     )
 
 
+class ZoomAccount(Base):
+    """A Zoom account a user opens classes with, kept against their dashboard account.
+
+    No password: the Zoom sign-in itself lives in the Zoom app's saved accounts or in a browser
+    profile on the PC, and this table never asks for it. What is kept is which account (the id the
+    PC knows it by), its e-mail, the group it hosts and the link its classes open - so another PC
+    running that person's classes knows which account to open them with, and with what link,
+    instead of somebody typing it in twice.
+    """
+
+    __tablename__ = "zoom_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+    zoom_email: Mapped[str | None] = mapped_column(String(320))
+    group_name: Mapped[str | None] = mapped_column(String(100))
+    default_meeting_url: Mapped[str | None] = mapped_column(Text)
+    preferred_engine: Mapped[str | None] = mapped_column(String(8))
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("preferred_engine IS NULL OR preferred_engine IN ('desktop', 'web')", name="ck_zoom_accounts_engine"),
+        Index("uq_zoom_accounts_user_account", "user_id", text("lower(account_id)"), unique=True),
+    )
+
+
 RUN_PLAN_STATUSES = ("planned", "skipped", "opened", "done", "failed")
 RUN_PLAN_SOURCES = ("lms", "manual")
 RUN_ENGINES = ("desktop", "web")
@@ -437,6 +467,12 @@ class RunDelegation(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     lms_account_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("lms_accounts.id", ondelete="SET NULL")
+    )
+    # Which of their Zoom accounts opens their classes, and the name the running PC knows it by.
+    # The name is kept beside the reference so a class still says what it wanted when the account
+    # is removed.
+    zoom_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("zoom_accounts.id", ondelete="SET NULL")
     )
     zoom_account: Mapped[str | None] = mapped_column(String(100))
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
@@ -543,6 +579,7 @@ __all__ = [
     "RUN_PLAN_STATUSES",
     "ClassPlan",
     "RunDelegation",
+    "ZoomAccount",
     "AppSetting",
     "DeviceActivity",
     "LmsAccount",

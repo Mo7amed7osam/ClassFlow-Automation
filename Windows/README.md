@@ -43,7 +43,12 @@ presses Run Session, writes the attendance and puts the recording link on it. Th
 a global setting: `ClassLmsAccounts` maps each group to the account its classes go up under, and
 every LMS step asks it first, falling back to the account in use for a group nobody claimed. Two
 coordinators' classes therefore run at the same time, each on its own browser profile and its own
-lock. See [DELEGATED-CLASSES.md](../DELEGATED-CLASSES.md).
+lock.
+
+Each copy of the app also sends its Zoom accounts to the signed-in person's dashboard account -
+which group each one hosts and the link its classes open, never a Zoom sign-in - so the PC that runs
+their classes picks the account and the link from what they already have. See
+[DELEGATED-CLASSES.md](../DELEGATED-CLASSES.md).
 
 ## Auto-Admit Engines
 

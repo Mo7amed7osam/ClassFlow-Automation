@@ -435,6 +435,10 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
   const [share, setShare] = useState<{ title: string; text: string } | null>(null)
   const copy = (text: string) => run('copy', 'copyText', { text })
   const namesOf = (ids: string[]) => groups.filter((g) => ids.includes(g.id)).map((g) => g.name)
+  // Whose classes this PC runs. A server that predates this sends nothing, and the tick box is
+  // simply not there.
+  const runs = state.runs ?? null
+  const runOf = (id: string) => runs?.find((r) => r.id === id)
 
   return (
     <section className="panel coordinators">
@@ -443,6 +447,9 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
         <button type="button" className="btn primary small" onClick={() => setAdding(!adding)}>{adding ? 'Close' : '+ Add coordinator'}</button>
       </header>
       <p className="muted">A coordinator signs in to this Dashboard (in their copy of the app) and sees only the groups ticked here — in the app and on the server. <b>Copy sign-in</b> puts everything they need in one message.</p>
+      {runs && (
+        <p className="muted">Tick <b>Run their classes</b> and this PC opens and finishes them under that coordinator&apos;s own Zoom and LMS accounts — their timetable is read from their own LMS, and the link comes from their own Zoom account. Two coordinators&apos; classes at the same time do not get in each other&apos;s way.</p>
+      )}
 
       {share && (
         <div className="share-box" role="status">
@@ -503,6 +510,9 @@ function Coordinators({ state, working, run }: { state: DashState; working: stri
                 <span key={g.id} className="group-chip" title={g.name} style={{ '--hue': groupHue(g.name) } as React.CSSProperties}>{shortGroup(g.name)}</span>
               )) : <span className="muted">no groups yet</span>}
             </div>
+            {u.role !== 'admin' && runs && (
+              <RunTheirClasses row={runOf(u.id)} user={u} working={working !== null} run={run} />
+            )}
             {u.role !== 'admin' && (
               <div className="user-actions">
                 {editing === u.id ? (
@@ -571,6 +581,54 @@ function GroupPicker({ groups, value, onChange }: { groups: { id: string; name: 
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/**
+ * Whether this PC runs one coordinator's classes, and which of their own Zoom accounts opens them.
+ *
+ * Everything else a class needs is already theirs: the timetable comes from their LMS session list
+ * and the meeting link from the Zoom account chosen here, both read with their own accounts. So the
+ * whole decision is one tick box, and the only choice beside it is which of their Zoom accounts -
+ * and only when they have more than one.
+ */
+function RunTheirClasses({ row, user, working, run }: {
+  row: DashState['runs'] extends (infer R)[] | null | undefined ? R | undefined : never
+  user: { id: string; displayName: string; status: string }
+  working: boolean
+  run: Run
+}) {
+  const on = row?.enabled ?? false
+  const accounts = row?.zoomAccounts ?? []
+  const disabled = working || user.status === 'disabled'
+  return (
+    <div className={`runs-cell${on ? ' on' : ''}`}>
+      <label className="runs-tick" title="This PC opens and finishes their classes, under their own accounts">
+        <input
+          type="checkbox"
+          checked={on}
+          disabled={disabled}
+          onChange={(e) => run('run', 'setRun', { id: user.id, run: e.target.checked, zoomAccountId: row?.zoomAccountId ?? accounts[0]?.id ?? '' })}
+        />
+        <span>Run their classes</span>
+      </label>
+      {on && accounts.length > 1 && (
+        <select
+          className="runs-account"
+          value={row?.zoomAccountId ?? ''}
+          disabled={disabled}
+          aria-label={`Zoom account that opens ${user.displayName}'s classes`}
+          onChange={(e) => run('run', 'setRun', { id: user.id, run: true, zoomAccountId: e.target.value })}
+        >
+          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.link ? '' : ' (no link)'}</option>)}
+        </select>
+      )}
+      {on && accounts.length === 1 && <span className="runs-note">{accounts[0].name}</span>}
+      {on && accounts.length === 0 && <span className="runs-warn">no Zoom account of theirs yet</span>}
+      {on && !row?.lms && <span className="runs-warn">no LMS sign-in of theirs</span>}
+      {on && row?.needsLink ? <span className="runs-warn">{row.needsLink} class(es) need a link</span> : null}
+      {on && row?.ready && !row.needsLink && row.planned > 0 ? <span className="runs-note">{row.planned} class(es) ready</span> : null}
     </div>
   )
 }

@@ -14,16 +14,29 @@ another never wait for each other and never go up under the wrong person.
 |---|---|
 | When it is | That coordinator's own LMS session list, read signed in as them |
 | Which group | The same list |
-| Which Zoom account opens it | Chosen by the admin, per coordinator (their Zoom account, on the admin's PC) |
-| The meeting link | Filled in once per group — the LMS does not publish it |
+| Which Zoom account opens it | One of that coordinator's own Zoom accounts, which their copy of the app keeps on the server |
+| The meeting link | That Zoom account's link for the group — nobody types it twice |
 | Which LMS account finishes it | That coordinator's, kept encrypted on the server |
 | What it opens with | Auto, the Zoom app, or the browser — per class, or set for every class shown |
 
+## Both accounts are already theirs
+
+Every copy of the app sends what that PC has to the signed-in person's dashboard account:
+
+* their **LMS sign-in**, with the password AES-GCM encrypted on the server;
+* their **Zoom accounts** — which group each one hosts and the link its classes open. No Zoom
+  sign-in is sent: that stays in the Zoom app's saved accounts or a browser profile on their PC.
+
+So a coordinator sets their own app up once, and the admin picks from what they actually have
+instead of typing a link or an account name a second time.
+
 ## Turning a coordinator on
 
-**Dashboard → Run classes** (admin only). Each coordinator is listed with their groups and the LMS
-sign-in their classes would go up under. **Run their classes** turns them on; **Stop running theirs**
-takes every class of theirs off the admin's PC again at the next pass.
+Either **Dashboard → Run classes**, or the tick box on the app's own **Coordinators & groups** page
+(`Run their classes`). Both write the same thing on the server. Each coordinator is listed with
+their groups, the LMS sign-in their classes go up under, and which of their Zoom accounts opens
+them; where they have more than one, the admin chooses. **Stop running theirs** takes every class of
+theirs off the admin's PC again at the next pass.
 
 The admin's PC then, every five minutes:
 
@@ -39,17 +52,19 @@ The admin's PC then, every five minutes:
 Reading the timetables happens for up to three coordinators at once, each in their own browser
 profile, so one person's read never waits behind another's.
 
-## The one thing a person still fills in
+## When something is still owed
 
-The LMS lists when a class is, not how to join it. A class with no Zoom link is shown as needing one
-rather than failing at its time, both on the Dashboard (`4 still need a Zoom link`) and in the app's
-status line. Filling it in on one class and pressing **Whole group** writes it to every class of that
-group that has not happened yet, and the next timetable read carries it on to new classes of the same
-group. The same is true of the Zoom account that opens the meeting: set once per coordinator, it is
-inherited by each of their classes.
+The LMS lists when a class is, not how to join it, so the link comes from that coordinator's Zoom
+account for the group. A class whose group has no Zoom account of theirs is the only one that still
+asks: it is shown as needing a link rather than failing at its time, both on the Dashboard
+(`4 still need a Zoom link`) and in the app's status line. Filling it in on one class and pressing
+**Whole group** writes it to every class of that group that has not happened yet, and a link put on
+by hand is never overwritten when the timetable is read again.
 
-If the named Zoom account is not on the admin's PC, the class says so by name
-(`this PC has no Zoom account called "CAI5_AIS4_S7"`) instead of failing quietly.
+The admin's PC then has to have that Zoom account signed in. It is found by the name the coordinator
+knows it by, or - when it was added here under another name - by the e-mail it signs in to Zoom with.
+Failing both, the class says so by name (`this PC has no Zoom account called "CAI5_AIS4_S7" and none
+signed in as mona@zoom.example.com`) instead of failing quietly.
 
 ## Two at once
 
@@ -103,22 +118,35 @@ Turning a coordinator off closes it again immediately.
 | `GET /api/v1/admin/delegations` | every coordinator, their groups and sign-ins, and who is turned on |
 | `PUT /api/v1/admin/delegations/{id}` | run theirs (or stop), with the LMS and Zoom account |
 | `GET /api/v1/admin/users/{id}/lms-accounts` | that coordinator's sign-ins — never a password |
+| `GET /api/v1/admin/users/{id}/zoom-accounts` | that coordinator's Zoom accounts and their links |
 | `POST /api/v1/admin/users/{id}/lms-accounts/{aid}/secret` | the sign-in itself, audited |
 | `GET /api/v1/admin/run-plan?from=&to=&coordinator=` | the classes to run; `coordinator` may repeat |
 | `POST /api/v1/admin/run-plan/import` | what a coordinator's LMS listed |
 | `PATCH /api/v1/admin/run-plan/{id}` | its link, Zoom account, what it opens with, or skipping it |
 
-Migration `0009_delegated_runs` adds `run_delegations` and `class_plans`; nothing existing is
-touched. Re-importing a timetable never duplicates a class and never overwrites what a person put on
+Each person's own app keeps its accounts with `GET`/`PUT /api/v1/me/zoom-accounts` (the whole set:
+an account removed on their PC stops being offered here) and the existing `/api/v1/me/lms-accounts`.
+
+Migrations `0009_delegated_runs` (`run_delegations`, `class_plans`) and `0010_zoom_accounts`
+(`zoom_accounts`, and the delegation column naming one); nothing existing is touched. Re-importing a timetable never duplicates a class and never overwrites what a person put on
 it — the LMS knows the timetable, and this side knows how a class opens.
 
 ## What was checked, and what needs a real machine
 
-Run by the tests: the server's whole contract (25 cases), the app's side of it — whose account each
-class uses, two coordinators side by side, a missing link or Zoom account, turning somebody off,
-reading each timetable with its own sign-in (13 cases) — the group-to-account file (8 cases), the
-Schedules page's coordinator column, filter and engine choice (7 cases), and the Dashboard page (11
-cases).
+Run by the tests: the server's whole contract (33 cases), the app's side of it — whose account each
+class uses, two coordinators side by side, finding their Zoom account here by name or by the e-mail
+it signs in with, a missing link or account, turning somebody off, reading each timetable with its
+own sign-in (15 cases) — the group-to-account file (8 cases), sending this PC's Zoom accounts up
+(7 cases), the Schedules page's coordinator column, filter and engine choice (7 cases), and the
+Dashboard page (13 cases).
+
+Run as a dry run against a real server: a throwaway PostgreSQL migrated from nothing to `0010`, the
+backend under uvicorn on `127.0.0.1`, and the whole journey over real HTTP — both coordinators'
+accounts saved by their own sign-ins, the admin ticking them, a sign-in refused before and handed
+over after, both timetables imported, every class arriving with its link and its account already
+filled in, two 19:00 classes with different pairs, the filter, skipping, a hand-written link
+surviving a re-read, turning somebody off closing their sign-in again, and a coordinator refused all
+of it. Nothing touched Zoom or the LMS.
 
 Not run by the tests, because they need a real desktop with Zoom and the LMS signed in: the LMS
 session list actually being read for a second coordinator, two meetings genuinely live at once on one

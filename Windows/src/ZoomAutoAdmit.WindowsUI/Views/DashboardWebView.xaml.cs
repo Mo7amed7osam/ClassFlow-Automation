@@ -156,6 +156,10 @@ public partial class DashboardWebView : UserControl
                 await central.RefreshAsync();
                 return Done($"{username} was created. Send them the app and this sign-in; they sign in on this Dashboard.");
             }
+            // Whose classes this PC runs besides its own: the tick box on the Coordinators page.
+            case "setRun":
+                return Done(await central.SetDelegationAsync(Text(p, "id"), Flag(p, "run"),
+                    string.IsNullOrWhiteSpace(Text(p, "zoomAccountId")) ? null : Text(p, "zoomAccountId")));
             case "setGroups":
                 await central.Api.SetUserGroupsAsync(Text(p, "id"), List(p, "groupIds"));
                 await central.RefreshAsync();
@@ -278,6 +282,16 @@ public partial class DashboardWebView : UserControl
                 lastLogin = u.LastLoginAt?.LocalDateTime.ToString("ddd dd MMM HH:mm"), groups = u.Groups.Select(g => new { id = g.Id, name = g.Name }),
             }) : null,
             groups = central.IsAdmin ? central.Groups.Where(g => !g.Archived).Select(g => new { id = g.Id, name = g.Group }) : null,
+            // Whose classes this PC runs, and the accounts each of them would be run under. The
+            // Zoom accounts are the coordinator's own, kept by their copy of the app.
+            runs = central.IsAdmin ? central.Delegations.Select(d => new
+            {
+                id = d.CoordinatorId, enabled = d.Enabled, ready = d.IsReady,
+                lms = d.LmsAccount?.Email,
+                zoomAccountId = d.Zoom?.Id, zoomAccount = d.Zoom?.AccountId,
+                zoomAccounts = d.ZoomAccountList.Select(a => new { id = a.Id, name = a.AccountId, group = a.Group, link = a.MeetingUrl != null }),
+                planned = d.Classes?.Planned ?? 0, needsLink = d.Classes?.NeedsLink ?? 0,
+            }) : null,
             allGroups = central.IsAdmin ? central.Groups.Select(g => new
             {
                 id = g.Id, name = g.Group, displayName = g.DisplayName, archived = g.Archived, recordings = g.Recordings, lastSession = g.LastSessionDate,
