@@ -13,6 +13,9 @@ export function Dashboard() {
   const [state, setState] = useState<DashState | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [working, setWorking] = useState<string | null>(null)
+  // Signing in as one more account without signing this one out first: the same form, opened from
+  // the account menu. One PC often holds the admin and a coordinator.
+  const [adding, setAdding] = useState(false)
 
   const toast = useCallback((ok: boolean, text: string) => {
     const id = Date.now() + Math.random()
@@ -82,7 +85,7 @@ export function Dashboard() {
               {working === 'check-update' ? <span className="spinner light" /> : <Icon name="refresh" size={14} />} Check for updates
             </button>
           )}
-          {me && <SwitchMenu state={state} busy={working !== null} run={run} />}
+          {me && <SwitchMenu state={state} busy={working !== null} run={run} onAdd={() => setAdding(true)} />}
         </div>
       </section>
 
@@ -104,8 +107,15 @@ export function Dashboard() {
         <div className="banner ok"><Icon name="check" size={18} /><div><b>{state.update.status}</b></div></div>
       )}
 
-      {!me && <SignIn busy={working !== null} known={state.known} onSignIn={(u, p, r, s) => run('in', 'signIn', { username: u, password: p, remember: r, savePassword: s })}
-        onContinue={(u) => run('switch', 'switchAccount', { username: u })} onForget={(u) => run('forget', 'forgetAccount', { username: u })} />}
+      {(!me || adding) && <SignIn busy={working !== null} known={state.known} adding={Boolean(me) && adding}
+        onCancel={() => setAdding(false)}
+        onSignIn={async (u, p, r, s) => {
+          const done = await run('in', 'signIn', { username: u, password: p, remember: r, savePassword: s }) as Result | undefined
+          // Only leave the form when it worked; a wrong password keeps it open to try again.
+          if (done?.ok !== false) setAdding(false)
+        }}
+        onContinue={async (u) => { await run('switch', 'switchAccount', { username: u }); setAdding(false) }}
+        onForget={(u) => run('forget', 'forgetAccount', { username: u })} />}
 
       {!coordinatorsView && (
         <div className="dash-grid">
@@ -191,17 +201,29 @@ function KnownAccounts({ known, busy, onContinue, onPick, onForget }: { known: K
   )
 }
 
-function SignIn({ busy, known, onSignIn, onContinue, onForget }: { busy: boolean; known: Known[]; onSignIn: (u: string, p: string, r: boolean, s: boolean) => void; onContinue: (u: string) => void; onForget: (u: string) => void }) {
+function SignIn({ busy, known, onSignIn, onContinue, onForget, adding = false, onCancel }: {
+  busy: boolean
+  known: Known[]
+  onSignIn: (u: string, p: string, r: boolean, s: boolean) => void
+  onContinue: (u: string) => void
+  onForget: (u: string) => void
+  /** Opened from the account menu while somebody is already signed in. */
+  adding?: boolean
+  onCancel?: () => void
+}) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(true)
   const [savePassword, setSavePassword] = useState(true)
-  const [other, setOther] = useState(known.length === 0)
+  const [other, setOther] = useState(known.length === 0 || adding)
   return (
     <form className="panel signin" onSubmit={(e) => { e.preventDefault(); onSignIn(username, password, remember, savePassword); setPassword('') }}>
       <div className="signin-copy">
-        <h2><Icon name="user" size={18} /> {known.length ? 'Choose an account' : 'Sign in'}</h2>
-        <p className="muted">{known.length ? 'Accounts that signed in on this PC. Continue needs no password: their session, or their password saved on this PC, signs them in.' : 'Admin or coordinator. New coordinators get their sign-in from the admin.'}</p>
+        <h2><Icon name="user" size={18} /> {adding ? 'Add an account' : known.length ? 'Choose an account' : 'Sign in'}</h2>
+        <p className="muted">{adding
+          ? 'Sign in as somebody else without signing this account out. Both stay on this PC, and the account menu switches between them.'
+          : known.length ? 'Accounts that signed in on this PC. Continue needs no password: their session, or their password saved on this PC, signs them in.'
+          : 'Admin or coordinator. New coordinators get their sign-in from the admin.'}</p>
         <KnownAccounts known={known} busy={busy} onContinue={onContinue} onForget={onForget}
           onPick={(u) => { setUsername(u); setOther(true); setTimeout(() => document.getElementById('dash-password')?.focus(), 0) }} />
         {known.length > 0 && !other && <button type="button" className="btn ghost small" onClick={() => setOther(true)}>+ Use another account</button>}
@@ -211,14 +233,17 @@ function SignIn({ busy, known, onSignIn, onContinue, onForget }: { busy: boolean
       <label className="field"><span>Password</span><input id="dash-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
       <label className="check"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Keep me signed in for 120 days</label>
       <label className="check"><input type="checkbox" checked={savePassword} onChange={(e) => setSavePassword(e.target.checked)} /> Remember the password on this PC (Windows Credential Manager), so Continue works after the 120 days too</label>
-      <button type="submit" className="btn primary" disabled={busy || !username || !password}>{busy ? <span className="spinner light" /> : <Icon name="bolt" size={14} />} Sign in</button>
+      <div className="row-actions">
+        <button type="submit" className="btn primary" disabled={busy || !username || !password}>{busy ? <span className="spinner light" /> : <Icon name="bolt" size={14} />} Sign in</button>
+        {adding && onCancel && <button type="button" className="btn ghost" onClick={onCancel}>Cancel</button>}
+      </div>
       </>}
     </form>
   )
 }
 
-/** The signed-in account, and the others kept on this PC to switch to. */
-function SwitchMenu({ state, busy, run }: { state: DashState; busy: boolean; run: Run }) {
+/** The signed-in account, the others kept on this PC to switch to, and a way to add one more. */
+function SwitchMenu({ state, busy, run, onAdd }: { state: DashState; busy: boolean; run: Run; onAdd: () => void }) {
   const [open, setOpen] = useState(false)
   const others = state.known.filter((k) => k.username !== state.me?.username)
   return (
@@ -231,6 +256,9 @@ function SwitchMenu({ state, busy, run }: { state: DashState; busy: boolean; run
               <Icon name="user" size={15} /> Switch to {k.displayName} ({k.role}){k.hasSession || k.hasPassword ? '' : ' — needs password'}
             </button>
           ))}
+          <button type="button" role="menuitem" onClick={() => { setOpen(false); onAdd() }}>
+            <Icon name="bolt" size={15} /> Add account
+          </button>
           <button type="button" role="menuitem" onClick={() => { setOpen(false); run('out', 'signOut') }}><Icon name="close" size={15} /> Sign out</button>
         </div>
       )}

@@ -46,8 +46,11 @@ coordinators' classes therefore run at the same time, each on its own browser pr
 lock.
 
 Each copy of the app also sends its Zoom accounts to the signed-in person's dashboard account -
-which group each one hosts and the link its classes open, never a Zoom sign-in - so the PC that runs
-their classes picks the account and the link from what they already have. See
+which group each one hosts, the link its classes open, and the Zoom password when that PC has one
+saved (encrypted there, exactly as an LMS one is). A browser profile nobody signed in joins as a
+guest, and a guest cannot admit anybody, so carrying the password is what lets a new PC - or the
+second profile of two classes at once - sign itself in. `ZoomWebSignIn` does that the way a person
+would, and stops for a person when Zoom asks for a captcha or a one-time code. See
 [DELEGATED-CLASSES.md](../DELEGATED-CLASSES.md).
 
 ## Auto-Admit Engines
@@ -59,10 +62,16 @@ The continuous command supports two isolated engines through the shared
 - `--engine web`: Playwright DOM automation in an application-managed persistent
   Chromium context.
 
-The web engine does not automate login, read or store plaintext credentials,
-take screenshots, run OCR, use desktop mouse coordinates, use SendInput, or
-attach to an external browser. It launches Playwright Chromium itself and uses exact accessible button
-names inside the Zoom meeting DOM.
+The web engine takes no screenshots, runs no OCR, uses no desktop mouse coordinates, uses no
+SendInput, and attaches to no external browser. It launches Playwright Chromium itself and uses
+exact accessible button names inside the Zoom meeting DOM.
+
+It does sign a profile in when it has to. A profile nobody has signed in joins as a guest, and a
+guest cannot admit anybody, so `ZoomWebSignIn` enters the account's own saved Zoom email and
+password on zoom.us - the same thing a person does once by hand. The password is never in the app's
+JSON or its log: it lives in Windows Credential Manager, and on the server AES-GCM encrypted for the
+PC that runs that person's classes. Zoom asking for a captcha or a one-time code needs a person;
+that is said plainly and the visible sign-in is left to them.
 
 Profiles are stored outside the repository under the current operating-system
 user's local application-data directory:

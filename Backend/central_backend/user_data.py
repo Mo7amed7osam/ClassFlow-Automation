@@ -7,10 +7,10 @@ Their LMS accounts (the sign-ins their app uses on the LMS), signed-in user only
     DELETE /api/v1/me/lms-accounts/{id}            remove it
     POST   /api/v1/me/lms-accounts/{id}/secret     its email and password, for their own app
 
-The Zoom accounts their app opens classes with (no password: the Zoom sign-in stays in the Zoom
-app's saved accounts or a browser profile on that PC):
-    GET    /api/v1/me/zoom-accounts                list
+The Zoom accounts their app opens classes with, the password encrypted like an LMS one:
+    GET    /api/v1/me/zoom-accounts                list (never a password)
     PUT    /api/v1/me/zoom-accounts                the whole set, as that PC has them
+    POST   /api/v1/me/zoom-accounts/{id}/secret    its email and password, for their own app
 
 The classes their own PC opens by itself, so a new PC finds them instead of being set up again:
     GET    /api/v1/me/schedules                    what was last kept
@@ -216,6 +216,7 @@ def zoom_view(account: ZoomAccount) -> dict[str, Any]:
     return {"id": str(account.id), "accountId": account.account_id, "label": account.label,
             "zoomEmail": account.zoom_email, "group": account.group_name,
             "meetingUrl": account.default_meeting_url, "preferredEngine": account.preferred_engine,
+            "hasPassword": bool(account.password_encrypted),
             "active": account.active, "updatedAt": account.updated_at}
 
 
@@ -227,6 +228,8 @@ class ZoomAccountBody(BaseModel):
     group: str | None = Field(default=None, max_length=100)
     meetingUrl: str | None = None
     preferredEngine: str | None = Field(default=None, pattern="^(desktop|web)$")
+    """The Zoom password. Absent leaves whatever is kept as it is; "" removes it."""
+    password: str | None = Field(default=None, max_length=500)
     active: bool = False
 
 
@@ -265,6 +268,10 @@ async def save_zoom_accounts(body: ZoomAccountsBody, request: Request, user: Cur
 
     An account is matched by the id its PC knows it by, so re-sending the same list changes nothing
     and an account removed there stops being offered to whoever runs their classes.
+
+    A password is only ever written when one is sent: a PC that has the account but not its
+    password leaves the kept one alone, rather than wiping what another PC saved. Sending "" is how
+    a password is deliberately removed.
     """
     now = request.app.state.clock()
     seen: set[str] = set()
@@ -292,6 +299,8 @@ async def save_zoom_accounts(body: ZoomAccountsBody, request: Request, user: Cur
             account.group_name = (item.group or "").strip() or None
             account.default_meeting_url = _meeting_url(item.meetingUrl)
             account.preferred_engine = item.preferredEngine
+            if item.password is not None:
+                account.password_encrypted = _box(request).seal(item.password, f"{user.id}:{account.id}") if item.password else None
             account.active = item.active
             account.updated_at = now
         for key, account in existing.items():
@@ -301,6 +310,25 @@ async def save_zoom_accounts(body: ZoomAccountsBody, request: Request, user: Cur
         kept = [zoom_view(account) for key, account in sorted(existing.items()) if key in seen]
     emit("zoom_accounts.saved", username=user.username, count=len(kept))
     return _no_store({"accounts": kept})
+
+
+@router.post("/api/v1/me/zoom-accounts/{account_id}/secret", dependencies=[Depends(require_dashboard_header)])
+async def zoom_secret(account_id: uuid.UUID, request: Request, user: CurrentUser = Depends(current_user)) -> JSONResponse:
+    """The Zoom sign-in itself, for this person's own app to sign a browser profile in. Never logged."""
+    box = _box(request)
+    async with request.app.state.sessionmaker() as session:
+        account = await session.get(ZoomAccount, account_id)
+        if account is None or account.user_id != user.id:
+            raise ApiError(404, "Not found")
+        if not account.password_encrypted:
+            raise ApiError(404, "No password", "No Zoom password is saved for that account.")
+        try:
+            password = box.open(account.password_encrypted, f"{user.id}:{account.id}")
+        except Exception as exc:  # noqa: BLE001 - a changed key or a damaged row; the value never goes to the log
+            raise ApiError(409, "Cannot decrypt", "Save this account's Zoom password again.") from exc
+    emit("zoom_account.secret_read", username=user.username, account=str(account_id))
+    return _no_store({"id": str(account_id), "accountId": account.account_id,
+                      "email": account.zoom_email, "password": password})
 
 
 # ----------------------------------------------------------------------------- their own classes

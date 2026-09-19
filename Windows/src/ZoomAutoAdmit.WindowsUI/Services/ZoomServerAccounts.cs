@@ -1,4 +1,5 @@
 using ZoomAutoAdmit.Core.Formatting;
+using ZoomAutoAdmit.WebAutomation;
 using ZoomAutoAdmit.WindowsRuntime;
 
 namespace ZoomAutoAdmit.WindowsUI.Services;
@@ -8,6 +9,7 @@ public interface IZoomAccountsApi
 {
     bool IsSignedIn { get; }
     Task<List<CentralZoomAccount>> ZoomAccountsAsync(CancellationToken token);
+    Task<CentralZoomSecret> ZoomSecretAsync(string accountId, CancellationToken token);
     Task<System.Text.Json.JsonElement> SaveZoomAccountsAsync(IEnumerable<object> accounts, CancellationToken token);
 }
 
@@ -25,18 +27,30 @@ public interface IZoomAccountsApi
 /// all it takes to find the accounts and the links there. Neither direction can quietly throw the
 /// other away, because a PC only takes when it has nothing of its own to lose.
 ///
-/// No Zoom sign-in is sent either way. The password (or the saved Desktop account, or the browser
-/// profile) stays on the PC exactly as it was; what travels is the account's name, its e-mail, its
-/// group and its link. Signing in to Zoom itself is still done once on each PC.
+/// The Zoom password travels too, encrypted on the server exactly as an LMS one is, and only for
+/// an account whose PC has one saved. It is what lets a browser profile nobody signed in - a new
+/// PC, or the second profile of two classes at once - sign itself in; a profile that cannot only
+/// joins as a guest, and a guest cannot admit anybody. Zoom asking for a captcha or a one-time
+/// code still needs a person, and the app says so rather than pretending otherwise.
 /// </summary>
-public sealed class ZoomServerAccounts(IZoomAccountsApi api, Action<string>? log = null)
+public sealed class ZoomServerAccounts(
+    IZoomAccountsApi api,
+    Action<string>? log = null,
+    IZoomProfileCredentialStore? credentials = null,
+    Func<string?, ZoomSignInCredential?>? readLocal = null)
 {
+    private readonly IZoomProfileCredentialStore _credentials = credentials ?? new ZoomProfileCredentialStore();
+    /// <summary>The Zoom sign-in this PC has for an account, by its credential reference.</summary>
+    private readonly Func<string?, ZoomSignInCredential?> _readLocal = readLocal ?? ZoomSignInCredential.Read;
+
     /// <summary>How often the accounts are sent again without anything having changed.</summary>
     public static readonly TimeSpan SendEvery = TimeSpan.FromHours(1);
 
     private readonly Action<string> _log = log ?? (message => ConsoleLogger.Info($"[ACCOUNTS] {message}"));
     private DateTimeOffset _lastSent = DateTimeOffset.MinValue;
     private string _lastShape = "";
+    /// <summary>How many of the last restore still need a person to sign their profile in to Zoom.</summary>
+    private int _restoredWithoutPassword;
 
     /// <summary>
     /// Sends what this PC has, when it is worth sending: signed in, and either the accounts have
@@ -62,6 +76,9 @@ public sealed class ZoomServerAccounts(IZoomAccountsApi api, Action<string>? log
                     AccountEnginePreference.Web => "web",
                     _ => (string?)null,
                 },
+                // Only ever sent when this PC actually has one; an account without it leaves the
+                // kept password alone rather than wiping what another PC saved.
+                password = _readLocal(account.CredentialReference)?.Password,
                 active = false,
             })
             .ToArray();
@@ -96,9 +113,11 @@ public sealed class ZoomServerAccounts(IZoomAccountsApi api, Action<string>? log
             // Take, and stop there. Sending an empty list afterwards would delete on the server the
             // very accounts this PC has just failed to take. What is here goes up on the next pass.
             int restored = await RestoreAsync(save, token);
-            return restored > 0
-                ? $"{restored} Zoom account(s) came from your dashboard account; sign in to Zoom as each of them once."
-                : null;
+            if (restored == 0) return null;
+            // Only an account whose password did not come too still needs a person.
+            return _restoredWithoutPassword > 0
+                ? $"{restored} Zoom account(s) came from your dashboard account; sign in to Zoom as {_restoredWithoutPassword} of them once."
+                : $"{restored} Zoom account(s) came from your dashboard account, with their Zoom sign-in.";
         }
         int? sent = await PushAsync(here, token);
         return sent is > 0 ? $"{sent} Zoom account(s) of this PC were saved to your dashboard account." : null;
@@ -106,22 +125,44 @@ public sealed class ZoomServerAccounts(IZoomAccountsApi api, Action<string>? log
 
     /// <summary>
     /// The accounts the server kept for this person, written here. Only ever called for a PC with
-    /// none of its own, so nothing can be overwritten. The Zoom sign-in is not among them: each
-    /// account still has to be signed in to Zoom on this PC once.
+    /// none of its own, so nothing can be overwritten. An account whose password was kept has it
+    /// written into this PC's own credential store too, so a fresh browser profile signs itself in
+    /// instead of joining as a guest.
     /// </summary>
     public async Task<int> RestoreAsync(Func<WindowsMeetingAccountMetadata, CancellationToken, Task> save, CancellationToken token = default)
     {
         var theirs = await api.ZoomAccountsAsync(token);
-        int restored = 0;
+        int restored = 0, withPassword = 0;
         foreach (var account in theirs)
         {
             if (string.IsNullOrWhiteSpace(account.AccountId)) continue;
             try
             {
+                // The Zoom sign-in, when one was kept: into Windows Credential Manager, the same
+                // place the Accounts page puts it, so everything that reads it finds it as usual.
+                string reference = "";
+                if (account.HasPassword)
+                {
+                    try
+                    {
+                        var secret = await api.ZoomSecretAsync(account.Id, token);
+                        if (!string.IsNullOrEmpty(secret.Password))
+                        {
+                            _credentials.Save(account.AccountId, secret.Email, secret.Password);
+                            reference = _credentials.ReferenceFor(account.AccountId);
+                            withPassword++;
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // The account is still worth having; its profile just needs signing in once.
+                        _log($"{account.AccountId}: its Zoom password could not be read back ({ex.Message}).");
+                    }
+                }
                 await save(new WindowsMeetingAccountMetadata(
                     account.AccountId,
                     string.IsNullOrWhiteSpace(account.Label) ? account.AccountId : account.Label,
-                    "",
+                    reference,
                     account.PreferredEngine switch
                     {
                         "desktop" => AccountEnginePreference.Desktop,
@@ -140,11 +181,13 @@ public sealed class ZoomServerAccounts(IZoomAccountsApi api, Action<string>? log
                 _log($"{account.AccountId} could not be added here: {ex.Message}");
             }
         }
+        _restoredWithoutPassword = restored - withPassword;
         if (restored > 0)
         {
             // What is here now is what the server has, so there is nothing to send back.
             _lastShape = "";
-            _log($"{restored} Zoom account(s) came from your dashboard account.");
+            _log($"{restored} Zoom account(s) came from your dashboard account" +
+                 $"{(withPassword > 0 ? $", {withPassword} with their Zoom sign-in" : "")}.");
         }
         return restored;
     }

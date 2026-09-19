@@ -59,6 +59,7 @@ public sealed class DelegatedRuns
     private readonly IWindowsUiService _service;
     private readonly LmsAccountDirectory _directory;
     private readonly ClassLmsAccounts _classes;
+    private readonly IZoomProfileCredentialStore _zoomCredentials;
     private readonly ReadTimetable _readTimetable;
     private readonly Action<string> _log;
     private readonly Func<DateOnly> _today;
@@ -70,6 +71,7 @@ public sealed class DelegatedRuns
         IWindowsUiService service,
         LmsAccountDirectory? directory = null,
         ClassLmsAccounts? classes = null,
+        IZoomProfileCredentialStore? zoomCredentials = null,
         ReadTimetable? readTimetable = null,
         Action<string>? log = null,
         Func<DateOnly>? today = null)
@@ -78,6 +80,7 @@ public sealed class DelegatedRuns
         _service = service;
         _directory = directory ?? new LmsAccountDirectory();
         _classes = classes ?? new ClassLmsAccounts();
+        _zoomCredentials = zoomCredentials ?? new ZoomProfileCredentialStore();
         // The list only: opening every session would take minutes and nothing here needs what is
         // inside one. Each class reads its own session when its time comes.
         _readTimetable = readTimetable ?? ((signIn, from, to, groups, token) =>
@@ -135,6 +138,7 @@ public sealed class DelegatedRuns
                     secret.Email, secret.Password, secret.Role, makeActive: false);
                 _classes.SetGroups(delegation.CoordinatorId, delegation.DisplayName, entry.Id,
                     delegation.GroupList.Where(g => !g.Archived).Select(g => g.Name), delegation.ZoomAccount);
+                await KeepTheirZoomSignInAsync(delegation, problems, token);
                 ready.Add((delegation, entry));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -150,6 +154,33 @@ public sealed class DelegatedRuns
         _log(report.Summary);
         foreach (var problem in problems) _log(problem);
         return report;
+    }
+
+    /// <summary>
+    /// That coordinator's Zoom sign-in, kept on this PC under the name their account is known by.
+    ///
+    /// A browser profile nobody has signed in joins as a guest, and a guest cannot admit anybody -
+    /// so without this, the first class of theirs opened on a fresh profile stops and waits for a
+    /// person. An account they kept no password for is not a failure: the profile may well be
+    /// signed in here already, and the class says so if it is not.
+    /// </summary>
+    private async Task KeepTheirZoomSignInAsync(CentralDelegation delegation, List<string> problems, CancellationToken token)
+    {
+        foreach (var account in delegation.ZoomAccountList.Where(a => a.HasPassword))
+        {
+            try
+            {
+                var secret = await _api.CoordinatorZoomSecretAsync(delegation.CoordinatorId, account.Id, token);
+                if (string.IsNullOrEmpty(secret.Password)) continue;
+                _zoomCredentials.Save(account.AccountId, secret.Email, secret.Password);
+                _log($"{delegation.DisplayName}: their Zoom sign-in for {account.AccountId} is kept on this PC.");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                problems.Add($"{delegation.DisplayName}: their Zoom sign-in for {account.AccountId} could not be read " +
+                             $"({CentralApiException.Explain(ex)}); a fresh browser profile will wait for a person.");
+            }
+        }
     }
 
     // ------------------------------------------------------------------ their own timetables

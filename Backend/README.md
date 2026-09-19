@@ -332,6 +332,7 @@ Admin only; every write also needs `X-Dashboard-Request: 1`, and answers are nev
 | `PUT /api/v1/admin/delegations/{coordinatorId}` | `{enabled, lmsAccountId?, zoomAccountId?}`. Both accounts must be that coordinator's own (404 otherwise); a coordinator whose account is not active is refused (409) |
 | `GET /api/v1/admin/users/{userId}/lms-accounts` | that coordinator's sign-ins and which is in use |
 | `GET /api/v1/admin/users/{userId}/zoom-accounts` | that coordinator's Zoom accounts: which group each hosts and the link its classes open |
+| `POST /api/v1/admin/users/{userId}/zoom-accounts/{accountId}/secret` | that Zoom sign-in, so a browser profile on the running PC signs itself in as them. Same rules as the LMS one: only for a coordinator who is turned on, and written to `admin_audit_log` as `zoom_secret.read` |
 | `POST /api/v1/admin/users/{userId}/lms-accounts/{accountId}/secret` | the email and password, for the running PC to sign in to the LMS as them. Only for a coordinator who is turned on (403 otherwise); written to `admin_audit_log` as `lms_secret.read`; never logged, never cached |
 | `GET /api/v1/admin/run-plan?from=&to=&coordinator=&status=` | the classes to run. `coordinator` may be given more than once; `onlyDelegated=false` also shows a coordinator who has been turned off |
 | `POST /api/v1/admin/run-plan/import` | `{coordinatorId, classes:[{group, date, startTime?, title?, meetingUrl?, zoomAccount?, preferredEngine?}]}` — what that coordinator's own LMS session list showed, read by the app signed in as them. At most 500 rows |
@@ -342,7 +343,8 @@ what its PC has against the signed-in person's account:
 
 | Endpoint | What it keeps |
 |---|---|
-| `GET`/`PUT /api/v1/me/zoom-accounts` | their Zoom accounts, as a whole set: which account, its e-mail, the group it hosts and the link its classes open. Never a Zoom sign-in — that stays in the Zoom app or a browser profile on the PC |
+| `GET`/`PUT /api/v1/me/zoom-accounts` | their Zoom accounts, as a whole set: which account, its e-mail, the group it hosts, the link its classes open, and the Zoom password (AES-GCM encrypted, sent only when that PC has one; absent leaves the kept one alone, `""` removes it). A listing shows `hasPassword`, never the password |
+| `POST /api/v1/me/zoom-accounts/{id}/secret` | that Zoom sign-in, for their own app to sign a browser profile in |
 | `GET`/`PUT /api/v1/me/schedules` | the classes their own PC opens by itself, as the app writes them. The server keeps them and gives them back; it never reads what is in one |
 | `POST /api/v1/me/lms-accounts` … | their LMS sign-in, the password AES-GCM encrypted |
 

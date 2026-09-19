@@ -9,6 +9,7 @@ same time each go up under the right name.
     PUT    /api/v1/admin/delegations/{coordinator_id}    run theirs (or stop); their LMS and Zoom account
     GET    /api/v1/admin/users/{user_id}/lms-accounts    a coordinator's LMS sign-ins (never a password)
     GET    /api/v1/admin/users/{user_id}/zoom-accounts   a coordinator's Zoom accounts and their links
+    POST   /api/v1/admin/users/{user_id}/zoom-accounts/{account_id}/secret    that Zoom sign-in
     POST   /api/v1/admin/users/{user_id}/lms-accounts/{account_id}/secret     the sign-in itself
     GET    /api/v1/admin/run-plan?from=&to=&coordinator=  the classes to run, one line each
     POST   /api/v1/admin/run-plan/import                 what the LMS listed for one coordinator
@@ -325,6 +326,40 @@ async def coordinator_zoom_accounts(user_id: str, request: Request) -> JSONRespo
         "accounts": [zoom_view(a) for a in accounts],
         "inUse": zoom_view(chosen) if chosen else None,
     })
+
+
+@router.post("/api/v1/admin/users/{user_id}/zoom-accounts/{account_id}/secret", dependencies=writes)
+async def coordinator_zoom_secret(
+    user_id: str, account_id: str, request: Request, admin: CurrentUser = Depends(current_user)
+) -> JSONResponse:
+    """That coordinator's Zoom sign-in, so a browser profile on the running PC can sign itself in.
+
+    A profile nobody signed in joins as a guest, and a guest cannot admit anybody - so without this
+    a class of theirs opened on a fresh profile stops and waits for a person. Same rules as their
+    LMS sign-in: only for a coordinator who is turned on, and written down every time.
+    """
+    box = _box(request)
+    now = request.app.state.clock()
+    async with request.app.state.sessionmaker() as session, session.begin():
+        user = await _coordinator(session, user_id)
+        delegation = await session.get(RunDelegation, user.id)
+        if delegation is None or not delegation.enabled:
+            raise ApiError(403, "Forbidden", "Turn this coordinator on before running their classes.")
+        account = await session.get(ZoomAccount, parse_id(account_id))
+        if account is None or account.user_id != user.id:
+            raise ApiError(404, "Not found")
+        if not account.password_encrypted:
+            raise ApiError(404, "No password", "That coordinator has no Zoom password saved for this account.")
+        try:
+            password = box.open(account.password_encrypted, f"{account.user_id}:{account.id}")
+        except Exception as exc:  # noqa: BLE001 - a changed key or a damaged row; never goes to the log
+            raise ApiError(409, "Cannot decrypt", "That coordinator has to save their Zoom password again.") from exc
+        audit(session, admin, "zoom_secret.read",
+              {"coordinator": user.username, "account": account.account_id, "email": account.zoom_email}, now)
+        body = {"id": str(account.id), "coordinatorId": str(user.id), "accountId": account.account_id,
+                "email": account.zoom_email, "password": password}
+    emit("zoom_account.secret_read_for_run", username=admin.username, coordinator=user.username, account=account.account_id)
+    return _no_store(body)
 
 
 @router.post("/api/v1/admin/users/{user_id}/lms-accounts/{account_id}/secret", dependencies=writes)

@@ -51,7 +51,11 @@ public sealed record CentralDelegationClasses(int Planned, int Done, int Skipped
 /// which account, the group it hosts and the link its classes open.
 /// </summary>
 public sealed record CentralZoomAccount(string Id, string AccountId, string Label, string? ZoomEmail, string? Group,
-    string? MeetingUrl, string? PreferredEngine, bool Active);
+    string? MeetingUrl, string? PreferredEngine, bool Active)
+{
+    /// <summary>A Zoom password is kept for it, so a profile nobody signed in can sign itself in.</summary>
+    public bool HasPassword { get; init; }
+}
 
 /// <summary>A coordinator, and whether this PC runs their classes under their own two accounts.</summary>
 public sealed record CentralDelegation(string CoordinatorId, string Username, string DisplayName, string Status, bool Enabled,
@@ -102,6 +106,7 @@ public interface IDelegatedRunsApi
     bool IsAdmin { get; }
     Task<CentralDelegationList> DelegationsAsync(CancellationToken token);
     Task<CentralCoordinatorSecret> CoordinatorLmsSecretAsync(string coordinatorId, string accountId, CancellationToken token);
+    Task<CentralZoomSecret> CoordinatorZoomSecretAsync(string coordinatorId, string accountId, CancellationToken token);
     Task<JsonElement> ImportRunPlanAsync(string coordinatorId, IEnumerable<object> classes, CancellationToken token);
     Task<CentralRunPlan> RunPlanAsync(DateOnly from, DateOnly to, IEnumerable<string>? coordinators, CancellationToken token);
 }
@@ -501,6 +506,17 @@ public sealed class CentralApiClient : IDelegatedRunsApi, IZoomAccountsApi, ISch
         SendAsync<JsonElement>(HttpMethod.Put, "api/v1/me/schedules",
             new { schedules = schedules.ToArray(), deviceName }, token);
 
+    /// <summary>The Zoom sign-in kept for one of this person's own accounts. Never logged.</summary>
+    public Task<CentralZoomSecret> ZoomSecretAsync(string accountId, CancellationToken token = default) =>
+        SendAsync<CentralZoomSecret>(HttpMethod.Post, $"api/v1/me/zoom-accounts/{accountId}/secret", null, token);
+
+    /// <summary>
+    /// A coordinator's Zoom sign-in, so a browser profile on this PC can sign itself in as them. A
+    /// profile nobody signed in joins as a guest, and a guest cannot admit anybody. Never logged.
+    /// </summary>
+    public Task<CentralZoomSecret> CoordinatorZoomSecretAsync(string coordinatorId, string accountId, CancellationToken token = default) =>
+        SendAsync<CentralZoomSecret>(HttpMethod.Post, $"api/v1/admin/users/{coordinatorId}/zoom-accounts/{accountId}/secret", null, token);
+
     /// <summary>A coordinator's Zoom accounts, for the admin's app that runs their classes.</summary>
     public async Task<List<CentralZoomAccount>> CoordinatorZoomAccountsAsync(string coordinatorId, CancellationToken token = default) =>
         (await GetAsync<JsonElement>($"api/v1/admin/users/{coordinatorId}/zoom-accounts", token))
@@ -646,6 +662,16 @@ public sealed class CentralKnownAccounts(string? path = null)
     }
 }
 public sealed record CentralLmsAccounts(List<CentralLmsAccount> Accounts, bool CanKeepPasswords);
+// Never a plain record ToString in a log: the password is in it.
+public sealed class CentralZoomSecret
+{
+    public string Id { get; init; } = "";
+    public string AccountId { get; init; } = "";
+    public string Email { get; init; } = "";
+    public string Password { get; init; } = "";
+    public override string ToString() => "A Zoom sign-in (secret redacted)";
+}
+
 // Never a plain record ToString in a log: the password is in it.
 public sealed class CentralCoordinatorSecret
 {

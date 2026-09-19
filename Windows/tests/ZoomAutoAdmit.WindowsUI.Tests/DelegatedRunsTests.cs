@@ -64,6 +64,18 @@ public sealed class DelegatedRunsTests : IDisposable
             });
         }
 
+        /// <summary>The Zoom sign-in each coordinator kept, by their account's id.</summary>
+        public Dictionary<string, (string Email, string Password)> ZoomSecrets { get; } = [];
+        public List<string> ZoomSecretsRead { get; } = [];
+
+        public Task<CentralZoomSecret> CoordinatorZoomSecretAsync(string coordinatorId, string accountId, CancellationToken token)
+        {
+            ZoomSecretsRead.Add(accountId);
+            if (!ZoomSecrets.TryGetValue(accountId, out var found))
+                throw new CentralApiException(System.Net.HttpStatusCode.NotFound, "No Zoom password is saved.");
+            return Task.FromResult(new CentralZoomSecret { Id = accountId, AccountId = accountId, Email = found.Email, Password = found.Password });
+        }
+
         public Task<JsonElement> ImportRunPlanAsync(string coordinatorId, IEnumerable<object> classes, CancellationToken token)
         {
             Imported.Add((coordinatorId, classes.Count()));
@@ -80,14 +92,14 @@ public sealed class DelegatedRunsTests : IDisposable
 
     /// <summary>A coordinator with their own groups, LMS sign-in and Zoom account (with its link).</summary>
     private static CentralDelegation Person(string id, string name, string email, string[] groups, string? zoom,
-        bool enabled = true, string? zoomEmail = null) =>
+        bool enabled = true, string? zoomEmail = null, bool hasZoomPassword = false) =>
         new(id, name.ToLowerInvariant(), name, "active", enabled,
             [.. groups.Select(g => new CentralGroupRef(g, g, null, false))],
             new CentralLmsAccount($"a-{id}", name, email, "coordinator", true), null,
             zoom == null ? null : $"z-{zoom}", zoom,
             zoom == null ? [] : [new CentralZoomAccount($"z-{zoom}", zoom, zoom,
                 zoomEmail ?? $"{name.ToLowerInvariant()}@zoom.example.com", zoom,
-                "https://zoom.us/j/91473108490", null, true)],
+                "https://zoom.us/j/91473108490", null, true) { HasPassword = hasZoomPassword }],
             new CentralDelegationClasses(0, 0, 0, 0), null);
 
     private static CentralClassPlan Class(string coordinator, string group, DateOnly day, TimeOnly start,
@@ -95,8 +107,19 @@ public sealed class DelegatedRunsTests : IDisposable
         new(Guid.NewGuid().ToString(), coordinator, group, day.ToString("yyyy-MM-dd"), start.ToString("HH\\:mm"), "36 • Technical",
             url, zoom, engine, "lms", status, null, url == null, null, DateTimeOffset.Now);
 
+    private sealed class FakeZoomCredentials : IZoomProfileCredentialStore
+    {
+        public Dictionary<string, (string Email, string Password)> Saved { get; } = [];
+        public bool HasPassword(string accountId) => Saved.ContainsKey(accountId);
+        public string ReferenceFor(string accountId) => $"wincred:ZoomAutoAdmit/ZoomProfile/{accountId}";
+        public void Save(string accountId, string email, string password) => Saved[accountId] = (email, password);
+        public void Delete(string accountId) => Saved.Remove(accountId);
+    }
+
+    private FakeZoomCredentials _zoom = new();
+
     private DelegatedRuns Runs(FakeCentral api, UiService service, ReadTimetable? timetable = null) =>
-        new(api, service, _directory, _classes,
+        new(api, service, _directory, _classes, _zoom,
             // Unless a test is about the timetable itself, each coordinator's LMS lists their own
             // one class today - what the plan in these tests already holds.
             readTimetable: timetable ?? ((_, _, _, groups, _) => Task.FromResult<IReadOnlyList<LmsSessionRunner.LmsSessionInfo>>(
@@ -263,6 +286,49 @@ public sealed class DelegatedRunsTests : IDisposable
         var problem = Assert.Single(report.Problems);
         Assert.Contains("CAI5_AIS4_S7", problem);
         Assert.Contains("mona.teaches@zoom.example.com", problem);
+    }
+
+    [Fact]
+    public async Task TheirZoomSignInIsKeptHereSoAFreshProfileDoesNotWaitForAPerson()
+    {
+        var api = new FakeCentral();
+        api.Delegations.Add(Person("u-mona", "Mona", Email("mona"), ["CAI5_AIS4_S7"], "CAI5_AIS4_S7", hasZoomPassword: true));
+        api.ZoomSecrets["z-CAI5_AIS4_S7"] = ("mona@zoom.example.com", "made-up Zoom password for Mona");
+        api.Plan.Add(Class("u-mona", "CAI5_AIS4_S7", Today, new TimeOnly(19, 0), zoom: "CAI5_AIS4_S7"));
+
+        var report = await Runs(api, new UiService("CAI5_AIS4_S7")).SyncAsync();
+
+        Assert.Empty(report.Problems);
+        Assert.Equal(("mona@zoom.example.com", "made-up Zoom password for Mona"), _zoom.Saved["CAI5_AIS4_S7"]);
+    }
+
+    [Fact]
+    public async Task ACoordinatorWhoKeptNoZoomPasswordIsNotAskedForOne()
+    {
+        var api = new FakeCentral();
+        api.Delegations.Add(Person("u-mona", "Mona", Email("mona"), ["CAI5_AIS4_S7"], "CAI5_AIS4_S7"));
+        api.Plan.Add(Class("u-mona", "CAI5_AIS4_S7", Today, new TimeOnly(19, 0), zoom: "CAI5_AIS4_S7"));
+
+        var report = await Runs(api, new UiService("CAI5_AIS4_S7")).SyncAsync();
+
+        Assert.Empty(report.Problems);           // their profile here may well be signed in already
+        Assert.Empty(api.ZoomSecretsRead);
+        Assert.Empty(_zoom.Saved);
+    }
+
+    [Fact]
+    public async Task AZoomSignInTheServerRefusesIsSaidPlainlyAndCostsNothingElse()
+    {
+        var api = new FakeCentral();
+        api.Delegations.Add(Person("u-mona", "Mona", Email("mona"), ["CAI5_AIS4_S7"], "CAI5_AIS4_S7", hasZoomPassword: true));
+        // Nothing in ZoomSecrets: the server refuses it.
+        api.Plan.Add(Class("u-mona", "CAI5_AIS4_S7", Today, new TimeOnly(19, 0), zoom: "CAI5_AIS4_S7"));
+        var service = new UiService("CAI5_AIS4_S7");
+
+        var report = await Runs(api, service).SyncAsync();
+
+        Assert.Single(service.Schedules);        // the class still runs
+        Assert.Contains(report.Problems, p => p.Contains("Zoom sign-in") && p.Contains("wait for a person"));
     }
 
     // ------------------------------------------------------------------ turning somebody off

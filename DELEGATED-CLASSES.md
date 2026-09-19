@@ -24,8 +24,11 @@ another never wait for each other and never go up under the wrong person.
 Every copy of the app sends what that PC has to the signed-in person's dashboard account:
 
 * their **LMS sign-in**, with the password AES-GCM encrypted on the server;
-* their **Zoom accounts** — which group each one hosts and the link its classes open. No Zoom
-  sign-in is sent: that stays in the Zoom app's saved accounts or a browser profile on their PC.
+* their **Zoom accounts** — which group each one hosts, the link its classes open, and the Zoom
+  password when their PC has one saved, encrypted the same way. A browser profile nobody signed in
+  joins as a guest, and a guest cannot admit anybody, so without the password a class opened on a
+  fresh profile stops and waits for a person. With it, the profile signs itself in. Zoom asking for
+  a captcha or a one-time code still needs a person, and the app says so rather than pretending.
 
 So a coordinator sets their own app up once, and the admin picks from what they actually have
 instead of typing a link or an account name a second time.
@@ -73,8 +76,8 @@ or a replacement - is set up by signing in and nothing else:
 
 | Comes down by itself | Still done once on that PC |
 |---|---|
-| Their LMS sign-in (decrypted for their own app) | Signing in to **Zoom** itself, for each account |
-| Their Zoom accounts: the group each hosts, its e-mail, the link its classes open | The address of the server (there is nowhere to read it from yet) |
+| Their LMS sign-in (decrypted for their own app) | Signing in to **Zoom** by hand, only for an account whose password was never saved |
+| Their Zoom accounts: the group each hosts, its e-mail, the link its classes open, and the Zoom password when one was kept | The address of the server (there is nowhere to read it from yet) |
 | Their own classes, exactly as they were, registered so they open by themselves | Registering the PC as a device, if its attendance should reach the server |
 | The coordinators being run, their accounts and their timetables | |
 | A group's roster, read from the LMS the first time a class needs it | |
@@ -147,6 +150,7 @@ Turning a coordinator off closes it again immediately.
 | `PUT /api/v1/admin/delegations/{id}` | run theirs (or stop), with the LMS and Zoom account |
 | `GET /api/v1/admin/users/{id}/lms-accounts` | that coordinator's sign-ins — never a password |
 | `GET /api/v1/admin/users/{id}/zoom-accounts` | that coordinator's Zoom accounts and their links |
+| `POST /api/v1/admin/users/{id}/zoom-accounts/{aid}/secret` | that Zoom sign-in, audited |
 | `POST /api/v1/admin/users/{id}/lms-accounts/{aid}/secret` | the sign-in itself, audited |
 | `GET /api/v1/admin/run-plan?from=&to=&coordinator=` | the classes to run; `coordinator` may repeat |
 | `POST /api/v1/admin/run-plan/import` | what a coordinator's LMS listed |
@@ -159,8 +163,11 @@ The server never reads what is in a class - its days, its time and what it opens
 own shape, and modelling them twice would only let the two drift apart.
 
 Migrations `0009_delegated_runs` (`run_delegations`, `class_plans`), `0010_zoom_accounts`
-(`zoom_accounts`, and the delegation column naming one) and `0011_user_schedules`
-(`user_schedules`); nothing existing is touched. Re-importing a timetable never duplicates a class and never overwrites what a person put on
+(`zoom_accounts`, and the delegation column naming one), `0011_user_schedules` (`user_schedules`)
+and `0013_zoom_passwords` (`zoom_accounts.password_encrypted`); nothing existing is touched.
+
+A Zoom password is only written when one is sent, so a PC that has the account but not its password
+leaves the kept one alone instead of wiping what another PC saved; `""` removes it deliberately. Re-importing a timetable never duplicates a class and never overwrites what a person put on
 it — the LMS knows the timetable, and this side knows how a class opens.
 
 ## What was checked, and what needs a real machine

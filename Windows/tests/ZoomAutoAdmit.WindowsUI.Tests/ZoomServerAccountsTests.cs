@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ZoomAutoAdmit.WebAutomation;
 using ZoomAutoAdmit.WindowsRuntime;
 using ZoomAutoAdmit.WindowsUI.Services;
 using Xunit;
@@ -19,14 +20,34 @@ public sealed class ZoomServerAccountsTests
         /// <summary>What the server already holds for this person, for a PC that has none.</summary>
         public List<CentralZoomAccount> Kept { get; } = [];
 
+        /// <summary>The Zoom sign-in the server kept, by account id.</summary>
+        public Dictionary<string, (string Email, string Password)> Secrets { get; } = [];
+        public List<string> SecretsRead { get; } = [];
+
         public Task<List<CentralZoomAccount>> ZoomAccountsAsync(CancellationToken token) =>
             Task.FromResult(Kept.ToList());
+
+        public Task<CentralZoomSecret> ZoomSecretAsync(string accountId, CancellationToken token)
+        {
+            SecretsRead.Add(accountId);
+            if (!Secrets.TryGetValue(accountId, out var found)) throw new CentralApiException(System.Net.HttpStatusCode.NotFound, "No password");
+            return Task.FromResult(new CentralZoomSecret { Id = accountId, Email = found.Email, Password = found.Password });
+        }
 
         public Task<JsonElement> SaveZoomAccountsAsync(IEnumerable<object> accounts, CancellationToken token)
         {
             Sent.Add(JsonSerializer.Serialize(accounts));
             return Task.FromResult(JsonDocument.Parse("""{"accounts":[]}""").RootElement);
         }
+    }
+
+    private sealed class FakeCredentials : IZoomProfileCredentialStore
+    {
+        public Dictionary<string, (string Email, string Password)> Saved { get; } = [];
+        public bool HasPassword(string accountId) => Saved.ContainsKey(accountId);
+        public string ReferenceFor(string accountId) => $"wincred:ZoomAutoAdmit/ZoomProfile/{accountId}";
+        public void Save(string accountId, string email, string password) => Saved[accountId] = (email, password);
+        public void Delete(string accountId) => Saved.Remove(accountId);
     }
 
     private static WindowsMeetingAccountMetadata Account(string id, string? url = "https://zoom.us/j/91473108490",
@@ -106,19 +127,32 @@ public sealed class ZoomServerAccountsTests
     }
 
     [Fact]
-    public async Task NoZoomSignInIsEverPartOfIt()
+    public async Task WhereThisPcKeepsTheSignInIsItsOwnBusinessAndNeverGoesUp()
     {
         var api = new FakeApi();
-        // The credential reference is how this PC finds a saved sign-in; it is not one, and it has
-        // no business on the server either.
-        await new ZoomServerAccounts(api, _ => { }).PushAsync([
-            new WindowsMeetingAccountMetadata("CAI5_AIS4_S7", "S7", "ZoomAutoAdmit/Zoom/Secret")
+        // The credential reference says where on THIS PC the sign-in lives. The password itself
+        // travels; the place it is kept does not, because it means nothing anywhere else.
+        await new ZoomServerAccounts(api, _ => { }, new FakeCredentials(),
+            readLocal: _ => new ZoomSignInCredential("mona@zoom.example.com", "made-up Zoom password")).PushAsync([
+            new WindowsMeetingAccountMetadata("CAI5_AIS4_S7", "S7", "wincred:ZoomAutoAdmit/ZoomProfile/CAI5_AIS4_S7")
             { DefaultMeetingUrl = "https://zoom.us/j/91473108490", ZoomEmail = "mona@zoom.example.com" },
         ]);
 
         string sent = Assert.Single(api.Sent);
-        Assert.DoesNotContain("Secret", sent);
-        Assert.DoesNotContain("password", sent, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("wincred", sent);
+        Assert.DoesNotContain("ZoomProfile", sent);
+        Assert.Contains("made-up Zoom password", sent);
+    }
+
+    [Fact]
+    public async Task APcWithNoSignInForAnAccountSendsNoPasswordForIt()
+    {
+        var api = new FakeApi();
+        await new ZoomServerAccounts(api, _ => { }, new FakeCredentials(), readLocal: _ => null)
+            .PushAsync([Account("CAI5_AIS4_S7")]);
+
+        // null, not "": the server leaves whatever it has alone rather than clearing it.
+        Assert.Contains("\"password\":null", Assert.Single(api.Sent));
     }
 
     // ------------------------------------------------------------------ a PC that has none yet
@@ -195,5 +229,81 @@ public sealed class ZoomServerAccountsTests
 
         Assert.Equal(1, restored);
         Assert.Equal("GOOD", Assert.Single(here).AccountId);
+    }
+
+    // ------------------------------------------------------------------ the Zoom sign-in itself
+
+    [Fact]
+    public async Task TheZoomPasswordThisPcHasGoesUpWithItsAccount()
+    {
+        var api = new FakeApi();
+        var accounts = new ZoomServerAccounts(api, _ => { }, new FakeCredentials(),
+            readLocal: reference => reference == "wincred:S7" ? new ZoomSignInCredential("s7@zoom.example.com", "made-up Zoom password") : null);
+
+        await accounts.PushAsync([
+            new WindowsMeetingAccountMetadata("CAI5_AIS4_S7", "S7", "wincred:S7") { DefaultMeetingUrl = "https://zoom.us/j/1" },
+            new WindowsMeetingAccountMetadata("CAI5_AIS4_S8", "S8", "") { DefaultMeetingUrl = "https://zoom.us/j/2" },
+        ]);
+
+        string sent = Assert.Single(api.Sent);
+        Assert.Contains("\"password\":\"made-up Zoom password\"", sent);
+        // The account with no password here sends none, so the kept one is left alone.
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(sent, "\"password\":\""));
+    }
+
+    [Fact]
+    public async Task ANewPcTakesTheZoomSignInTooAndKeepsItWhereEverythingLooks()
+    {
+        var api = new FakeApi();
+        api.Kept.Add(new CentralZoomAccount("z1", "CAI5_AIS4_S7", "S7", "s7@zoom.example.com", "CAI5_AIS4_S7",
+            "https://zoom.us/j/1", null, true) { HasPassword = true });
+        api.Secrets["z1"] = ("s7@zoom.example.com", "made-up Zoom password");
+        var credentials = new FakeCredentials();
+        var here = new List<WindowsMeetingAccountMetadata>();
+
+        string? said = await new ZoomServerAccounts(api, _ => { }, credentials, _ => null)
+            .SyncAsync([], (a, _) => { here.Add(a); return Task.CompletedTask; });
+
+        Assert.Equal(("s7@zoom.example.com", "made-up Zoom password"), credentials.Saved["CAI5_AIS4_S7"]);
+        // The account points at it, so ZoomWebSignIn finds it exactly as if it had been typed here.
+        Assert.Equal("wincred:ZoomAutoAdmit/ZoomProfile/CAI5_AIS4_S7", Assert.Single(here).CredentialReference);
+        Assert.Contains("with their Zoom sign-in", said);
+        Assert.DoesNotContain("sign in to Zoom", said);
+    }
+
+    [Fact]
+    public async Task AnAccountWithNoKeptPasswordStillComesAndSaysWhoNeedsSigningIn()
+    {
+        var api = new FakeApi();
+        api.Kept.Add(new CentralZoomAccount("z1", "WITH", "With", null, null, null, null, true) { HasPassword = true });
+        api.Kept.Add(new CentralZoomAccount("z2", "WITHOUT", "Without", null, null, null, null, false));
+        api.Secrets["z1"] = ("with@zoom.example.com", "made-up Zoom password");
+        var credentials = new FakeCredentials();
+        var here = new List<WindowsMeetingAccountMetadata>();
+
+        string? said = await new ZoomServerAccounts(api, _ => { }, credentials, _ => null)
+            .SyncAsync([], (a, _) => { here.Add(a); return Task.CompletedTask; });
+
+        Assert.Equal(2, here.Count);
+        Assert.Single(credentials.Saved);
+        Assert.Contains("sign in to Zoom as 1 of them once", said);
+        Assert.Equal(["z1"], api.SecretsRead);          // only the one that has a password is asked for
+    }
+
+    [Fact]
+    public async Task APasswordTheServerWillNotGiveBackDoesNotCostTheAccount()
+    {
+        var api = new FakeApi();
+        api.Kept.Add(new CentralZoomAccount("z1", "CAI5_AIS4_S7", "S7", null, null, null, null, true) { HasPassword = true });
+        // No entry in Secrets: the server refuses it.
+        var credentials = new FakeCredentials();
+        var here = new List<WindowsMeetingAccountMetadata>();
+
+        await new ZoomServerAccounts(api, _ => { }, credentials, _ => null)
+            .SyncAsync([], (a, _) => { here.Add(a); return Task.CompletedTask; });
+
+        Assert.Single(here);                            // the account is still here
+        Assert.Empty(credentials.Saved);                // its profile just needs a person once
+        Assert.Equal("", here[0].CredentialReference);
     }
 }

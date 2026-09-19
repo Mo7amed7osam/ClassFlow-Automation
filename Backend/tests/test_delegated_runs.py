@@ -51,7 +51,8 @@ def coordinator(client: TestClient, username: str, *, groups: tuple[str, ...], l
         # classes open. Nobody types a link twice.
         kept = client.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": [
             {"accountId": group, "label": group, "group": group, "zoomEmail": f"{username}@zoom.example.com",
-             "meetingUrl": f"https://zoom.us/j/9147310849{n}", "active": n == 0}
+             "meetingUrl": f"https://zoom.us/j/9147310849{n}", "password": f"made-up Zoom password for {username}",
+             "active": n == 0}
             for n, group in enumerate(zoom)
         ]})
         assert kept.status_code == 200, kept.text
@@ -445,3 +446,86 @@ def test_a_meeting_link_that_is_not_one_is_refused_when_a_pc_sends_its_accounts(
     refused = dash.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": [
         {"accountId": "S7", "label": "S7", "meetingUrl": "zoom.us/j/1"}]})
     assert refused.status_code == 400
+
+
+# =========================================================================== their Zoom sign-in
+
+
+def zoom_secret(client: TestClient, coordinator_id: str, account_id: str):  # noqa: ANN201
+    return client.post(f"/api/v1/admin/users/{coordinator_id}/zoom-accounts/{account_id}/secret", headers=DASH)
+
+
+def test_a_delegated_coordinators_zoom_sign_in_is_given_to_the_pc_that_runs_them(dash, two):
+    mona, _ = two
+    turn_on(dash, mona, zoom="CAI5_AIS4_S7")
+    answer = zoom_secret(dash, mona, zoom_id(dash, mona, "CAI5_AIS4_S7"))
+
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["email"] == "mona@zoom.example.com"
+    assert answer.json()["password"] == "made-up Zoom password for mona"
+    assert answer.json()["accountId"] == "CAI5_AIS4_S7"
+    assert answer.headers["Cache-Control"] == "no-store"
+
+    written = run_sql(dash.app.state.settings.database_url,
+                      "SELECT username, details FROM admin_audit_log WHERE action = 'zoom_secret.read'")
+    assert len(written) == 1 and "mona" in written[0]["details"]
+    assert "made-up Zoom password" not in written[0]["details"]
+
+
+def test_a_coordinator_who_was_not_turned_on_keeps_their_zoom_password(dash, two):
+    mona, _ = two
+    assert zoom_secret(dash, mona, zoom_id(dash, mona, "CAI5_AIS4_S7")).status_code == 403
+
+
+def test_one_coordinators_zoom_sign_in_is_never_read_through_another(dash, two):
+    mona, sami = two
+    turn_on(dash, mona, zoom="CAI5_AIS4_S7")
+    assert zoom_secret(dash, mona, zoom_id(dash, sami, "CAI5_AIS4_S8")).status_code == 404
+
+
+def test_an_account_with_no_zoom_password_says_so_rather_than_failing(dash, two):
+    mona, _ = two
+    as_user(dash, "mona")
+    dash.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": [
+        {"accountId": "CAI5_AIS4_S7", "label": "S7", "group": "CAI5_AIS4_S7",
+         "meetingUrl": "https://zoom.us/j/91473108490", "password": "", "active": True}]})
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    turn_on(dash, mona, zoom="CAI5_AIS4_S7")
+
+    assert zoom_secret(dash, mona, zoom_id(dash, mona, "CAI5_AIS4_S7")).status_code == 404
+
+
+def test_the_zoom_password_is_never_in_a_listing_only_whether_there_is_one(dash, two):
+    mona, _ = two
+    listed = dash.get(f"/api/v1/admin/users/{mona}/zoom-accounts").json()
+    assert listed["accounts"][0]["hasPassword"] is True
+    assert "made-up Zoom password" not in str(listed)
+
+    delegations = dash.get("/api/v1/admin/delegations").json()
+    assert "made-up Zoom password" not in str(delegations)
+
+
+def test_a_pc_without_the_password_does_not_wipe_the_one_that_is_kept(dash, two):
+    """A second PC has the account but never had its Zoom password; it must leave it alone."""
+    mona, _ = two
+    as_user(dash, "mona")
+    dash.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": [
+        {"accountId": "CAI5_AIS4_S7", "label": "S7", "group": "CAI5_AIS4_S7",
+         "meetingUrl": "https://zoom.us/j/91473108490", "active": True}]})      # no password sent
+
+    assert dash.get("/api/v1/me/zoom-accounts").json()["accounts"][0]["hasPassword"] is True
+    secret = dash.post(f"/api/v1/me/zoom-accounts/{zoom_id_for_self(dash, 'CAI5_AIS4_S7')}/secret", headers=DASH)
+    assert secret.json()["password"] == "made-up Zoom password for mona"
+
+
+def test_a_person_reads_their_own_zoom_sign_in_but_not_anothers(dash, two):
+    mona, sami = two
+    theirs = zoom_id(dash, sami, "CAI5_AIS4_S8")
+    as_user(dash, "mona")
+    mine = zoom_id_for_self(dash, "CAI5_AIS4_S7")
+    assert dash.post(f"/api/v1/me/zoom-accounts/{mine}/secret", headers=DASH).json()["password"] == "made-up Zoom password for mona"
+    assert dash.post(f"/api/v1/me/zoom-accounts/{theirs}/secret", headers=DASH).status_code == 404
+
+
+def zoom_id_for_self(client: TestClient, account_id: str) -> str:
+    return next(a["id"] for a in client.get("/api/v1/me/zoom-accounts").json()["accounts"] if a["accountId"] == account_id)
