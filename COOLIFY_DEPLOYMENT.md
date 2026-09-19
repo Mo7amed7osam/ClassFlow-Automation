@@ -16,7 +16,7 @@ which is which will waste your afternoon.
 | PostgreSQL, volumes, migrations | Built. Migration chain `0001` → `0013`, single head |
 | Cloud worker: settings, preflight, credentials, enrolment | Built. Runs, checks a machine, reports honestly |
 | Cloud worker: **doing the class stages** | **Not built.** See below |
-| Dockerfiles and compose | Written. Compose validated. **The images have never been built** — see §7 |
+| Dockerfiles and compose | **Built and run.** Both images build; the stack comes up, migrates and answers. See §7 |
 
 The worker today starts, proves the machine can drive Chromium, holds LMS passwords the way a server
 must, and knows whether it is enrolled. What it does **not** have is job types for the class stages.
@@ -197,19 +197,33 @@ Windows.
 
 Be precise about this when you report progress.
 
+### What was run, and what it said
+
+Both images were built and the whole stack was brought up on Docker, 2026-09-19:
+
 | | |
 |---|---|
-| **The images have never been built.** | The Dockerfiles were written without a working Docker daemon on the authoring machine. The compose file is validated (`docker compose config` resolves every variable), but `docker build` has not run once. Expect to fix something on the first build — most likely the `playwright.sh install` step's path in `deploy/worker.Dockerfile` |
-| **Chromium has never run on Linux here.** | The preflight's browser check is written and runs; it has only ever reported "driver not found" on a Windows machine without Playwright's browsers |
-| **Nothing has touched real Zoom or the real LMS.** | No admission, no attendance, no LMS step, no co-host assignment, no Zoom report has been run from Linux. Whether Zoom's web client works headless is genuinely unknown; if it refuses, set `ZAA_HEADLESS=false` and the container's Xvfb gives it a display |
+| Both images build | Backend, with the dashboard built by Node inside it, and the worker |
+| **Chromium runs headless on Linux** | `Chromium 151.0.7922.34, headless` - it launched and loaded a page inside the container. This was the hardest unknown in the deployment, and it is answered |
+| The `/dev/shm` check is real | At Docker's default it reports `only 64 MB` and fails; with `shm_size: 1gb` it passes. Tested both ways |
+| The stack comes up | PostgreSQL healthy, backend healthy, `/health` gives `{"status":"ok"}`, `/dashboard/` gives 200 |
+| Migrations run clean | `0001` through `0013` from an empty database, 24 tables |
+| Several admins work on a real database | Two admins created, the second signed in with `role: admin`, and it made a third through the API |
+| The rules hold live | Promoting a coordinator is refused with `400`. Deleting one answers `{"deleted":true,...}` and says what went with them |
+
+Away from Docker: 410 backend tests against a real PostgreSQL, 322 web-automation tests on the
+`net8.0` build, and the whole Windows solution still building unchanged.
+
+### What is still unverified
+
+| | |
+|---|---|
+| **Nothing has touched real Zoom or the real LMS.** | No admission, no attendance, no LMS step, no co-host assignment, no Zoom report has been run. Chromium starting headless is necessary and not sufficient: whether *Zoom's web client* tolerates a headless browser is a different question. If it refuses, set `ZAA_HEADLESS=false` and the container's Xvfb gives it a display |
+| **The class stages do not exist.** | The worker has no job types for them, so there is nothing to run even with credentials |
 | **Concurrency is a guess.** | `ZAA_MAX_CONCURRENT_SESSIONS=2` is a deliberately small default, not a measurement |
+| **Only on Docker Desktop.** | The stack has not been run on a real VPS, nor through Coolify itself |
 
-What *has* been tested: 410 backend tests against a real PostgreSQL; 322 web-automation tests on the
-`net8.0` build, which is the proof that the automation logic runs without Windows; the worker's
-settings, preflight and shutdown, run for real; and the whole Windows solution still building
-unchanged.
-
-### First-build checklist
+### Reproducing the build
 
 ```bash
 # From the repository root, on the VPS or any Linux box
@@ -217,16 +231,20 @@ docker build -f deploy/backend.Dockerfile -t classflow-backend .
 docker build -f deploy/worker.Dockerfile  -t classflow-worker  .
 
 # The worker's own opinion of the machine, before Coolify is involved
-docker run --rm --shm-size=1gb \
-  -e ZAA_BACKEND_URL=https://example.com \
-  -e ZAA_STATE_DIR=/tmp/state \
-  classflow-worker preflight
+docker run --rm --shm-size=1gb   -e ZAA_BACKEND_URL=https://example.com   classflow-worker preflight
 ```
 
-If the browser check passes in that last command, the hardest unknown in this deployment is
-answered.
+All six checks passing there means the machine can do the work.
 
----
+Five things had to be fixed to get that far. They are in the history rather than left for you to
+find: `EnableWindowsTargeting` on restore, because restore reads every target framework a
+referenced project declares and stops at the Windows one; a `.dockerignore`, without which a
+Windows `obj/` lands on top of the container's own restore and the error names an unrelated
+package; taking the Playwright driver from the NuGet package, because publish leaves only a
+PowerShell wrapper; installing the browsers with the node that ships inside that driver; and
+`uvicorn --factory`, because the app is built by `create_app()` and without it the container
+restarts for ever on "Attribute 'app' not found".
+
 
 ## 8. Operating it
 
