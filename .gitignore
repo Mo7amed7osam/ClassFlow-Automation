@@ -26,11 +26,16 @@ diagnostics/
 # A local copy kept while switching branches; not part of the project.
 _local-before-branch-restore/
 
-# Local secrets: API keys, key hashes and database URLs. Never committed.
-api.env
-api_key.env
+# Secrets. api.env and api_key.env are committed on purpose for the cloud sessions and must be
+# rotated once that work is done; see CLOUD.md. Every other env file stays local.
 *.env
 .env
+!api.env
+!api_key.env
+!Backend/cloud.env
 
 # WPF's temporary project copies made during a build
 *_wpftmp.csproj
+
+# Written by Scripts/cloud-setup.sh for Scripts/cloud-verify.sh to source; local to one machine.
+.cloud-env

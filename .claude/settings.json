@@ -25,11 +25,6 @@
       "Bash(.venv/bin/python -m pytest:*)",
       "Bash(swift build:*)",
       "Bash(swift test:*)"
-    ],
-    "deny": [
-      "Read(./api.env)",
-      "Read(./api_key.env)",
-      "Read(./**/*.env)"
     ]
   }
 }

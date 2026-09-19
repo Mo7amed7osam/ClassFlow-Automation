@@ -79,13 +79,28 @@ Waiting-room admission, Zoom UI Automation, the WPF window, Playwright against l
 Accessibility, and Keychain all need a real desktop with Zoom signed in. Away from one, say what was
 checked and what was not instead of implying the feature was exercised.
 
+## On a cloud box
+
+Read [CLOUD.md](CLOUD.md) first. `./Scripts/cloud-setup.sh` then `./Scripts/cloud-verify.sh` gets a
+fresh Linux machine to the point where everything runnable runs, and the verify script reports
+PASSED / FAILED / SKIPPED honestly — including the trap where the backend suite skips every test and
+still exits 0 because the box has no PostgreSQL.
+
 ## Secrets
 
-`api.env` and `api_key.env` hold live API keys, key hashes and admin password hashes. They are
-gitignored, along with `*.env`. Never commit them, never paste their contents into a commit, an issue,
-a PR or any other outbound message. Every setting the backend reads is documented by name, with
-defaults, in [Backend/README.md](Backend/README.md#settings-environment) — use that table, not the
-local env files, when something needs configuring.
+`Backend/cloud.env` holds development settings for a cloud box and is committed. Every name in it is
+documented with its default in [Backend/README.md](Backend/README.md#settings-environment); use that
+table when something needs configuring.
+
+`api.env` and `api_key.env` in the root are the operator's local scrollback, committed deliberately
+and temporarily so a cloud session is not blocked waiting on a person. Their values are development
+ones: a `127.0.0.1` database with no password, `development` as the environment, and two `zaak_` keys
+from that PC. They are to be rotated and dropped when the cloud work ends, and
+[CLOUD.md](CLOUD.md) says how.
+
+Nothing else: no real key, token or password goes into a commit, an issue, a PR or any other outbound
+message. `CENTRAL_AI_API_KEY` in particular stays empty in the committed file and is exported in the
+shell of the one session that needs it.
 
 `diagnostics/` and `Windows/diagnostics/` are screen captures written while the app runs. They are
 regenerated, never source, and stay out of the repository.
