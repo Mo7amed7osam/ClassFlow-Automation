@@ -15,7 +15,7 @@ which is which will waste your afternoon.
 | Backend (FastAPI) + dashboard | Built and tested. 410 tests pass against a real PostgreSQL |
 | PostgreSQL, volumes, migrations | Built. Migration chain `0001` → `0013`, single head |
 | Cloud worker: settings, preflight, credentials, enrolment | Built. Runs, checks a machine, reports honestly |
-| Cloud worker: the class stages | **Partly.** The three LMS stages are built, and `lms.run_session` has run against the real DEPI LMS from Linux in dry-run form. The six Zoom stages are not built, and the worker does not claim to do them |
+| Cloud worker: the class stages | **Partly.** `class.run` holds a meeting for the class, and the three LMS stages are built. `lms.run_session` has run against the real DEPI LMS from Linux in dry-run form; **no meeting has been opened against real Zoom**. `zoom.report` and `zoom.recording` are not built |
 | Classes opening by themselves | **Built.** The backend's scheduler turns a class plan into its stages at the class's own time, once, and refuses to open one whose time has passed |
 | Dockerfiles and compose | **Built and run.** Both images build; the stack comes up, migrates and answers. See §7 |
 
@@ -235,7 +235,7 @@ Away from Docker: 410 backend tests against a real PostgreSQL, 322 web-automatio
 |---|---|
 | **Nothing has touched real Zoom or the real LMS.** | No admission, no attendance, no LMS step, no co-host assignment, no Zoom report has been run. Chromium starting headless is necessary and not sufficient: whether *Zoom's web client* tolerates a headless browser is a different question. If it refuses, set `ZAA_HEADLESS=false` and the container's Xvfb gives it a display |
 | **The class stages do not exist.** | The worker has no job types for them, so there is nothing to run even with credentials |
-| **Concurrency is a guess.** | `ZAA_MAX_CONCURRENT_SESSIONS=2` is a deliberately small default, not a measurement |
+| **Concurrency means more workers.** | A worker takes one job at a time, so a worker holding a meeting is busy for the class's length. Two classes at once means two worker containers, which is what `docker compose up --scale worker=2` does. `ZAA_MAX_CONCURRENT_SESSIONS` is not read by anything and is kept only to be removed |
 | **Only on Docker Desktop.** | The stack has not been run on a real VPS, nor through Coolify itself |
 
 ### Reproducing the build

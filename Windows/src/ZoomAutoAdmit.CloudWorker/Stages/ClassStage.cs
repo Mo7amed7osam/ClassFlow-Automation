@@ -31,6 +31,12 @@ public sealed record ClassStage
     /// <summary>Whose sign-in writes this class up. Always present for an LMS stage.</summary>
     public Guid? LmsAccountId { get; init; }
 
+    /// <summary>
+    /// How long to hold the meeting. A class that outlives this is left; a worker that lost touch
+    /// with the backend must not sit in an empty meeting for ever, holding the only slot it has.
+    /// </summary>
+    public TimeSpan? Duration { get; init; }
+
     /// <summary>Do everything up to the point of changing something, then stop and say what would have happened.</summary>
     public bool DryRun { get; init; }
 
@@ -101,6 +107,11 @@ public sealed record ClassStage
             MeetingUrl = meeting,
             ZoomAccountId = zoomAccount,
             LmsAccountId = lmsAccount,
+            Duration = payload.TryGetProperty("durationMinutes", out var minutes)
+                       && minutes.ValueKind == JsonValueKind.Number
+                       && minutes.TryGetInt32(out int m) && m > 0
+                ? TimeSpan.FromMinutes(m)
+                : null,
             DryRun = payload.TryGetProperty("dryRun", out var dry) && dry.ValueKind == JsonValueKind.True,
         };
         return true;

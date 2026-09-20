@@ -85,15 +85,16 @@ Log("enrolled" + (tokens.Read() is null ? " (will register with the enrolment to
 // ---------------------------------------------------------------------------------------------
 // What this worker can do, and what it therefore says it can do.
 //
-// The three LMS stages are built: they drive the same LmsSessionRunner the Windows app drives,
-// under the account the class names. The Zoom stages - opening a meeting, admitting, taking a
-// snapshot, ending, and reading Zoom's own report afterwards - are not, so "zoom_web" is not in
-// the list below and the backend will not hand this worker one. Those jobs stay queued, which is
-// visible, rather than being taken and failed, which looks like the class went wrong.
+// class.run owns a meeting for the length of a class: it opens it as the host, admits the waiting
+// room as people arrive, and closes it. The three LMS stages drive the same LmsSessionRunner the
+// Windows app drives, under the account the class names.
 //
-// None of the LMS stages has run against the real DEPI LMS from Linux. They are written and unit
-// tested; FEATURE_PARITY.md keeps them as IMPLEMENTED_NOT_LIVE_VERIFIED until somebody watches one
-// work on a class that is safe to run against.
+// Not built: zoom.report and zoom.recording, which read Zoom's own pages after a meeting has
+// ended. A worker claiming zoom_web can still be handed one, so the handler dictionary is what
+// actually answers - an unknown type is rejected rather than taken and failed.
+//
+// Nothing here has opened a real Zoom meeting yet. lms.run_session has run against the real DEPI
+// LMS from Linux; FEATURE_PARITY.md is where each one's evidence is.
 // ---------------------------------------------------------------------------------------------
 using var http = new HttpClient { BaseAddress = settings.BackendUrl, Timeout = TimeSpan.FromSeconds(30) };
 
@@ -104,19 +105,20 @@ CentralAgentService? agent = null;
 Guid? RunningJob() => Guid.TryParse(agent?.RunningJobId, out var id) ? id : null;
 
 var accountSource = new ServerLmsAccounts(http, tokens.Read, RunningJob, Log);
+var zoomAccounts = new ServerZoomAccounts(http, tokens.Read, RunningJob, Log);
 var attendanceNames = new NoAttendanceCollected();
 
 var handlers = new IJobHandler[]
 {
+    new ClassRunStage(zoomAccounts, settings.Headless, Log),
     new RunSessionStage(accountSource, Log),
     new CompleteSessionStage(accountSource, Log),
     new AttendanceStage(accountSource, attendanceNames, Log),
 };
 
-// Only what this worker can actually do. The six Zoom stages are not built, so "zoom_web" is not
-// here and the backend never hands one over: those jobs stay queued, which is visible, rather than
-// being taken and failed, which reads as a class that went wrong.
-var capabilities = new[] { "lms" };
+// One job at a time: a worker holding a meeting is busy for the class's length. Several classes
+// at once means several workers, which is what the compose file scales.
+var capabilities = new[] { "zoom_web", "lms" };
 Log($"can run: {string.Join(", ", handlers.Select(h => h.JobType))} (capabilities: {string.Join(", ", capabilities)})");
 
 string version = typeof(WorkerSettings).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";

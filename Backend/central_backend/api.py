@@ -198,6 +198,18 @@ async def post_register(body: AgentRegistration, request: Request) -> JSONRespon
 # ----------------------------------------------------------------------------- an agent's credentials
 
 
+@router.post("/api/v1/agent/jobs/{job_id}/zoom-secret")
+async def job_zoom_secret(job_id: str, request: Request) -> JSONResponse:
+    """The Zoom sign-in the meeting for this job is opened with, for the device running it.
+
+    The same rules as the LMS sign-in below, and for the same reason: a worker off Windows has no
+    Credential Manager, so the password comes from here, and what keeps that from being a standing
+    key is that it is tied to the job. Only for a job this device holds and has not finished, only
+    for the account that job's payload names, and only while that coordinator is turned on.
+    """
+    return await _job_account_secret(job_id, request, kind="zoom")
+
+
 @router.post("/api/v1/agent/jobs/{job_id}/lms-secret")
 async def job_lms_secret(job_id: str, request: Request) -> JSONResponse:
     """The LMS sign-in for the class this job is a stage of, for the device running it.
@@ -216,11 +228,25 @@ async def job_lms_secret(job_id: str, request: Request) -> JSONResponse:
       * its payload names an lmsAccountId, and that account is the coordinator's;
       * that coordinator is turned on - a sign-in is never a side effect of holding a job.
     """
-    from .admin import audit
+    return await _job_account_secret(job_id, request, kind="lms")
+
+
+async def _job_account_secret(job_id: str, request: Request, *, kind: str) -> JSONResponse:
+    """The sign-in for the account a job names, for the device that holds the job.
+
+    One body for both kinds, because the rules are the same and having them drift apart is how one
+    of them quietly stops refusing something. What differs is only which table is read and which
+    field the job's payload names the account in.
+    """
     from .delegated_runs import _no_store
     from .devices import authenticate_device
-    from .models import LmsAccount, RunDelegation, User
+    from .models import LmsAccount, RunDelegation, User, ZoomAccount
     from .user_data import _box
+
+    model, field, label = {
+        "lms": (LmsAccount, "lmsAccountId", "LMS"),
+        "zoom": (ZoomAccount, "zoomAccountId", "Zoom"),
+    }[kind]
 
     token = bearer_token(request.headers.get("authorization"))
     box = _box(request)
@@ -242,11 +268,11 @@ async def job_lms_secret(job_id: str, request: Request) -> JSONResponse:
         if job.status not in ("assigned", "running"):
             raise ApiError(409, "Conflict", f"This job is {job.status}; a sign-in is only given for one being run.")
 
-        account_id = (job.payload or {}).get("lmsAccountId")
+        account_id = (job.payload or {}).get(field)
         if not account_id:
-            raise ApiError(409, "Conflict", "This job names no LMS account.")
+            raise ApiError(409, "Conflict", f"This job names no {label} account.")
         try:
-            account = await session.get(LmsAccount, uuid.UUID(str(account_id)))
+            account = await session.get(model, uuid.UUID(str(account_id)))
         except ValueError:
             account = None
         # Not another bare 404. By this point the device has proved it holds this job, so naming
@@ -254,7 +280,7 @@ async def job_lms_secret(job_id: str, request: Request) -> JSONResponse:
         # hunting for a job that was never missing.
         if account is None:
             raise ApiError(409, "Conflict",
-                           "This job names an LMS account that no longer exists. The coordinator may have "
+                           f"This job names a {label} account that no longer exists. The coordinator may have "
                            "removed it; the class needs a new one before this stage can run.")
 
         # The same refusal the admin path makes: turning a coordinator off closes their sign-in
@@ -267,21 +293,32 @@ async def job_lms_secret(job_id: str, request: Request) -> JSONResponse:
         if coordinator is None or coordinator.status != "active":
             raise ApiError(403, "Forbidden", "That coordinator's account is not active.")
 
+        # A Zoom account may exist with no password saved: the coordinator's own PC signs that one
+        # in by hand. A server cannot, so it says which account and stops, rather than opening a
+        # browser that will sit on a sign-in page nobody is watching.
+        if not account.password_encrypted:
+            raise ApiError(409, "Conflict",
+                           f"No {label} password is saved for '{account.label}'. A server has no way to sign in "
+                           "without one; the coordinator saves it from their own copy of the app.")
         try:
             password = box.open(account.password_encrypted, f"{account.user_id}:{account.id}")
         except Exception as exc:  # noqa: BLE001 - a changed key or a damaged row; the value never reaches a log
-            raise ApiError(409, "Cannot decrypt", "That coordinator has to save their LMS password again.") from exc
+            raise ApiError(409, "Cannot decrypt",
+                           f"That coordinator has to save their {label} password again.") from exc
 
+        email = account.email if kind == "lms" else account.zoom_email
         session.add(AdminAuditLog(
-            username=f"device:{device.name}", user_id=None, action="lms_secret.read_by_device",
+            username=f"device:{device.name}", user_id=None, action=f"{kind}_secret.read_by_device",
             details={"deviceId": str(device.id), "jobId": str(job.id), "jobType": job.type,
-                     "coordinator": coordinator.username, "account": str(account.id), "email": account.email},
+                     "coordinator": coordinator.username, "account": str(account.id), "email": email},
             created_at=now))
 
-        body = {"id": str(account.id), "coordinatorId": str(account.user_id), "email": account.email,
-                "role": account.role, "label": account.label, "password": password}
+        body = {"id": str(account.id), "coordinatorId": str(account.user_id), "email": email,
+                "label": account.label, "password": password}
+        if kind == "lms":
+            body["role"] = account.role
 
-    emit("lms_account.secret_read_by_device", deviceId=str(device.id), jobId=str(job.id),
+    emit(f"{kind}_account.secret_read_by_device", deviceId=str(device.id), jobId=str(job.id),
          coordinator=coordinator.username, account=str(account.id))
     return _no_store(body)
 

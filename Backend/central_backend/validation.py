@@ -20,10 +20,13 @@ JOB_TYPES: dict[str, str] = {
     # "lms.complete" after the class is over, but "class.admit" and "class.attendance" run
     # alongside each other while it is live, and the LMS steps do not wait on Zoom at all.
     # What may run when is the caller's business; this table only says who can run what.
-    "class.open": "zoom_web",          # open the meeting as its host
-    "class.admit": "zoom_web",         # admit the waiting room while it is live
-    "class.attendance": "zoom_web",    # a snapshot of who is in the meeting now
-    "class.end": "zoom_web",           # end it for everyone
+    # A meeting is one long thing, not four short ones. class.run owns it for the whole class:
+    # it opens the meeting, admits the waiting room as people arrive, takes the attendance
+    # snapshots while it is live, and ends it. Splitting that into separate jobs would mean a
+    # browser left alive between them, and a worker restart would orphan it with nobody able to
+    # say whether the class was still running.
+    "class.run": "zoom_web",           # open the meeting and hold it for the class
+    "class.end": "zoom_web",           # end one now, from the dashboard, before its time
     "zoom.report": "zoom_web",         # Zoom's own participants report, once it has ended
     "zoom.recording": "zoom_web",      # the recording's link, once Zoom has made one
     "lms.run_session": "lms",          # press Run Session
@@ -49,7 +52,7 @@ RECORDING_FIELDS = ("group", "recordLink", "date", "startTime", "replaceExisting
 
 CLASS_STAGE_FIELDS = (
     "classPlanId", "group", "date", "startTime", "coordinatorId",
-    "meetingUrl", "zoomAccountId", "lmsAccountId", "dryRun",
+    "meetingUrl", "zoomAccountId", "lmsAccountId", "durationMinutes", "dryRun",
 )
 
 _UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -210,10 +213,20 @@ def validate_class_stage_payload(job_type: str, payload: Any) -> dict[str, Any]:
             raise PayloadError("'meetingUrl' must be an https URL with no user name or password in it.")
         normalised["meetingUrl"] = url
 
-    # Opening a meeting needs somewhere to open. The rest do not: admission and attendance join a
-    # meeting that is already live, and the LMS stages never touch Zoom.
-    if job_type == "class.open" and "meetingUrl" not in normalised:
-        raise PayloadError("'meetingUrl' is required for class.open: there is nothing to open without it.")
+    # Opening a meeting needs somewhere to open. Ending one does not - it finds the live meeting
+    # the worker already has - and the LMS stages never touch Zoom at all.
+    if job_type == "class.run" and "meetingUrl" not in normalised:
+        raise PayloadError("'meetingUrl' is required for class.run: there is nothing to open without it.")
+
+    # How long to hold the meeting. Without a limit a worker that lost touch with the backend
+    # would sit in an empty meeting for ever, holding the only slot it has.
+    minutes = payload.get("durationMinutes")
+    if minutes is not None:
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= 600:
+            raise PayloadError("'durationMinutes' must be a whole number of minutes from 1 to 600.")
+        normalised["durationMinutes"] = minutes
+    elif job_type == "class.run":
+        normalised["durationMinutes"] = 180
 
     # An LMS stage that does not say whose sign-in to use would fall back to whoever the machine
     # last used, and write one coordinator's class up under another's name.

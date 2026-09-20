@@ -149,9 +149,7 @@ def post_stage(client, job_type, payload=None, key=None):  # noqa: ANN001, ANN20
                        headers=headers)
 
 
-@pytest.mark.parametrize("job_type", [
-    "class.open", "class.admit", "class.attendance", "class.end", "zoom.report", "zoom.recording",
-])
+@pytest.mark.parametrize("job_type", ["class.run", "class.end", "zoom.report", "zoom.recording"])
 def test_every_zoom_stage_of_a_class_is_accepted(client, job_type):
     response = post_stage(client, job_type)
     assert response.status_code == 202, response.text
@@ -177,17 +175,30 @@ def test_an_lms_stage_must_say_whose_sign_in_writes_it_up(client, job_type):
 
 
 def test_opening_a_meeting_needs_somewhere_to_open(client):
-    refused = post_stage(client, "class.open", stage_payload(meetingUrl=None))
+    refused = post_stage(client, "class.run", stage_payload(meetingUrl=None))
     assert refused.status_code == 400
     assert "meetingUrl" in refused.json()["details"]
 
-    # The stages that join a meeting already live do not need one.
-    assert post_stage(client, "class.admit", stage_payload(meetingUrl=None)).status_code == 202
+    # Ending one does not: it finds the meeting the worker already has.
+    assert post_stage(client, "class.end", stage_payload(meetingUrl=None)).status_code == 202
+
+
+def test_a_meeting_is_held_for_a_bounded_time(client):
+    """A worker that lost touch with the backend must not sit in an empty meeting for ever,
+    holding the only slot it has."""
+    held = post_stage(client, "class.run")
+    assert get_job(client, held.json()["jobId"])["payload"]["durationMinutes"] == 180
+
+    given = post_stage(client, "class.run", stage_payload(durationMinutes=90))
+    assert get_job(client, given.json()["jobId"])["payload"]["durationMinutes"] == 90
+
+    for bad in (0, -5, 601, "90", 12.5):
+        assert post_stage(client, "class.run", stage_payload(durationMinutes=bad)).status_code == 400
 
 
 def test_a_class_always_says_whose_it_is(client):
     for missing in ("coordinatorId", "classPlanId"):
-        refused = post_stage(client, "class.admit", stage_payload(**{missing: None}))
+        refused = post_stage(client, "class.end", stage_payload(**{missing: None}))
         assert refused.status_code == 400, f"{missing} was accepted as missing"
         assert missing in refused.json()["details"]
 
@@ -202,21 +213,21 @@ def test_a_class_always_says_whose_it_is(client):
     (stage_payload(meetingUrl="https://user:pw@zoom.us/j/1"), "user name"),
 ])
 def test_a_bad_stage_payload_is_refused_with_a_reason(client, payload, fragment):
-    response = post_stage(client, "class.admit", payload)
+    response = post_stage(client, "class.end", payload)
     assert response.status_code == 400
     assert fragment in response.json()["details"]
 
 
 def test_a_stage_payload_refuses_a_field_it_does_not_know(client):
-    response = post_stage(client, "class.admit", stage_payload(**{}) | {"engine": "web"})
+    response = post_stage(client, "class.end", stage_payload(**{}) | {"engine": "web"})
     assert response.status_code == 400
     assert "engine" in response.json()["details"]
 
 
 def test_the_same_stage_of_the_same_class_is_created_once(client):
     """Idempotency is what stops a retried caller opening the same meeting twice."""
-    first = post_stage(client, "class.open", key="class-open-plan-1")
-    second = post_stage(client, "class.open", key="class-open-plan-1")
+    first = post_stage(client, "class.run", key="class-run-plan-1")
+    second = post_stage(client, "class.run", key="class-run-plan-1")
     assert first.status_code == 202 and second.status_code == 200
     assert first.json()["jobId"] == second.json()["jobId"]
 
@@ -227,5 +238,5 @@ def test_a_stage_goes_only_to_a_device_that_can_run_it(client):
     from central_backend.validation import JOB_TYPES
 
     assert JOB_TYPES["recording.process"] == "recording_processing"
-    assert {JOB_TYPES[t] for t in ("class.open", "class.admit", "zoom.report")} == {"zoom_web"}
+    assert {JOB_TYPES[t] for t in ("class.run", "class.end", "zoom.report")} == {"zoom_web"}
     assert {JOB_TYPES[t] for t in ("lms.run_session", "lms.attendance", "lms.complete")} == {"lms"}

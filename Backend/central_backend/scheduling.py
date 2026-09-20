@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from .jobs import create_job
 from .models import ClassPlan, LmsAccount, RunDelegation, User
 from .observability import emit
+from .validation import PayloadError, validate_payload
 
 def _zone(name: str = "Africa/Cairo") -> ZoneInfo:
     """The zone class times are written in.
@@ -69,11 +70,14 @@ class Stage:
     what: str
 
 
-# What the scheduler creates today, and nothing it cannot.
+# What the scheduler creates, and when.
 #
-# The six Zoom stages are not built in any worker, so scheduling them would fill the queue with
-# work nothing can take. They are added here as they are built; the shape is already right.
+# The meeting opens a quarter of an hour early, which is what the Windows app did and what the
+# class card means by "Opens 18:45" for a 19:00 class: people arrive before the hour and there has
+# to be somebody there to let them in. The LMS session is started on the hour, because the
+# dashboard is the record of what happened rather than the door.
 STAGES: tuple[Stage, ...] = (
+    Stage("class.run", timedelta(minutes=-15), "open the meeting and hold it"),
     Stage("lms.run_session", timedelta(0), "press Run Session as the class starts"),
 )
 
@@ -156,6 +160,20 @@ class Scheduler:
                     payload = await self._payload(session, plan)
                     if payload is None:
                         continue
+                    if (why := self._can_run(stage, payload)) is not None:
+                        emit("schedule.cannot_run", level=logging.WARNING, group=plan.group_name,
+                             date=plan.session_date.isoformat(), jobType=stage.job_type, reason=why)
+                        continue
+
+                    # Through the same validator an API caller goes through, so the scheduler
+                    # cannot make a payload the rest of the system would refuse, and the defaults
+                    # it fills in (how long to hold a meeting) are the documented ones.
+                    try:
+                        payload = validate_payload(stage.job_type, payload)
+                    except PayloadError as problem:
+                        emit("schedule.bad_payload", level=logging.ERROR, group=plan.group_name,
+                             date=plan.session_date.isoformat(), jobType=stage.job_type, reason=str(problem))
+                        continue
 
                     _, created = await create_job(
                         session,
@@ -202,11 +220,31 @@ class Scheduler:
             "lmsAccountId": str(account.id),
             "dryRun": False,
         }
+        # The Zoom account the meeting is opened by. Named, never guessed: a meeting opened by the
+        # wrong account is the wrong person's meeting, and the students are in it before anyone
+        # notices.
+        if delegation.zoom_account_id is not None:
+            payload["zoomAccountId"] = str(delegation.zoom_account_id)
         if plan.start_time:
             payload["startTime"] = plan.start_time
         if plan.meeting_url:
             payload["meetingUrl"] = plan.meeting_url
         return payload
+
+    @staticmethod
+    def _can_run(stage: Stage, payload: dict) -> str | None:
+        """Why this stage cannot be created from this class, or None.
+
+        The server refuses the same payloads the validator would, but earlier and with the class
+        named: a job that is going to be rejected is better not made, and "this class has no Zoom
+        link yet" is something a person can act on.
+        """
+        if stage.job_type == "class.run":
+            if "meetingUrl" not in payload:
+                return "no Zoom link on the class"
+            if "zoomAccountId" not in payload:
+                return "no Zoom account chosen for the coordinator"
+        return None
 
     async def run(self, stop: asyncio.Event) -> None:
         """Until asked to stop. A failed pass is logged and the next one still happens."""
