@@ -51,7 +51,14 @@ public sealed record WorkerSettings
     /// <summary>The clock local schedules are read in. Africa/Cairo unless ZAA_TIMEZONE says otherwise.</summary>
     public string TimeZone { get; init; } = "Africa/Cairo";
 
-    public string BrowserProfilesDirectory => Path.Combine(StateDirectory, "profiles");
+    /// <summary>
+    /// Where the browser profiles actually land. Not a path of this class's choosing: it is what
+    /// ZoomProfileManager resolves from LocalApplicationData, which on Linux follows XDG_DATA_HOME.
+    /// Checking anywhere else would pass while the real folder was unwritable or, worse, inside the
+    /// container's own layer where every deployment throws it away.
+    /// </summary>
+    public string BrowserProfilesDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZoomAutoAdmit", "Profiles");
     public string JournalDirectory => Path.Combine(StateDirectory, "journal");
 
     public static WorkerSettings FromEnvironment(IReadOnlyDictionary<string, string?>? environment = null)

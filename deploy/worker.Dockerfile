@@ -85,7 +85,14 @@ RUN useradd --create-home --shell /usr/sbin/nologin worker \
  && chown -R worker:worker /var/lib/classflow /app
 USER worker
 
+# XDG_DATA_HOME is what .NET resolves Environment.SpecialFolder.LocalApplicationData from on Linux,
+# and a great deal hangs off that one folder: the browser profile a signed-in Zoom or LMS session
+# lives in, the admission ledger, the live-meeting files. Left alone it lands in the container's own
+# writable layer, so every deployment signs every account out again and loses the day's ledger.
+# Pointing it at the volume puts all of them somewhere that survives.
 ENV ZAA_STATE_DIR=/var/lib/classflow \
+    XDG_DATA_HOME=/var/lib/classflow \
+    HOME=/var/lib/classflow \
     ZAA_TIMEZONE=Africa/Cairo \
     ZAA_HEADLESS=true \
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
