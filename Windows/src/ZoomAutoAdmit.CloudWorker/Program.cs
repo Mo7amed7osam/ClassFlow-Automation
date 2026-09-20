@@ -95,13 +95,15 @@ Log("enrolled" + (tokens.Read() is null ? " (will register with the enrolment to
 // tested; FEATURE_PARITY.md keeps them as IMPLEMENTED_NOT_LIVE_VERIFIED until somebody watches one
 // work on a class that is safe to run against.
 // ---------------------------------------------------------------------------------------------
-// The job a stage is being run for. The server ties a sign-in to it, so the handler that is
-// running sets this and the account source reads it back - the alternative was threading a job id
-// through every stage's signature for the sake of one of them.
-Guid? runningJob = null;
-
 using var http = new HttpClient { BaseAddress = settings.BackendUrl, Timeout = TimeSpan.FromSeconds(30) };
-var accountSource = new ServerLmsAccounts(http, tokens.Read, () => runningJob, Log);
+
+// The server ties a class's sign-in to the job being run, so the account source has to know which
+// one that is. The agent already tracks it; this closure reads it back once the agent exists,
+// which is why it is a closure and not a constructor argument - the two need each other.
+CentralAgentService? agent = null;
+Guid? RunningJob() => Guid.TryParse(agent?.RunningJobId, out var id) ? id : null;
+
+var accountSource = new ServerLmsAccounts(http, tokens.Read, RunningJob, Log);
 var attendanceNames = new NoAttendanceCollected();
 
 var handlers = new IJobHandler[]
@@ -111,18 +113,78 @@ var handlers = new IJobHandler[]
     new AttendanceStage(accountSource, attendanceNames, Log),
 };
 
+// Only what this worker can actually do. The six Zoom stages are not built, so "zoom_web" is not
+// here and the backend never hands one over: those jobs stay queued, which is visible, rather than
+// being taken and failed, which reads as a class that went wrong.
 var capabilities = new[] { "lms" };
 Log($"can run: {string.Join(", ", handlers.Select(h => h.JobType))} (capabilities: {string.Join(", ", capabilities)})");
-Log("the Zoom stages are not built, so this worker does not claim zoom_web and is never given one.");
 
-// Connecting is the next piece: the agent's own socket, journal and outbox already exist in
-// ZoomAutoAdmit.CentralAgent and are what this will be handed to. Until the account source below
-// is wired to the server, a connected worker would take an LMS stage and fail it for want of a
-// sign-in, which is worse than not connecting.
-Log("not connecting yet: the account source has no route to the server. See FEATURE_PARITY.md.");
+string version = typeof(WorkerSettings).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
+var identities = new DeviceIdentityStore(Path.Combine(settings.StateDirectory, "device.json"));
 
+DeviceIdentity? identity;
+try
+{
+    identity = identities.Load();
+}
+catch (InvalidDataException problem)
+{
+    Log($"cannot start: {problem.Message}");
+    return 1;
+}
+
+if (identity?.IsRegistered != true)
+{
+    // The enrolment token is spent here and never written down. What replaces it is the device
+    // token, on the state volume, which is what every later connection uses.
+    Log("registering with the enrolment token");
+    try
+    {
+        identity = await new AgentRegistrar(http, identities, tokens, Log).RegisterAsync(
+            settings.BackendUrl, settings.EnrollmentToken!, settings.Name, version, capabilities, stopping.Token);
+    }
+    catch (AgentRegistrationException problem)
+    {
+        Log($"the backend would not register this worker: {problem.Message}");
+        return 1;
+    }
+    Log($"registered as {identity.DeviceId}. Clear ZAA_ENROLLMENT_TOKEN: it is spent.");
+}
+
+agent = new CentralAgentService(
+    new CentralAgentSettings
+    {
+        BackendUrl = settings.BackendUrl,
+        Version = version,
+        Capabilities = capabilities,
+    },
+    identity,
+    tokens,
+    new ClientWebSocketFactory(),
+    new JobJournal(Path.Combine(settings.JournalDirectory, "jobs.jsonl")),
+    handlers,
+    Log);
+
+Log($"connecting to {settings.BackendUrl}");
+var reason = await agent.RunAsync(stopping.Token);
+
+// Whatever passwords this run was given go now, whether it stopped cleanly or not.
 credentials.Clear();
-return 0;
+
+switch (reason)
+{
+    case AgentStopReason.Unauthorized:
+        // Reconnecting would be refused the same way, so it stops and says why rather than
+        // retrying against a token somebody revoked on purpose.
+        Log("the backend refused this worker's device token. It may have been revoked; enrol again.");
+        return 1;
+    case AgentStopReason.NotRegistered:
+        Log("this worker has no device identity. Give it ZAA_ENROLLMENT_TOKEN and start it again.");
+        return 1;
+    default:
+        Log("stopped");
+        return 0;
+}
 
 static void Log(string message) =>
     Console.WriteLine($"[worker] {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}Z {message}");
