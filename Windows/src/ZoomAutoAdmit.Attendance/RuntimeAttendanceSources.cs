@@ -59,19 +59,9 @@ public sealed class RuntimeAttendanceSources(Func<IPage?> primaryPage)
     /// A row reads "Mohab Mohamed __Coordinator,(Guest), Computer audio muted,Video off…".
     /// Only the part before the role/status tail is the person's display name.
     /// </summary>
-    public static string CleanParticipantName(string label)
-    {
-        int marker = label.IndexOf(",(", StringComparison.Ordinal);
-        if (marker > 0) return label[..marker].Trim();
-        // The web client writes the role without that comma - "eyouth coordinator (Host, me),computer
-        // audio muted…" - so cutting at the first comma would keep "(Host" in the name.
-        if (RoleSuffix.Match(label) is { Success: true } role) return label[..role.Index].Trim();
-        int comma = label.IndexOf(',');
-        return (comma > 0 ? label[..comma] : label).Trim();
-    }
-
-    /// <summary>Where a row's role tail begins. Only Zoom's own role words, never a name's brackets.</summary>
-    private static readonly Regex RoleSuffix = new(@"\s*\((host|co-?host|guest|me)\b", RegexOptions.IgnoreCase);
+    /// <summary>Kept under this name for the callers that already use it; the rule itself lives in
+    /// <see cref="ParticipantNames"/>, where the web reader can reach it without FlaUI.</summary>
+    public static string CleanParticipantName(string label) => ParticipantNames.Clean(label);
 
     private static string SafeName(FlaUI.Core.AutomationElements.AutomationElement element)
     {

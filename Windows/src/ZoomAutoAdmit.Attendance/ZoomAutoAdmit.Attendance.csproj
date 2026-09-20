@@ -1,11 +1,36 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!--
+      Attendance is collected two ways: from Zoom's desktop Participants panel through UI
+      Automation, and from the web client's own Joined list through Playwright. Only the first is
+      Windows-only, and it was holding the whole assembly there - so a Linux worker could open a
+      meeting and admit people into it while having no way to write down who was in it.
+
+      net8.0 builds the web half alone. What it leaves out is listed below, and the split is the
+      same one WebAutomation makes for its loopback API server.
+    -->
+    <TargetFrameworks>net8.0;net8.0-windows10.0.19041.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
-  <ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows10.0.19041.0'">
+    <!-- FlaUI and the Zoom window reader: the desktop half, and only that half. -->
     <ProjectReference Include="../ZoomAutoAdmit.UIAutomation/ZoomAutoAdmit.UIAutomation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../ZoomAutoAdmit.WebAutomation/ZoomAutoAdmit.WebAutomation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <!--
+      DesktopAttendanceParticipantSource reads Zoom's own window; RuntimeAttendanceSources chooses
+      between that and the web source, and takes FlaUI with it. A Linux host names the web source
+      itself rather than asking to be given whichever one the machine supports, because on Linux
+      there is only ever one answer.
+    -->
+    <Compile Remove="DesktopAttendanceParticipantSource.cs" />
+    <Compile Remove="RuntimeAttendanceSources.cs" />
   </ItemGroup>
 </Project>

@@ -8,6 +8,7 @@ import { AttendanceSessionPage } from './pages/AttendanceSessionPage'
 import { GroupsPage } from './pages/GroupsPage'
 import { LoginPage } from './pages/LoginPage'
 import { OverviewPage } from './pages/OverviewPage'
+import { SessionsPage } from './pages/SessionsPage'
 import { RecordingsPage } from './pages/RecordingsPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { RunsPage } from './pages/RunsPage'
@@ -38,6 +39,7 @@ export function App() {
       <Route path="/register" element={<RegisterPage />} />
       <Route element={<RequireSignIn />}>
         <Route index element={<OverviewPage />} />
+        <Route path="sessions" element={<SessionsPage />} />
         <Route path="recordings" element={<RecordingsPage />} />
         <Route path="attendance" element={<AttendancePage />} />
         <Route path="attendance/:id" element={<AttendanceSessionPage />} />

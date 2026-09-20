@@ -111,7 +111,7 @@ public sealed class WebAttendanceParticipantSource : IAttendanceParticipantSourc
             throw new InvalidOperationException("No participant rows exposed; cannot distinguish empty from unavailable DOM rows.");
         return new(read.Rows.Select(row => new ParticipantPresence(
             // A row with no separate name element (the screen-share layout): its own text, role tail cut off.
-            string.IsNullOrWhiteSpace(row.Name) ? RuntimeAttendanceSources.CleanParticipantName(row.Label) : row.Name.Trim()) { RowLabel = row.Label }).ToArray(), read.Complete,
+            string.IsNullOrWhiteSpace(row.Name) ? ParticipantNames.Clean(row.Label) : row.Name.Trim()) { RowLabel = row.Label }).ToArray(), read.Complete,
             read.Complete
                 ? $"The whole Joined list, walked top to bottom{(read.Expected is { } all ? $" ({read.Rows.Length} of {all})" : "")}."
                 : $"Joined rows read: {read.Rows.Length}{(read.Expected is { } count ? $" of {count}" : "")}; the list may not have been fully exposed.");

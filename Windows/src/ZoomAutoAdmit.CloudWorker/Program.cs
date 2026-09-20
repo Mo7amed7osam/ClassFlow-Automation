@@ -111,6 +111,8 @@ var attendanceNames = new NoAttendanceCollected();
 var handlers = new IJobHandler[]
 {
     new ClassRunStage(zoomAccounts, settings.Headless, Log),
+    new ZoomReportStage(zoomAccounts, Log),
+    new ZoomRecordingStage(zoomAccounts, Log),
     new RunSessionStage(accountSource, Log),
     new CompleteSessionStage(accountSource, Log),
     new AttendanceStage(accountSource, attendanceNames, Log),

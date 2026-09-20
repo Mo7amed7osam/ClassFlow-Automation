@@ -286,3 +286,54 @@ export interface RunPlan {
   classes: ClassPlan[]
   coordinators: RunCoordinator[]
 }
+
+// ============================================================ the Sessions page
+
+/** What a stage of a class is doing. `missing` means nothing implements it yet, which is not the
+ *  same as "not started" and must not look the same on the card. */
+export type StageState =
+  | 'done' | 'running' | 'waiting' | 'due' | 'later' | 'failed' | 'blocked' | 'missing'
+
+export interface SessionStage {
+  key: string
+  label: string
+  /** What the Windows card writes under a stage: "Opens", "At start", "After class". */
+  caption: string
+  state: StageState
+  /** The time it is due, or when it finished, or why it cannot run - whichever applies. */
+  detail?: string | null
+  dueAt?: string | null
+  jobId?: string | null
+  retryable?: boolean
+}
+
+/** A class is `needsAttention` when any stage failed, `blocked` when one cannot run at all. */
+export type SessionHeadline = 'running' | 'needsAttention' | 'blocked' | 'done' | 'planned'
+
+export interface SessionClass {
+  classPlanId: string
+  group: string
+  title: string | null
+  date: string
+  startTime: string | null
+  startsAt: string | null
+  coordinator: { id: string; name: string | null }
+  meetingUrl: string | null
+  planStatus: string
+  stages: SessionStage[]
+  headline: SessionHeadline
+}
+
+export interface SessionsPage {
+  from: string
+  to: string
+  classes: SessionClass[]
+  counters: {
+    runningOnTheLms: number
+    classesToday: number
+    needAttention: number
+    blocked: number
+    fullyDone: number
+  }
+  groups: string[]
+}

@@ -19,6 +19,7 @@ import type {
   RecordingPage,
   RecordingQuery,
   RunPlan,
+  SessionsPage,
   User,
   UserList,
   UserStatus,
@@ -26,7 +27,18 @@ import type {
 
 // How often each view refreshes itself. Agents change fastest (heartbeats every 30 s); a recording
 // with a job in flight is watched closely until the agent reports back.
-export const REFRESH = { agents: 10_000, overview: 15_000, recordings: 30_000, groups: 60_000, activeJob: 5_000 }
+export const REFRESH = { agents: 10_000, overview: 15_000, recordings: 30_000, groups: 60_000, activeJob: 5_000, sessions: 20_000 }
+
+/** Every class in the window and where each one stands. Refreshed on its own, because a class
+ *  card changes while somebody is looking at it: a stage goes from due to running to done. */
+export function useSessions(params: { from?: string; to?: string; group?: string }) {
+  return useQuery({
+    queryKey: ['sessions', params],
+    queryFn: () => api<SessionsPage>(`/api/v1/dashboard/sessions${query(params)}`),
+    refetchInterval: REFRESH.sessions,
+    placeholderData: keepPreviousData,
+  })
+}
 
 export const ACTIVE_JOB_STATUSES = ['queued', 'assigned', 'running']
 

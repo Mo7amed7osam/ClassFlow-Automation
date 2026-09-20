@@ -15,6 +15,7 @@ export function navFor(role: Role | undefined, pending = 0): NavItem[] {
   if (role === 'admin') {
     return [
       { to: '/', label: 'Overview', end: true },
+      { to: '/sessions', label: 'Sessions', end: false },
       { to: '/recordings', label: 'Recordings', end: false },
       { to: '/attendance', label: 'Attendance', end: false },
       { to: '/students', label: 'Students', end: false },
@@ -26,6 +27,7 @@ export function navFor(role: Role | undefined, pending = 0): NavItem[] {
   }
   return [
     { to: '/', label: 'Overview', end: true },
+    { to: '/sessions', label: 'Sessions', end: false },
     { to: '/recordings', label: 'Recordings', end: false },
     { to: '/attendance', label: 'Attendance', end: false },
     { to: '/students', label: 'Students', end: false },
