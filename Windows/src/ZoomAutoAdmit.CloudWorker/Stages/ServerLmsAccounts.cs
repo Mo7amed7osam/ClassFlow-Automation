@@ -72,7 +72,7 @@ public sealed class ServerLmsAccounts(
         HttpStatusCode.Unauthorized => "this worker's device token was not accepted; it may have been revoked",
         HttpStatusCode.NotFound => "no such job for this device",
         HttpStatusCode.Forbidden => "that coordinator is not turned on",
-        HttpStatusCode.Conflict => "the job is not one being run, or names no account",
+        HttpStatusCode.Conflict => "the job is not one being run, or names an account that is gone",
         _ => "unexpected",
     };
 

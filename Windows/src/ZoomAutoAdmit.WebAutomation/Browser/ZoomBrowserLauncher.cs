@@ -38,6 +38,11 @@ public sealed class ZoomBrowserLauncher : IZoomBrowserLauncher
                 {
                     Headless = plan.Headless,
                     AcceptDownloads = false,
+                    // Playwright's default is to pass --no-sandbox for you. These profiles visit
+                    // Zoom and the LMS on the open web, so the sandbox is asked for by name; a
+                    // machine that cannot build one refuses to start the browser, which is the
+                    // right way round.
+                    ChromiumSandbox = true,
                     Args = plan.Arguments.Count > 0 ? [.. plan.Arguments] : null
                 });
             cancellationToken.ThrowIfCancellationRequested();

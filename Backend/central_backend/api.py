@@ -249,8 +249,13 @@ async def job_lms_secret(job_id: str, request: Request) -> JSONResponse:
             account = await session.get(LmsAccount, uuid.UUID(str(account_id)))
         except ValueError:
             account = None
+        # Not another bare 404. By this point the device has proved it holds this job, so naming
+        # what is actually wrong leaks nothing and saves whoever reads the class card from
+        # hunting for a job that was never missing.
         if account is None:
-            raise ApiError(404, "Not found")
+            raise ApiError(409, "Conflict",
+                           "This job names an LMS account that no longer exists. The coordinator may have "
+                           "removed it; the class needs a new one before this stage can run.")
 
         # The same refusal the admin path makes: turning a coordinator off closes their sign-in
         # again at once, even to a device already holding one of their jobs.

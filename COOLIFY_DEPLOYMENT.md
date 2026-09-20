@@ -285,9 +285,16 @@ Coolify resource removes them.
 expose a VNC or a browser-debugging port, and do not mount the Docker socket into any of these
 services.
 
-**The browser's sandbox stays on.** `--no-sandbox` is the usual advice for Chromium in a container
-and it is the wrong trade for a browser that visits pages on the open web. The compose file uses
-`seccomp=unconfined` instead, which is the narrow permission the sandbox itself needs.
+**The browser's sandbox stays on, and it is now actually checked.** `--no-sandbox` is the usual
+advice for Chromium in a container and it is the wrong trade for a browser that visits pages on the
+open web. The compose file uses `seccomp=unconfined` instead, which is the narrow permission the
+sandbox itself needs: Docker's default seccomp profile blocks the unprivileged user namespaces
+Chromium builds its sandbox from.
+
+Both launch paths ask for the sandbox by name, because Playwright's default is to pass
+`--no-sandbox` for you. If a deployment drops `security_opt`, the worker's preflight fails with a
+message naming this, rather than starting a browser with no sandbox and reporting it as fine -
+which is what happened until 2026-09-20.
 
 ---
 

@@ -96,10 +96,18 @@ public static class Preflight
         try
         {
             using var playwright = await Playwright.CreateAsync();
+            // ChromiumSandbox = true, because Playwright's default is false: it passes
+            // --no-sandbox for you unless you ask otherwise. A check that launched with the
+            // default would pass on a box that cannot build a sandbox at all, which is what this
+            // check exists to catch.
+            //
+            // ("--no-sandbox=false" does not help either: Chromium reads the switch by its
+            // presence, not its value, so it turns the sandbox off while reading as if it kept
+            // it on. That is what used to be here.)
             await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
             {
                 Headless = settings.Headless,
-                Args = ["--no-sandbox=false"],     // the sandbox stays on; see COOLIFY_DEPLOYMENT.md
+                ChromiumSandbox = true,
             });
             var page = await browser.NewPageAsync();
             await page.SetContentAsync("<title>preflight</title><h1>ok</h1>");
@@ -110,9 +118,16 @@ public static class Preflight
         }
         catch (Exception problem)
         {
+            // Chromium dies during startup when it cannot build a sandbox, and what Playwright
+            // reports for that is "Target page, context or browser has been closed" - true, and
+            // no help at all. The likely cause is named here rather than left to be discovered.
             return new Check("Browser", false,
-                $"Chromium would not start: {problem.Message}. The image installs it with "
-                + "`playwright install --with-deps chromium`; check that step ran and that the browsers path is readable.");
+                $"Chromium would not start: {problem.Message}. Two things cause this. Either the browsers were "
+                + "never installed (the image runs `playwright install --with-deps chromium`), or the container "
+                + "cannot build a sandbox: Docker's default seccomp profile blocks the unprivileged user "
+                + "namespaces Chromium needs, and the compose file answers that with "
+                + "security_opt: [seccomp=unconfined]. The sandbox is asked for by name here, so this fails "
+                + "rather than quietly running without one.");
         }
     }
 
