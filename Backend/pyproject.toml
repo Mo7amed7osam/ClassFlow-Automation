@@ -13,6 +13,8 @@ dependencies = [
     "asyncpg>=0.30",
     "alembic>=1.14",
     "cryptography>=44",        # AES-GCM for the LMS passwords users keep on the server
+    "tzdata>=2024.1",          # zoneinfo has no zone database on Windows, and class times are
+                               # Africa/Cairo: without this the app will not import there at all
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,225 @@
+"""What makes a class happen at its time, with nobody at a keyboard.
+
+On a Windows PC this was Windows Task Scheduler: one task per class, registered on its date, firing
+fifteen minutes before. A server has no such thing, and without a replacement every stage in the
+system waits for somebody to ask for it - which is the one thing this deployment exists to avoid.
+
+So the backend looks at the classes it knows about and creates the jobs they are due. A class plan
+is the record; a job is one stage of running it.
+
+Three rules decide everything here:
+
+  * **A stage is created once, ever.** The idempotency key is the plan and the stage, so a restart,
+    a second pass a minute later, or two passes racing each other all reach the same one job. This
+    is what stops a class being opened twice, and it does not depend on the scheduler remembering
+    anything between passes.
+
+  * **A class whose time has passed is not opened.** After an outage the queue would otherwise fill
+    with this morning's classes at four in the afternoon, and every one of them would be wrong. A
+    class is opened inside its window and missed outside it, and a missed class is left for a person.
+
+  * **Only for a coordinator who is turned on.** The same rule the sign-in endpoint keeps: turning
+    somebody off stops their classes at the next pass, without anything having to be cancelled.
+
+Local times are Africa/Cairo, because that is what the LMS lists and what a coordinator reads.
+Everything stored and compared is UTC.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from .jobs import create_job
+from .models import ClassPlan, LmsAccount, RunDelegation, User
+from .observability import emit
+
+def _zone(name: str = "Africa/Cairo") -> ZoneInfo:
+    """The zone class times are written in.
+
+    Resolved once, here, so a machine without a zone database says which one is missing instead of
+    raising out of an import nobody was looking at. The `tzdata` dependency means this works on
+    Windows too, where the standard library ships no zones at all.
+    """
+    try:
+        return ZoneInfo(name)
+    except Exception as problem:  # noqa: BLE001 - ZoneInfoNotFoundError and its causes
+        raise RuntimeError(
+            f"The time zone '{name}' is not on this machine, so no class time can be read. "
+            "The `tzdata` package provides it; a slim container also needs the OS package."
+        ) from problem
+
+
+CAIRO = _zone()
+
+
+@dataclass(frozen=True)
+class Stage:
+    """A stage of a class, and when it is due relative to the class's start."""
+
+    job_type: str
+    offset: timedelta
+    what: str
+
+
+# What the scheduler creates today, and nothing it cannot.
+#
+# The six Zoom stages are not built in any worker, so scheduling them would fill the queue with
+# work nothing can take. They are added here as they are built; the shape is already right.
+STAGES: tuple[Stage, ...] = (
+    Stage("lms.run_session", timedelta(0), "press Run Session as the class starts"),
+)
+
+# How late a stage may still be created. A class that came due while the server was down is
+# reopened inside this window and left alone outside it: fifteen minutes is long enough to survive
+# a deployment and short enough that nothing opens a class that is effectively over.
+GRACE = timedelta(minutes=15)
+
+# How far ahead to look. A stage due in the next minute is created now rather than at the exact
+# second, so a pass that runs slightly late still creates it.
+LOOKAHEAD = timedelta(minutes=1)
+
+
+def due_at(plan: ClassPlan, stage: Stage) -> datetime | None:
+    """When this stage of this class is due, in UTC. None for a class with no time of its own."""
+    if not plan.start_time:
+        return None
+    try:
+        local = time.fromisoformat(plan.start_time)
+    except ValueError:
+        return None
+    return datetime.combine(plan.session_date, local, tzinfo=CAIRO).astimezone(UTC) + stage.offset
+
+
+def idempotency_key(plan_id: uuid.UUID, stage: Stage) -> str:
+    """One key per class per stage, for all time. This is what stops a class running twice."""
+    return f"plan:{plan_id}:{stage.job_type}"
+
+
+class Scheduler:
+    """Turns the classes that are due into jobs. Started beside the sweeper; safe to run twice."""
+
+    def __init__(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        clock,  # noqa: ANN001 - the app's Clock, as the sweeper takes it
+        interval_seconds: int = 30,
+    ) -> None:
+        self._sessionmaker = sessionmaker
+        self._clock = clock
+        self._interval = interval_seconds
+
+    async def schedule_once(self) -> dict[str, int]:
+        """One pass. Returns what it did, for the log and for a test to read."""
+        now = self._clock()
+        counts = {"created": 0, "missed": 0}
+
+        async with self._sessionmaker() as session, session.begin():
+            # Only the coordinators turned on, and only their planned classes. A class already
+            # opened, skipped or finished is not looked at again.
+            enabled = select(RunDelegation.coordinator_id).where(RunDelegation.enabled.is_(True))
+            plans = (await session.execute(
+                select(ClassPlan)
+                .where(
+                    ClassPlan.status == "planned",
+                    ClassPlan.coordinator_id.in_(enabled),
+                    # A day either side, so the window is found whatever the local offset is.
+                    ClassPlan.session_date.between(
+                        (now - timedelta(days=1)).date(), (now + timedelta(days=1)).date()),
+                )
+                .limit(500)
+            )).scalars().all()
+
+            for plan in plans:
+                for stage in STAGES:
+                    when = due_at(plan, stage)
+                    if when is None:
+                        continue
+                    if when > now + LOOKAHEAD:
+                        continue                       # not yet
+                    if when < now - GRACE:
+                        # Too late to be worth opening. Said once per pass, so somebody can see it
+                        # happened rather than wondering why a class never ran.
+                        counts["missed"] += 1
+                        emit("schedule.missed", level=logging.WARNING, group=plan.group_name,
+                             date=plan.session_date.isoformat(), startTime=plan.start_time,
+                             jobType=stage.job_type, lateBySeconds=int((now - when).total_seconds()))
+                        continue
+
+                    payload = await self._payload(session, plan)
+                    if payload is None:
+                        continue
+
+                    _, created = await create_job(
+                        session,
+                        job_type=stage.job_type,
+                        payload=payload,
+                        idempotency_key=idempotency_key(plan.id, stage),
+                        now=now,
+                        max_attempts=3,
+                    )
+                    if created:
+                        counts["created"] += 1
+                        emit("schedule.created", group=plan.group_name, jobType=stage.job_type,
+                             date=plan.session_date.isoformat(), startTime=plan.start_time)
+
+        return counts
+
+    async def _payload(self, session: AsyncSession, plan: ClassPlan) -> dict | None:
+        """The stage payload for this class, or None when the class cannot say whose it is.
+
+        A class with no LMS account named would run under whichever account the machine last used,
+        and write one coordinator's class up under another's name. There is no sensible default, so
+        the class is left alone and said about.
+        """
+        delegation = await session.get(RunDelegation, plan.coordinator_id)
+        account_id = delegation.lms_account_id if delegation else None
+        if account_id is None:
+            emit("schedule.no_account", level=logging.WARNING, group=plan.group_name,
+                 date=plan.session_date.isoformat(),
+                 reason="the coordinator is turned on but no LMS account is chosen for them")
+            return None
+
+        account = await session.get(LmsAccount, account_id)
+        if account is None or account.user_id != plan.coordinator_id:
+            emit("schedule.no_account", level=logging.WARNING, group=plan.group_name,
+                 date=plan.session_date.isoformat(),
+                 reason="the chosen LMS account is not that coordinator's, or is gone")
+            return None
+
+        payload: dict = {
+            "classPlanId": str(plan.id),
+            "group": plan.group_name,
+            "date": plan.session_date.isoformat(),
+            "coordinatorId": str(plan.coordinator_id),
+            "lmsAccountId": str(account.id),
+            "dryRun": False,
+        }
+        if plan.start_time:
+            payload["startTime"] = plan.start_time
+        if plan.meeting_url:
+            payload["meetingUrl"] = plan.meeting_url
+        return payload
+
+    async def run(self, stop: asyncio.Event) -> None:
+        """Until asked to stop. A failed pass is logged and the next one still happens."""
+        while not stop.is_set():
+            try:
+                counts = await self.schedule_once()
+                if counts["created"] or counts["missed"]:
+                    emit("schedule.pass", **counts)
+            except asyncio.CancelledError:
+                raise
+            except Exception as problem:  # noqa: BLE001 - one bad pass must not end the scheduler
+                emit("schedule.error", level=logging.ERROR, error=type(problem).__name__)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=self._interval)
+            except TimeoutError:
+                pass

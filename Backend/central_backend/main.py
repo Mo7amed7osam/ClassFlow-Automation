@@ -29,6 +29,7 @@ from .config import Settings
 from .connections import ConnectionRegistry
 from .db import make_engine, make_sessionmaker
 from .dispatch import Dispatcher, Sweeper
+from .scheduling import Scheduler
 from .admin import router as admin_router
 from .auth import LEGACY_ADMIN_USERS_VARIABLE, AuthSettings, LoginThrottle, RateLimit
 from .auth import router as auth_router
@@ -122,8 +123,13 @@ def create_app(
         app.state.registry = registry
         app.state.dispatcher = dispatcher
         app.state.sweeper = sweeper
+        # What makes a class happen at its time. Without it every stage waits for somebody to ask,
+        # which is the one thing a server running unattended cannot do.
+        scheduler = Scheduler(sessionmaker, clock)
+        app.state.scheduler = scheduler
         stop = asyncio.Event()
         task = asyncio.create_task(sweeper.run(stop)) if run_background else None
+        schedule_task = asyncio.create_task(scheduler.run(stop)) if run_background else None
         emit("backend.started", version=__version__, environment=settings.environment)
         await _check_accounts(sessionmaker)
         try:
@@ -132,6 +138,8 @@ def create_app(
             stop.set()
             if task is not None:
                 await task
+            if schedule_task is not None:
+                await schedule_task
             for device_id in list(registry.connected_device_ids()):
                 await registry.close(device_id, 1012, "server restarting")
             await engine.dispose()

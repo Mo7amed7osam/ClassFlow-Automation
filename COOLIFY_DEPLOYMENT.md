@@ -15,7 +15,8 @@ which is which will waste your afternoon.
 | Backend (FastAPI) + dashboard | Built and tested. 410 tests pass against a real PostgreSQL |
 | PostgreSQL, volumes, migrations | Built. Migration chain `0001` → `0013`, single head |
 | Cloud worker: settings, preflight, credentials, enrolment | Built. Runs, checks a machine, reports honestly |
-| Cloud worker: the class stages | **Partly.** The three LMS stages are built and unit tested; the Zoom stages are not, and the worker does not claim to do them. None has run against the real LMS |
+| Cloud worker: the class stages | **Partly.** The three LMS stages are built, and `lms.run_session` has run against the real DEPI LMS from Linux in dry-run form. The six Zoom stages are not built, and the worker does not claim to do them |
+| Classes opening by themselves | **Built.** The backend's scheduler turns a class plan into its stages at the class's own time, once, and refuses to open one whose time has passed |
 | Dockerfiles and compose | **Built and run.** Both images build; the stack comes up, migrates and answers. See §7 |
 
 The backend now knows ten job types: `recording.process` as before, and nine stages of a class.
