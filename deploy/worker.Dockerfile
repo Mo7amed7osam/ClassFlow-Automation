@@ -113,6 +113,7 @@ VOLUME ["/var/lib/classflow"]
 # Server page reports, and it notices a hung Chromium, which a probe on the process would not.
 
 COPY deploy/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
+RUN chmod 755 /usr/local/bin/worker-entrypoint.sh
 
 # tini as PID 1: it reaps Chromium's orphans and passes SIGTERM through to the worker, which is
 # what lets a class be closed properly rather than killed.
