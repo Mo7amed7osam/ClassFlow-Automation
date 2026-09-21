@@ -79,14 +79,6 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN ./.playwright/node/linux-x64/node ./.playwright/package/cli.js install --with-deps chromium \
  && chmod -R a+rX /ms-playwright
 
-# An unprivileged user, and Chromium keeps its own sandbox: --no-sandbox is a common piece of advice
-# for containers and is exactly the wrong trade for a browser that visits pages on the open web.
-# The compose file gives the container SYS_ADMIN-free seccomp instead; see COOLIFY_DEPLOYMENT.md.
-RUN useradd --create-home --shell /usr/sbin/nologin worker \
- && mkdir -p /var/lib/classflow \
- && chown -R worker:worker /var/lib/classflow /app
-USER worker
-
 # XDG_DATA_HOME is what .NET resolves Environment.SpecialFolder.LocalApplicationData from on Linux,
 # and a great deal hangs off that one folder: the browser profile a signed-in Zoom or LMS session
 # lives in, the admission ledger, the live-meeting files. Left alone it lands in the container's own
@@ -114,6 +106,14 @@ VOLUME ["/var/lib/classflow"]
 
 COPY deploy/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
 RUN chmod 755 /usr/local/bin/worker-entrypoint.sh
+
+# An unprivileged user, and Chromium keeps its own sandbox: --no-sandbox is a common piece of advice
+# for containers and is exactly the wrong trade for a browser that visits pages on the open web.
+# The compose file gives the container SYS_ADMIN-free seccomp instead; see COOLIFY_DEPLOYMENT.md.
+RUN useradd --create-home --shell /usr/sbin/nologin worker \
+ && mkdir -p /var/lib/classflow \
+ && chown -R worker:worker /var/lib/classflow /app
+USER worker
 
 # tini as PID 1: it reaps Chromium's orphans and passes SIGTERM through to the worker, which is
 # what lets a class be closed properly rather than killed.
