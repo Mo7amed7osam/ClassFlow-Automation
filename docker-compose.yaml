@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set a database user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a database password}
+      POSTGRES_DB: ${POSTGRES_DB:-classflow}
+      TZ: ${TZ:-Africa/Cairo}
+    volumes:
+      - classflow-postgres:/var/lib/postgresql/data
+    mem_limit: ${POSTGRES_MEMORY:-1g}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CENTRAL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-classflow}
+      CENTRAL_ENVIRONMENT: ${CENTRAL_ENVIRONMENT:-production}
+      CENTRAL_FORWARDED_ALLOW_IPS: ${CENTRAL_FORWARDED_ALLOW_IPS:-*}
+      CENTRAL_CLIENT_API_KEY_HASHES: ${CENTRAL_CLIENT_API_KEY_HASHES:?the SHA-256 of each n8n key, never a key}
+      CENTRAL_SECRETS_KEY: ${CENTRAL_SECRETS_KEY:?set a secrets key}
+      CENTRAL_ALLOW_REGISTRATION: ${CENTRAL_ALLOW_REGISTRATION:-false}
+      CENTRAL_SESSION_HOURS: ${CENTRAL_SESSION_HOURS:-8}
+      CENTRAL_AI_API_KEY: ${CENTRAL_AI_API_KEY:-}
+      CENTRAL_AI_MODEL: ${CENTRAL_AI_MODEL:-openai/gpt-4o-mini}
+      CENTRAL_AI_BASE_URL: ${CENTRAL_AI_BASE_URL:-https://openrouter.ai/api/v1}
+      TZ: ${TZ:-Africa/Cairo}
+      SERVICE_FQDN_BACKEND: ${SERVICE_FQDN_BACKEND:-}
+    expose:
+      - "8000"
+    labels:
+      - coolify.managed=true
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/worker.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      ZAA_BACKEND_URL: ${ZAA_BACKEND_URL:?the backend's https address}
+      ZAA_WORKER_NAME: ${ZAA_WORKER_NAME:-cloud-worker-1}
+      ZAA_ENROLLMENT_TOKEN: ${ZAA_ENROLLMENT_TOKEN:-}
+      ZAA_HEADLESS: ${ZAA_HEADLESS:-true}
+      ZAA_TIMEZONE: ${TZ:-Africa/Cairo}
+      ZAA_STATE_DIR: /var/lib/classflow
+      TZ: ${TZ:-Africa/Cairo}
+    volumes:
+      - classflow-worker-state:/var/lib/classflow
+    stop_grace_period: 120s
+    shm_size: 1gb
+    mem_limit: ${ZAA_WORKER_MEMORY:-2g}
+    security_opt:
+      - seccomp=unconfined
+    labels:
+      - coolify.managed=true
+
+volumes:
+  classflow-postgres:
+    name: classflow-postgres
+  classflow-worker-state:
+    name: classflow-worker-state
