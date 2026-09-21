@@ -53,6 +53,15 @@ from .user_data import router as user_data_router
 DEFAULT_DASHBOARD_DIST = Path(__file__).resolve().parents[2] / "Dashboard" / "dist"
 
 
+def _is_local_health(scope: Scope) -> bool:
+    """The health check, asked from inside this container. Nothing else is let past."""
+    if scope["type"] != "http" or scope.get("path") != "/health":
+        return False
+    client = scope.get("client")
+    host = client[0] if client else None
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
 class RequireHttpsMiddleware:
     """Outside development, only https:// and wss:// requests are served (as the proxy reports them)."""
 
@@ -62,6 +71,13 @@ class RequireHttpsMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if not self.enabled or scope["type"] not in ("http", "websocket") or scope.get("scheme") in ("https", "wss"):
+            await self.app(scope, receive, send)
+            return
+        # The container's own health check reaches /health over loopback, where there is no proxy
+        # to mark the request https and nothing to protect: it never leaves the container. Refusing
+        # it makes the container permanently unhealthy, which stops the worker that waits on it and
+        # reads as a broken deployment rather than as a rule doing its job.
+        if _is_local_health(scope):
             await self.app(scope, receive, send)
             return
         emit("request.refused_plain_http", path=scope.get("path"))

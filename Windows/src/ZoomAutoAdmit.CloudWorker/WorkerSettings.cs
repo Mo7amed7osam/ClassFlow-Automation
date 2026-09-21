@@ -28,14 +28,17 @@ public sealed record WorkerSettings
     public required string StateDirectory { get; init; }
 
     /// <summary>
-    /// How many classes this worker runs at once. ZAA_MAX_CONCURRENT_SESSIONS.
+    /// How many classes this worker runs at once, which is one and cannot be configured.
     ///
-    /// This is not the number of coordinators: each live class is its own Chromium with its own
-    /// profile, so the ceiling is the machine's memory and /dev/shm, not how many people are
-    /// registered. Two is a deliberately small default - raise it once a real machine has been
-    /// measured, not before.
+    /// The agent takes a single job at a time, so a worker holding a class is busy for the class's
+    /// length. There was a ZAA_MAX_CONCURRENT_SESSIONS here that was read, validated, logged and
+    /// used by nothing - a knob that looked like it worked and would have had somebody set it to
+    /// four and wonder why three classes ran late.
+    ///
+    /// Several classes at once means several worker SERVICES, each with its own state volume and
+    /// its own enrolment. COOLIFY_DEPLOYMENT.md says how.
     /// </summary>
-    public int MaxConcurrentSessions { get; init; } = 2;
+    public const int ConcurrentClasses = 1;
 
     /// <summary>
     /// Whether Chromium runs with no display. ZAA_HEADLESS, default true.
@@ -84,7 +87,6 @@ public sealed record WorkerSettings
             Name = Read("ZAA_WORKER_NAME") ?? Environment.MachineName,
             EnrollmentToken = Read("ZAA_ENROLLMENT_TOKEN"),
             StateDirectory = state,
-            MaxConcurrentSessions = PositiveNumber(Read("ZAA_MAX_CONCURRENT_SESSIONS"), 2, "ZAA_MAX_CONCURRENT_SESSIONS"),
             Headless = Flag(Read("ZAA_HEADLESS"), true),
             JobTimeout = TimeSpan.FromMinutes(PositiveNumber(Read("ZAA_JOB_TIMEOUT_MINUTES"), 30, "ZAA_JOB_TIMEOUT_MINUTES")),
             TimeZone = Read("ZAA_TIMEZONE") ?? "Africa/Cairo",

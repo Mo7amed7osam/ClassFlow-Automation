@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using ZoomAutoAdmit.CentralAgent;
 using ZoomAutoAdmit.Core.Models;
 using ZoomAutoAdmit.WebAutomation;
+using ZoomAutoAdmit.WebAutomation.Browser;
 
 namespace ZoomAutoAdmit.CloudWorker.Stages;
 
@@ -29,7 +30,8 @@ public interface IZoomAccounts
 public sealed class ClassRunStage(
     IZoomAccounts accounts,
     bool headless,
-    Action<string>? log = null) : ClassStageHandler(log)
+    Action<string>? log = null,
+    Func<DateTimeOffset>? now = null) : ClassStageHandler(log, now)
 {
     /// <summary>How long after the class's own length to keep holding it. Nothing is admitted to a
     /// meeting nobody is in, and a worker that lost the backend must not hold its slot for ever.</summary>
@@ -94,7 +96,11 @@ public sealed class ClassRunStage(
         using var classOver = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         classOver.CancelAfter(length);
 
-        await using var engine = new WebAutoAdmitEngine();
+        // neverHeaded: a profile that has never signed in is shown to a person by default, and on
+        // a server there is neither a person nor a display. Without this the first class on a
+        // fresh container could not open at all.
+        await using var engine = new WebAutoAdmitEngine(
+            profileManager: new ZoomProfileManager(neverHeaded: headless));
         var answer = Answer(stage);
         answer["holdsFor"] = (int)length.TotalMinutes;
 
@@ -120,6 +126,15 @@ public sealed class ClassRunStage(
                 $"Zoom asked for something only a person can answer: {problem.Message}");
         }
 
+        // The Windows path does this and the worker was not: a host that joins unmuted puts a
+        // server's silence - or its noise - into every class.
+        try
+        {
+            await engine.DisableMicrophoneAsync(classOver.Token);
+            await engine.DisableCameraAsync(classOver.Token);
+        }
+        catch (Exception problem) { Log($"could not mute or turn the camera off: {problem.GetType().Name}"); }
+
         Log($"{stage.Group} is live; admitting for {length.TotalMinutes:0} minutes");
         try
         {
@@ -131,8 +146,29 @@ public sealed class ClassRunStage(
         }
         finally
         {
+            // StopAsync closes the browser; the meeting would stay open and hostless, and the
+            // account cannot start its next class while one is running. So the meeting is ended
+            // for everyone first, and the browser closed after.
+            try
+            {
+                var (ended, why) = await ZoomWebMeetingEnder.EndForAllAsync(
+                    engine.ActiveMeetingPage, CancellationToken.None);
+                answer["endedTheMeeting"] = ended;
+                if (!ended)
+                {
+                    // Reported, not only logged. The ender's own reason distinguishes the case that
+                    // matters: no End button means this account was not the host, so the class was
+                    // joined as a guest and nobody was ever admitted from the waiting room. Read as
+                    // a plain success, that class looks identical to one that ran properly - and
+                    // the meeting is still open, so the account cannot start its next one.
+                    Log($"the meeting was not ended: {why}");
+                    answer["warning"] = why;
+                }
+            }
+            catch (Exception problem) { Log($"ending the meeting failed: {problem.GetType().Name}"); }
+
             try { await engine.StopAsync(); }
-            catch (Exception problem) { Log($"the meeting did not close cleanly: {problem.GetType().Name}"); }
+            catch (Exception problem) { Log($"the browser did not close cleanly: {problem.GetType().Name}"); }
         }
 
         if (cancellationToken.IsCancellationRequested)
@@ -144,8 +180,15 @@ public sealed class ClassRunStage(
             return JobOutcome.Success(answer);
         }
 
-        answer["did"] = "held the meeting for the class";
-        answer["message"] = $"{stage.Group}: the meeting was opened, admitted for {length.TotalMinutes:0} minutes, and closed.";
+        bool closed = answer["endedTheMeeting"]?.GetValue<bool>() ?? false;
+        answer["did"] = closed
+            ? "held the meeting for the class"
+            : "held the meeting but could not close it";
+        answer["message"] = closed
+            ? $"{stage.Group}: the meeting was opened, admitted for {length.TotalMinutes:0} minutes, and closed."
+            : $"{stage.Group}: the meeting was opened and admitted for {length.TotalMinutes:0} minutes, but it "
+              + "could not be ended. It may still be open, and this account cannot start its next class while "
+              + "it is. Check whether this account is the meeting's host.";
         return JobOutcome.Success(answer);
     }
 }

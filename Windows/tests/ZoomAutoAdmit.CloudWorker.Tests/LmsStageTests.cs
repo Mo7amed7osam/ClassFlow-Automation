@@ -17,6 +17,10 @@ public sealed class LmsStageTests
     private const string Coordinator = "66666666-7777-8888-9999-000000000000";
     private const string Account = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 
+    /// <summary>The class's own hour, so these tests answer the same whatever day they are run.</summary>
+    private static readonly Func<DateTimeOffset> DuringTheClass =
+        () => new DateTimeOffset(2026, 9, 20, 19, 5, 0, TimeSpan.FromHours(3));
+
     private sealed class Accounts(ILmsCredentialStore? answer = null) : ILmsAccounts
     {
         public readonly List<Guid> Asked = [];
@@ -50,7 +54,7 @@ public sealed class LmsStageTests
     public async Task A_stage_with_no_account_named_never_reaches_the_LMS()
     {
         var accounts = new Accounts();
-        var outcome = await new RunSessionStage(accounts).ExecuteAsync(Payload(lmsAccountId: null), default);
+        var outcome = await new RunSessionStage(accounts, now: DuringTheClass).ExecuteAsync(Payload(lmsAccountId: null), default);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal("invalidPayload", outcome.Error!.Code);
@@ -64,14 +68,14 @@ public sealed class LmsStageTests
     public async Task The_account_asked_for_is_the_one_the_class_names()
     {
         var accounts = new Accounts();
-        await new CompleteSessionStage(accounts).ExecuteAsync(Payload(), default);
+        await new CompleteSessionStage(accounts, now: DuringTheClass).ExecuteAsync(Payload(), default);
         Assert.Equal([Guid.Parse(Account)], accounts.Asked);
     }
 
     [Fact]
     public async Task A_sign_in_the_server_will_not_give_stops_the_stage_there()
     {
-        var outcome = await new RunSessionStage(new Accounts(answer: null)).ExecuteAsync(Payload(), default);
+        var outcome = await new RunSessionStage(new Accounts(answer: null), now: DuringTheClass).ExecuteAsync(Payload(), default);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal("noLmsSignIn", outcome.Error!.Code);
@@ -88,7 +92,7 @@ public sealed class LmsStageTests
         try
         {
             var outcome = await new AttendanceStage(
-                new Accounts(new LmsCredentialStore("t")), new Names()).ExecuteAsync(Payload(), default);
+                new Accounts(new LmsCredentialStore("t")), new Names(), now: DuringTheClass).ExecuteAsync(Payload(), default);
 
             Assert.False(outcome.Succeeded);
             Assert.Equal("noAttendanceCollected", outcome.Error!.Code);
@@ -101,7 +105,7 @@ public sealed class LmsStageTests
     [Fact]
     public async Task A_payload_that_is_not_an_object_is_refused_without_a_crash()
     {
-        var outcome = await new RunSessionStage(new Accounts())
+        var outcome = await new RunSessionStage(new Accounts(), now: DuringTheClass)
             .ExecuteAsync(JsonDocument.Parse("[1,2,3]").RootElement, default);
         Assert.Equal("invalidPayload", outcome.Error!.Code);
     }
@@ -119,7 +123,7 @@ public sealed class LmsStageTests
         Assert.True(outcome.Error.Retryable);
     }
 
-    private sealed class Stopping : ClassStageHandler
+    private sealed class Stopping() : ClassStageHandler(now: DuringTheClass)
     {
         public override string JobType => "lms.run_session";
         protected override Task<JobOutcome> RunAsync(ClassStage stage, CancellationToken cancellationToken)
@@ -154,5 +158,20 @@ public sealed class LmsStageTests
         protected override Task<JobOutcome> RunOnLmsAsync(
             LmsSessionRunner runner, ClassStage stage, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+    }
+
+    [Fact]
+    public void An_attendance_failure_keeps_its_own_kind_on_the_way_out()
+    {
+        // The attendance result used to carry no kind at all, so every attendance failure reached
+        // the server as 'lmsFailed': a session the dashboard has not finished yet, which will be
+        // ready in five minutes, could not be told from one it does not list, which never will be.
+        var notFinished = new LmsAttendanceResult(false, "not finished", null)
+            { FailureKind = LmsFailure.SessionNotFinished };
+        var notThere = new LmsAttendanceResult(false, "not listed", null)
+            { FailureKind = LmsFailure.SessionNotFound };
+
+        Assert.True(Exposed.Failed(notFinished.FailureKind, notFinished.Message).Error!.Retryable);
+        Assert.Equal("sessionNotFound", Exposed.Failed(notThere.FailureKind, notThere.Message).Error!.Code);
     }
 }

@@ -22,6 +22,7 @@ services:
       # redeployed; it does when the resource is deleted, so the backup in COOLIFY_DEPLOYMENT.md is
       # not optional.
       - classflow-postgres:/var/lib/postgresql/data
+    mem_limit: ${POSTGRES_MEMORY:-1g}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -77,18 +78,38 @@ services:
       # Single-use, and only read when the state volume has no device token yet. Clear it from
       # Coolify once the worker has enrolled.
       ZAA_ENROLLMENT_TOKEN: ${ZAA_ENROLLMENT_TOKEN:-}
-      ZAA_MAX_CONCURRENT_SESSIONS: ${ZAA_MAX_CONCURRENT_SESSIONS:-2}
       ZAA_HEADLESS: ${ZAA_HEADLESS:-true}
       ZAA_TIMEZONE: ${TZ:-Africa/Cairo}
       ZAA_STATE_DIR: /var/lib/classflow
+      # The container's own clock. ZAA_TIMEZONE tells the worker what a class time means; this
+      # tells everything else - log lines, file times, anything reading local time - so the two
+      # cannot disagree about what "19:00" was.
+      TZ: ${TZ:-Africa/Cairo}
     volumes:
       # The device token, the browser profiles and the journals. A profile is a signed-in Zoom or
       # LMS session: losing this volume means signing every account in again by hand.
+      #
+      # ONE WORKER PER VOLUME. This is not a preference. The volume holds this worker's device
+      # token and identity, so two containers sharing it are the same device to the backend, both
+      # heartbeating as it and both answering for its jobs. They would also share every browser
+      # profile, and two Chromiums on one userDataDir corrupt it.
+      #
+      # So `--scale worker=2` is wrong, and the deployment document no longer says otherwise. A
+      # second worker is a second SERVICE with its own volume and its own enrolment token; see
+      # COOLIFY_DEPLOYMENT.md.
       - classflow-worker-state:/var/lib/classflow
+    # Long enough to close a meeting properly. SIGTERM makes the worker drain: it ends the class's
+    # meeting, closes the browser and reports the job. Killed halfway, it leaves the meeting open,
+    # the profile locked and the class recorded as failed for a reason that was never about it.
+    stop_grace_period: 120s
     # Chromium uses shared memory for page rendering and dies without a readable message on
     # Docker's 64 MB default. This is the most common cause of a browser container that "just
     # crashes"; the worker's preflight checks it and refuses to start rather than crash later.
     shm_size: 1gb
+    # A browser has no natural ceiling, and without one a class that goes wrong takes PostgreSQL
+    # down with it - which loses every other class too. Raise it once a real machine has been
+    # measured; 2 GB holds one class comfortably.
+    mem_limit: ${ZAA_WORKER_MEMORY:-2g}
     security_opt:
       # The browser keeps its own sandbox, which needs unprivileged user namespaces. This is the
       # narrow way to allow that; --no-sandbox would be the wide one and is not used.

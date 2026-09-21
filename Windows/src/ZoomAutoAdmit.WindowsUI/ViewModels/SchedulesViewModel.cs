@@ -32,6 +32,8 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
     private string _statusMessage = string.Empty;
     private string _executionStatus = "Scheduler ready.";
     private readonly IScheduleImportDialogs _dialogs;
+    private readonly SignedInScope _scope;
+    private readonly ZoomAutoAdmit.WebAutomation.Lms.ClassLmsAccounts _classes;
     private bool _idle = true, _enableImported = true;
     private DateTime? _occurrenceDate;
     private string _importStatus = "Upload an Excel timetable to preview exact dates. Nothing is saved until you confirm.";
@@ -45,10 +47,16 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
     private string _todaySummary = "No sessions today.";
     private readonly System.Threading.Timer? _clock;
 
-    public SchedulesViewModel(IWindowsUiService service, IScheduleImportDialogs? dialogs = null)
+    public SchedulesViewModel(IWindowsUiService service, IScheduleImportDialogs? dialogs = null,
+        SignedInScope? scope = null, ZoomAutoAdmit.WebAutomation.Lms.ClassLmsAccounts? classes = null)
     {
         _service = service;
         _dialogs = dialogs ?? new ScheduleImportDialogs();
+        // Whose classes this PC may show the person signed in to it, and which coordinator each
+        // group belongs to.
+        _scope = scope ?? new SignedInScope(() => null);
+        _classes = classes ?? new ZoomAutoAdmit.WebAutomation.Lms.ClassLmsAccounts();
+        _scope.Changed += () => _ = RefreshAsync();
         NewCommand = new RelayCommand(_ => { if (IsIdle) ClearEditor(); });
         SaveCommand = new AsyncRelayCommand(_ => SaveAsync());
         DeleteCommand = new AsyncRelayCommand(_ => DeleteAsync());
@@ -94,6 +102,9 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
     public bool HasCoordinators => Coordinators.Count > 2;
 
     public string FilterSummary => $"Showing {FilteredItems.Count} of {Items.Count} schedules.";
+    /// <summary>What this PC is showing less of, and why. Empty when every class is shown.</summary>
+    public string ScopeNote { get => _scopeNote; private set => SetProperty(ref _scopeNote, value); }
+    private string _scopeNote = string.Empty;
     public string NextMeetingSummary { get => _nextMeetingSummary; private set => SetProperty(ref _nextMeetingSummary, value); }
     public string NextMeetingCountdown { get => _nextMeetingCountdown; private set => SetProperty(ref _nextMeetingCountdown, value); }
     /// <summary>Today's enabled sessions and how many of them are still to come.</summary>
@@ -208,8 +219,21 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
             MeetingUrl = draftUrl;
             ImportAccount = Accounts.FirstOrDefault(a => a.AccountId == importAccountId);
             ImportMeetingUrl = importUrl;
+            // Whose each class is. A class the run plan brought here already says so; one imported
+            // on this PC says nothing, but its group may still belong to a coordinator this PC runs
+            // - and it already goes up on the LMS under their account, because that is decided by
+            // the group. Saying so here makes the two agree.
+            var owners = _classes.List().ToDictionary(c => c.Group, c => c.Coordinator, StringComparer.OrdinalIgnoreCase);
+            var named = schedules.Select(schedule =>
+                string.IsNullOrEmpty(schedule.Coordinator)
+                && owners.TryGetValue(schedule.GroupName ?? schedule.AccountId, out var whose) && whose.Length > 0
+                    ? schedule with { Coordinator = whose }
+                    : schedule).ToArray();
+            var mine = named.Where(schedule => _scope.Owns(schedule.GroupName ?? schedule.AccountId)).ToArray();
+
             Items.Clear();
-            foreach (var schedule in schedules) Items.Add(schedule);
+            foreach (var schedule in mine) Items.Add(schedule);
+            ScopeNote = _scope.Narrowed(mine.Length, named.Length, "class(es)");
             UpdateCoordinators();
             ApplyFilter();
             UpdateNextMeeting();

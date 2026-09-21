@@ -11,12 +11,22 @@ public sealed class ZoomProfileManager
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private readonly string _profilesRoot;
 
-    public ZoomProfileManager(string? profilesRoot = null)
+    private readonly bool _neverHeaded;
+
+    /// <param name="neverHeaded">
+    /// A machine with no display. Without this a profile that has never signed in is launched
+    /// VISIBLE so a person can sign in - right on a PC, and fatal on a server, where the first
+    /// class of a fresh container could never open at all. A server sets this and gets a headless
+    /// browser whatever the profile's history; a sign-in that genuinely needs a person then fails
+    /// with a reason instead of waiting for one who is not there.
+    /// </param>
+    public ZoomProfileManager(string? profilesRoot = null, bool neverHeaded = false)
     {
         _profilesRoot = Path.GetFullPath(profilesRoot ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ZoomAutoAdmit",
             "Profiles"));
+        _neverHeaded = neverHeaded;
     }
 
     public string ProfilesRoot => _profilesRoot;
@@ -152,7 +162,11 @@ public sealed class ZoomProfileManager
     public ZoomBrowserLaunchPlan CreateLaunchPlan(ZoomBrowserProfile profile, bool forceHeaded)
     {
         ValidateManagedProfile(profile);
-        return new ZoomBrowserLaunchPlan(profile, Headless: profile.HasReusableSession && !forceHeaded);
+        // A profile with no saved session is shown so somebody can sign in. On a machine with no
+        // display there is nobody to show it to and no display to show it on, so that choice is
+        // not available there.
+        bool headless = _neverHeaded || (profile.HasReusableSession && !forceHeaded);
+        return new ZoomBrowserLaunchPlan(profile, Headless: headless);
     }
 
     private static string NormalizeAndValidateName(string requestedName)

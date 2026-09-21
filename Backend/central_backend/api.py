@@ -112,6 +112,8 @@ async def post_job(
     state = request.app.state
     try:
         async with state.sessionmaker() as session, session.begin():
+            if (wrong := await class_accounts_not_the_coordinators(session, payload)) is not None:
+                raise ApiError(400, "Invalid request", wrong)
             job, created = await create_job(
                 session,
                 job_type=body.type,
@@ -283,6 +285,16 @@ async def _job_account_secret(job_id: str, request: Request, *, kind: str) -> JS
                            f"This job names a {label} account that no longer exists. The coordinator may have "
                            "removed it; the class needs a new one before this stage can run.")
 
+        # The account has to be the coordinator's own. Without this, a payload naming somebody
+        # else's account is honoured: the job says the class is Omar's, the account belongs to
+        # Mona, and the device is handed Mona's password because it held a valid job. Whoever can
+        # write a payload could then read every saved sign-in one account id at a time.
+        named = (job.payload or {}).get("coordinatorId")
+        if named and str(account.user_id) != str(named):
+            raise ApiError(409, "Conflict",
+                           f"That {label} account belongs to a different coordinator than the class does. "
+                           "A class is only ever run under its own coordinator's accounts.")
+
         # The same refusal the admin path makes: turning a coordinator off closes their sign-in
         # again at once, even to a device already holding one of their jobs.
         delegation = await session.get(RunDelegation, account.user_id)
@@ -321,6 +333,31 @@ async def _job_account_secret(job_id: str, request: Request, *, kind: str) -> JS
     emit(f"{kind}_account.secret_read_by_device", deviceId=str(device.id), jobId=str(job.id),
          coordinator=coordinator.username, account=str(account.id))
     return _no_store(body)
+
+
+async def class_accounts_not_the_coordinators(session: Any, payload: dict[str, Any]) -> str | None:
+    """Why a class stage naming these accounts should be refused, or None when it is consistent.
+
+    Shape validation cannot answer this: whether an id is a real uuid is a different question from
+    whose account it is. Checked when the job is made so a wrong class is a 400 at once, and again
+    when a password is read, because that is the read the check is actually protecting.
+    """
+    from .models import LmsAccount, ZoomAccount
+
+    coordinator = payload.get("coordinatorId")
+    if not coordinator:
+        return None
+    for field, model, label in (("zoomAccountId", ZoomAccount, "Zoom"), ("lmsAccountId", LmsAccount, "LMS")):
+        account_id = payload.get(field)
+        if not account_id:
+            continue
+        account = await session.get(model, uuid.UUID(str(account_id)))
+        if account is None:
+            return f"There is no {label} account {account_id}."
+        if str(account.user_id) != str(coordinator):
+            return (f"{label} account '{account.label}' belongs to a different coordinator than this class. "
+                    "A class runs under its own coordinator's accounts.")
+    return None
 
 
 def _json(value: Any) -> Any:

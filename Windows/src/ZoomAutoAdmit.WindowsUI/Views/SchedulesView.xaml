@@ -4,7 +4,15 @@
     <vm:ScheduleDaysConverter x:Key="ScheduleDaysText"/>
     <vm:OpensWithConverter x:Key="OpensWithText"/>
     <BooleanToVisibilityConverter x:Key="BoolToVisible"/>
-    <Style x:Key="GridCellMuted" TargetType="TextBlock"><Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/></Style>
+    <!-- Nine columns never fit at once, so a clipped cell hands the whole value over on hover
+         instead of ending in a half-word. -->
+    <Style x:Key="GridCell" TargetType="TextBlock">
+        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        <Setter Property="ToolTip" Value="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+    </Style>
+    <Style x:Key="GridCellMuted" TargetType="TextBlock" BasedOn="{StaticResource GridCell}">
+        <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+    </Style>
 </UserControl.Resources>
 <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
 <!-- One session by hand: the same form that edits a picked row. -->
@@ -99,6 +107,13 @@
                                           Visibility="{Binding HasCoordinators, Converter={StaticResource BoolToVisible}}"/>
                                 <TextBlock Text="{Binding FilterSummary}" Style="{DynamicResource Muted}" VerticalAlignment="Center" Margin="12,0,0,0"/>
                             </WrapPanel>
+                            <!-- What this PC holds that is somebody else's, so nothing looks lost. -->
+                            <TextBlock Text="{Binding ScopeNote}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                       Foreground="{DynamicResource MutedBrush}">
+                                <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
+                                    <DataTrigger Binding="{Binding ScopeNote}" Value=""><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                </Style.Triggers></Style></TextBlock.Style>
+                            </TextBlock>
                             <!-- What signing in brought to this PC: its Zoom accounts and its own
                                  classes, when it had none of its own (a new PC, or a cloud one). -->
                             <TextBlock DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}"
@@ -152,20 +167,27 @@
                     </Grid>
                     <DataGrid Grid.Row="1" Grid.ColumnSpan="2" IsEnabled="{Binding IsIdle}" ItemsSource="{Binding FilteredItems}" SelectedItem="{Binding SelectedSchedule}"
                               AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" Margin="0" MinHeight="260" MaxHeight="520"
-                              ToolTip="Pick a row to edit it in Add or edit a session, above.">
+                            HorizontalScrollBarVisibility="Auto" CanUserResizeColumns="True"
+                            ToolTip="Pick a row to edit it in Add or edit a session, above. Hover a cell to read all of it.">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
-                            <DataGridTextColumn Header="URL" Binding="{Binding MeetingUrl}" Width="2*" />
-                            <DataGridTextColumn Header="Account" Binding="{Binding AccountId}" Width="*" />
-                            <DataGridTextColumn Header="Coordinator" Binding="{Binding Coordinator}" Width="*"
+                            <!-- The two long ones share what is left; the rest take what they need, and the table
+                                 scrolls sideways rather than cutting a word in half. -->
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" MinWidth="170"
+                                                ElementStyle="{DynamicResource GridCell}" />
+                            <DataGridTextColumn Header="URL" Binding="{Binding MeetingUrl}" Width="*" MinWidth="150"
                                                 ElementStyle="{DynamicResource GridCellMuted}" />
-                            <DataGridTextColumn Header="Time" Binding="{Binding Time, StringFormat=HH\\:mm}" Width="*" />
-                            <DataGridTextColumn Header="Date" Binding="{Binding OccurrenceDate, StringFormat=yyyy-MM-dd}" Width="*" />
-                            <DataGridTextColumn Header="Day" Binding="{Binding Converter={StaticResource ScheduleDaysText}}" Width="*" />
+                            <DataGridTextColumn Header="Account" Binding="{Binding AccountId}" Width="Auto" MinWidth="110"
+                                                ElementStyle="{DynamicResource GridCell}" />
+                            <DataGridTextColumn Header="Coordinator" Binding="{Binding Coordinator}" Width="Auto" MinWidth="95"
+                                                ElementStyle="{DynamicResource GridCellMuted}" />
+                            <DataGridTextColumn Header="Time" Binding="{Binding Time, StringFormat=HH\:mm}" Width="Auto" MinWidth="55" />
+                            <DataGridTextColumn Header="Date" Binding="{Binding OccurrenceDate, StringFormat=yyyy-MM-dd}" Width="Auto" MinWidth="90" />
+                            <DataGridTextColumn Header="Day" Binding="{Binding Converter={StaticResource ScheduleDaysText}}" Width="Auto" MinWidth="110"
+                                                ElementStyle="{DynamicResource GridCell}" />
                             <!-- What each class opens with, set for the whole schedule in the form above. -->
-                            <DataGridTextColumn Header="Opens with" Binding="{Binding PreferredEngine, Converter={StaticResource OpensWithText}}" Width="*"
-                                                ElementStyle="{DynamicResource GridCellMuted}" />
-                            <DataGridTemplateColumn Header="Enabled" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+                            <DataGridTextColumn Header="Opens with" Binding="{Binding PreferredEngine, Converter={StaticResource OpensWithText}}"
+                                                Width="Auto" MinWidth="140" ElementStyle="{DynamicResource GridCellMuted}" />
+                            <DataGridTemplateColumn Header="Enabled" Width="Auto" MinWidth="70"><DataGridTemplateColumn.CellTemplate><DataTemplate>
                                 <CheckBox IsChecked="{Binding Enabled, Mode=OneWay}" Margin="0" HorizontalAlignment="Left"
                                           Command="{Binding DataContext.ToggleEnabledCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                           CommandParameter="{Binding}" ToolTip="Turn this schedule on or off" AutomationProperties.Name="Schedule enabled"/>

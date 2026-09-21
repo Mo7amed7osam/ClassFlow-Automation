@@ -126,6 +126,36 @@ def test_health_needs_no_key_and_reveals_nothing(client):
 PLAN = "11111111-2222-3333-4444-555555555555"
 COORDINATOR = "66666666-7777-8888-9999-000000000000"
 LMS_ACCOUNT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+ZOOM_ACCOUNT = "cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa"
+SOMEBODY_ELSE = "99999999-8888-7777-6666-555555555555"
+
+
+@pytest.fixture
+def a_class(client):  # noqa: ANN001, ANN201
+    """The coordinator this class belongs to, with an LMS and a Zoom account, and a second
+    coordinator with an account of their own.
+
+    These are rows rather than ids made up in the test because the server now checks that a class
+    names its own coordinator's accounts, and a check against the database has to have one.
+    """
+    from test_dashboard import run_sql
+
+    url = client.app.state.settings.database_url
+    for user_id, username in ((COORDINATOR, "omar"), (SOMEBODY_ELSE, "mona")):
+        run_sql(url, "INSERT INTO users (id, username, display_name, password_hash, role, status, "
+                     "created_at, updated_at) VALUES ($1::uuid, $2, $2, 'x', 'coordinator', 'active', "
+                     "now(), now())", user_id, username)
+    run_sql(url, "INSERT INTO lms_accounts (id, user_id, label, email, role, password_encrypted, active, "
+                 "created_at, updated_at) VALUES ($1::uuid, $2::uuid, 'main', 'omar@lms.example.com', "
+                 "'coordinator', 'x', true, now(), now())", LMS_ACCOUNT, COORDINATOR)
+    run_sql(url, "INSERT INTO zoom_accounts (id, user_id, account_id, label, zoom_email, active, "
+                 "created_at, updated_at) VALUES ($1::uuid, $2::uuid, 'omar', 'main', "
+                 "'omar@zoom.example.com', true, now(), now())", ZOOM_ACCOUNT, COORDINATOR)
+    # Mona's own, for the test that a class may not borrow it.
+    run_sql(url, "INSERT INTO lms_accounts (id, user_id, label, email, role, password_encrypted, active, "
+                 "created_at, updated_at) VALUES (gen_random_uuid(), $1::uuid, 'hers', "
+                 "'mona@lms.example.com', 'coordinator', 'x', true, now(), now())", SOMEBODY_ELSE)
+    return url
 
 
 def stage_payload(**overrides):
@@ -150,7 +180,7 @@ def post_stage(client, job_type, payload=None, key=None):  # noqa: ANN001, ANN20
 
 
 @pytest.mark.parametrize("job_type", ["class.run", "class.end", "zoom.report", "zoom.recording"])
-def test_every_zoom_stage_of_a_class_is_accepted(client, job_type):
+def test_every_zoom_stage_of_a_class_is_accepted(client, a_class, job_type):
     response = post_stage(client, job_type)
     assert response.status_code == 202, response.text
     job = get_job(client, response.json()["jobId"])
@@ -162,7 +192,7 @@ def test_every_zoom_stage_of_a_class_is_accepted(client, job_type):
 
 
 @pytest.mark.parametrize("job_type", ["lms.run_session", "lms.attendance", "lms.complete"])
-def test_an_lms_stage_must_say_whose_sign_in_writes_it_up(client, job_type):
+def test_an_lms_stage_must_say_whose_sign_in_writes_it_up(client, a_class, job_type):
     """The rule that matters: a class is written up under its own coordinator's account, never
     under whoever the machine last used."""
     refused = post_stage(client, job_type, stage_payload(lmsAccountId=None))
@@ -172,6 +202,27 @@ def test_an_lms_stage_must_say_whose_sign_in_writes_it_up(client, job_type):
     accepted = post_stage(client, job_type, stage_payload(lmsAccountId=LMS_ACCOUNT))
     assert accepted.status_code == 202, accepted.text
     assert get_job(client, accepted.json()["jobId"])["payload"]["lmsAccountId"] == LMS_ACCOUNT
+
+
+def test_a_class_may_not_name_another_coordinators_account(client, a_class):
+    """Whose account it is, not just whether the id is the right shape.
+
+    Accepting this would mean the payload decides: the class says it is Omar's, the account is
+    Mona's, and the stage runs under Mona's sign-in. It is refused where the class is made, so
+    whoever made it is told, rather than at class time when nobody is watching.
+    """
+    from test_dashboard import run_sql
+
+    hers = run_sql(a_class, "SELECT id FROM lms_accounts WHERE user_id = $1::uuid", SOMEBODY_ELSE)[0]["id"]
+
+    refused = post_stage(client, "lms.run_session", stage_payload(lmsAccountId=str(hers)))
+    assert refused.status_code == 400, refused.text
+    assert "different coordinator" in refused.json()["details"]
+
+    # And an account that is not there at all is named as missing rather than silently accepted.
+    gone = post_stage(client, "lms.run_session", stage_payload(lmsAccountId=str(uuid.uuid4())))
+    assert gone.status_code == 400
+    assert "no LMS account" in gone.json()["details"]
 
 
 def test_opening_a_meeting_needs_somewhere_to_open(client):

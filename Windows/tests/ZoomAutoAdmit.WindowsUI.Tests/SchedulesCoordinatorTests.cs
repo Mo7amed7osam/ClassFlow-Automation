@@ -1,4 +1,5 @@
 using ZoomAutoAdmit.Core.Sessions;
+using ZoomAutoAdmit.WebAutomation.Lms;
 using ZoomAutoAdmit.WindowsRuntime;
 using ZoomAutoAdmit.WindowsRuntime.Scheduling;
 using ZoomAutoAdmit.WindowsUI.Services;
@@ -30,10 +31,14 @@ public sealed class SchedulesCoordinatorTests
     {
         var service = new UiService();
         foreach (var schedule in schedules) await service.SaveScheduleAsync(schedule);
-        var vm = new SchedulesViewModel(service);
+        var vm = new SchedulesViewModel(service, classes: NoClaims());
         await vm.RefreshAsync();
         return (vm, service);
     }
+
+    /// <summary>A group-to-coordinator file of its own, so a test never reads this PC's.</summary>
+    private static ClassLmsAccounts NoClaims() =>
+        new(Path.Combine(Path.GetTempPath(), "ZoomScheduleScope", Guid.NewGuid().ToString("N"), "class-accounts.json"));
 
     [Fact]
     public async Task WithOnlyThisPcsOwnClassesThereIsNobodyToChooseBetween()
@@ -173,5 +178,73 @@ public sealed class SchedulesCoordinatorTests
         public Task<SessionDisplayInfo> StartMeetingAsync(string accountId, string meetingUrl, EnginePreference preference, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> StopMeetingAsync(Guid sessionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<SessionDisplayInfo>> GetActiveSessionsAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    // ------------------------------------------------------------------ whose class is this, really
+
+    [Fact]
+    public async Task AClassImportedHereIsNamedForTheCoordinatorWhoseGroupItIs()
+    {
+        // The 98 classes a person imports from Excel say nothing about who owns them. Turning that
+        // coordinator on is what makes the group theirs - and from then on the class already goes
+        // up on the LMS under their account, because that is decided by the group.
+        var claims = NoClaims();
+        claims.SetGroups("u-mona", "Mona", "mona", ["CAI5_IND1_G1"]);
+        var service = new UiService();
+        await service.SaveScheduleAsync(Class("CAI5_IND1_G1 • 29", null) with { GroupName = "CAI5_IND1_G1" });
+        await service.SaveScheduleAsync(Class("CAI5_AIS4_S7 • 36", null) with { GroupName = "CAI5_AIS4_S7" });
+
+        using var vm = new SchedulesViewModel(service, classes: claims);
+        await vm.RefreshAsync();
+
+        Assert.Equal("Mona", vm.Items.Single(s => s.GroupName == "CAI5_IND1_G1").Coordinator);
+        Assert.Null(vm.Items.Single(s => s.GroupName == "CAI5_AIS4_S7").Coordinator);
+        Assert.Contains("Mona", vm.Coordinators);
+    }
+
+    [Fact]
+    public async Task AClassThatAlreadySaysWhoseItIsIsNotRenamed()
+    {
+        var claims = NoClaims();
+        claims.SetGroups("u-sami", "Sami", "sami", ["CAI5_IND1_G1"]);
+        var service = new UiService();
+        await service.SaveScheduleAsync(Class("theirs", "Mona", "u-mona") with { GroupName = "CAI5_IND1_G1" });
+
+        using var vm = new SchedulesViewModel(service, classes: claims);
+        await vm.RefreshAsync();
+
+        // What the run plan put on the class wins over a later claim on the group.
+        Assert.Equal("Mona", Assert.Single(vm.Items).Coordinator);
+    }
+
+    [Fact]
+    public async Task ACoordinatorSignedInHereSeesOnlyTheirOwnClasses()
+    {
+        var service = new UiService();
+        await service.SaveScheduleAsync(Class("mine", null) with { GroupName = "CAI5_IND1_G1" });
+        await service.SaveScheduleAsync(Class("theirs", null) with { GroupName = "CAI5_AIS4_S7" });
+        var me = new CentralMe("u-mona", "mona", "Mona", "coordinator", false,
+            [new CentralGroupRef("g1", "CAI5_IND1_G1", null, false)], DateTimeOffset.Now.AddDays(1));
+
+        using var vm = new SchedulesViewModel(service, scope: new SignedInScope(() => me), classes: NoClaims());
+        await vm.RefreshAsync();
+
+        Assert.Equal("CAI5_IND1_G1", Assert.Single(vm.Items).GroupName);
+        Assert.Contains("1 on this PC belong to somebody else", vm.ScopeNote);
+    }
+
+    [Fact]
+    public async Task TheAdminStillSeesEveryClassOnThisPc()
+    {
+        var service = new UiService();
+        await service.SaveScheduleAsync(Class("mine", null) with { GroupName = "CAI5_IND1_G1" });
+        await service.SaveScheduleAsync(Class("theirs", null) with { GroupName = "CAI5_AIS4_S7" });
+        var admin = new CentralMe("u-admin", "admin", "The Admin", "admin", true, null, DateTimeOffset.Now.AddDays(1));
+
+        using var vm = new SchedulesViewModel(service, scope: new SignedInScope(() => admin), classes: NoClaims());
+        await vm.RefreshAsync();
+
+        Assert.Equal(2, vm.Items.Count);
+        Assert.Equal("", vm.ScopeNote);
     }
 }

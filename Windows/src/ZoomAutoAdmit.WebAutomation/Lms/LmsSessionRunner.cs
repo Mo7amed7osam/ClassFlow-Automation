@@ -36,7 +36,15 @@ public sealed record LmsRunResult(bool IsSuccess, string Message)
 /// What an attendance upload did, and the decision it was going to write. The plan comes back on a
 /// dry run and on a real one, so what was intended can be read next to what happened.
 /// </summary>
-public sealed record LmsAttendanceResult(bool IsSuccess, string Message, LmsAttendancePlan? Plan);
+public sealed record LmsAttendanceResult(bool IsSuccess, string Message, LmsAttendancePlan? Plan)
+{
+    /// <summary>Why it failed, in the same terms a run failure uses.
+    ///
+    /// This is what decides whether the job is tried again. Without it every attendance failure was
+    /// the same failure: a session the dashboard has not finished yet, which will be ready in five
+    /// minutes, could not be told from one it does not list at all, which never will be.</summary>
+    public LmsFailure FailureKind { get; init; }
+}
 
 /// <summary>
 /// Presses "Run Session" on the DEPI dashboard for the class that is starting.
@@ -122,7 +130,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             step = "opening the session";
             var opened = await OpenSessionAsync(page, group, date, startTime, cancellationToken);
             if (!opened.IsOpen)
-                return LmsRunResult.Failure($"{opened.Reason} Nothing was pressed.");
+                return LmsRunResult.Fail(opened.Failure, $"{opened.Reason} Nothing was pressed.");
 
             step = "pressing Run Session";
             var run = page.GetByRole(AriaRole.Button, new() { NameRegex = new(@"^\s*Run Session\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase) }).First;
@@ -197,7 +205,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             await SignInAsync(page, account, cancellationToken);
             step = "opening the session";
             var opened = await OpenSessionAsync(page, group, date, startTime, cancellationToken);
-            if (!opened.IsOpen) return LmsRunResult.Failure($"{opened.Reason} Nothing was changed.");
+            if (!opened.IsOpen) return LmsRunResult.Fail(opened.Failure, $"{opened.Reason} Nothing was changed.");
             // The session page draws its actions a moment after it opens: the status is read only
             // once the button has had the time to appear, or an empty page reads as "no status".
             // Only "Complete Session" is ever matched; "Cancel Session" sits right under it.
@@ -407,7 +415,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         ArgumentNullException.ThrowIfNull(present);
         var account = credentials.Read();
         if (account == null)
-            return new(false, "No LMS sign-in is saved. Add it in the app before taking attendance.", null);
+            return new(false, "No LMS sign-in is saved. Add it in the app before taking attendance.", null)
+                { FailureKind = LmsFailure.NotSignedIn };
 
         DateOnly date = day ?? DateOnly.FromDateTime(DateTime.Now);
         var profile = _profiles.GetOrCreate(ProfileName);
@@ -425,7 +434,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             await SignInAsync(page, account, cancellationToken);
             step = "opening the session";
             var opened = await OpenSessionAsync(page, group, date, startTime, cancellationToken);
-            if (!opened.IsOpen) return new(false, $"{opened.Reason} No attendance was taken.", null);
+            if (!opened.IsOpen)
+                return new(false, $"{opened.Reason} No attendance was taken.", null) { FailureKind = opened.Failure };
 
             step = "opening Take Session Attendance";
             var take = page.GetByRole(AriaRole.Button, new()
@@ -539,7 +549,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             await SignInAsync(page, account, cancellationToken);
             step = "opening the session";
             var opened = await OpenSessionAsync(page, group, date, startTime, cancellationToken);
-            if (!opened.IsOpen) return new(false, $"{opened.Reason} Nothing was changed.", null);
+            if (!opened.IsOpen)
+                return new(false, $"{opened.Reason} Nothing was changed.", null) { FailureKind = opened.Failure };
 
             step = "opening the attendance details";
             var (rows, states) = await OpenDetailsAsync(page, group);
@@ -1336,7 +1347,12 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
 
     /// <summary>What one attempt to reach a session's own page ended with.</summary>
     /// <param name="NotListed">No row for the group was found, as opposed to a row that would not open.</param>
-    private sealed record SessionPage(bool IsOpen, string Reason, bool NotListed = false);
+    private sealed record SessionPage(bool IsOpen, string Reason, bool NotListed = false)
+    {
+        /// <summary>What a page that would not open means for a retry. A session the dashboard does
+        /// not list will not appear by being asked again; anything else might.</summary>
+        public LmsFailure Failure => NotListed ? LmsFailure.SessionNotFound : LmsFailure.Failed;
+    }
 
     /// <summary>
     /// The list, the row and the session's page, tried more than once. Every step here is the

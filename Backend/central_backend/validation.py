@@ -259,7 +259,29 @@ def clean_capabilities(values: Any) -> list[str]:
     return seen
 
 
-_RESULT_FIELDS = {"alreadyExists": bool, "dryRun": bool, "message": str, "group": str, "date": str, "startTime": str}
+# What a result may carry. The list is closed on purpose - an agent's result is written straight
+# to a row the dashboard reads, so an agent cannot decide to store something the server never
+# agreed to hold. It does have to name every field the stages actually report, though: the class
+# stages were reporting what they did and the server was dropping all of it, so a held class and a
+# class that opened and closed immediately looked identical on the Sessions page.
+_RESULT_FIELDS = {
+    "alreadyExists": bool, "dryRun": bool, "message": str,
+    # Which class this is about, so a result reads on its own.
+    "classPlanId": str, "group": str, "date": str, "startTime": str,
+    # What the stage did, in its own words, and how long it was there.
+    "did": str, "holdsFor": int, "heldFor": int, "minutes": int,
+    "startedAt": str, "endedAt": str,
+    # class.run: whether the meeting was actually closed afterwards. Left open is the failure
+    # nobody notices until the next class cannot start.
+    "endedTheMeeting": bool,
+    # Counts, never the names: a roster does not belong in a job row.
+    "people": int, "present": int, "attended": int, "rows": int, "instances": int,
+    # What went wrong while still succeeding: a class that was held but whose meeting could not
+    # be closed is not a clean run, and the difference has to reach the page.
+    "warning": str,
+    # A recording's link, and the session's name on the LMS.
+    "shareUrl": str, "name": str,
+}
 _ERROR_FIELDS = {"code": str, "message": str, "retryable": bool, "retryAfterSeconds": int}
 
 

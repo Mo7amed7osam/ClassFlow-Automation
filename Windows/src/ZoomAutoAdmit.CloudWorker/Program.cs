@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using ZoomAutoAdmit.CentralAgent;
 using ZoomAutoAdmit.CloudWorker;
 using ZoomAutoAdmit.CloudWorker.Stages;
@@ -12,19 +13,39 @@ using ZoomAutoAdmit.WebAutomation.Lms;
 
 string command = args.FirstOrDefault()?.ToLowerInvariant() ?? "run";
 
-// Not disposed on the way out: ProcessExit runs after a `using` would have disposed it, and a stop
-// signal must not be the thing that ends the process on an unhandled exception.
+// Not disposed on the way out: a stop signal must not be the thing that ends the process on an
+// unhandled exception.
 var stopping = new CancellationTokenSource();
 
-// SIGTERM is how Docker and Coolify ask for a stop. Draining is not instant - a class being opened
-// finishes its step first - so the runtime's own delay is what decides whether it is allowed to.
-void RequestStop()
+// SIGTERM is how Docker and Coolify ask for a stop, and what happens next decides whether a
+// redeploy during class hours abandons a live class.
+//
+// AppDomain.ProcessExit is the wrong hook for it: it runs while the runtime is already tearing the
+// process down, on a timer of about two seconds, so a class being held is killed mid-close - the
+// meeting left open, the profile left locked, the job recorded as failed for a reason that was
+// never about the class.
+//
+// PosixSignalRegistration sees the signal before any of that, and Cancel = true refuses the
+// default termination. The process then stops on its own terms: the stage is asked to finish, the
+// meeting is ended, the browser closes, and the job is reported. The container's stop grace period
+// is what limits how long that may take.
+void RequestStop(string signal)
 {
+    Log($"{signal}: draining. The class being held is closed properly before this exits.");
     try { stopping.Cancel(); }
     catch (ObjectDisposedException) { }
 }
-AppDomain.CurrentDomain.ProcessExit += (_, _) => RequestStop();
-Console.CancelKeyPress += (_, e) => { e.Cancel = true; RequestStop(); };
+
+using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
+{
+    context.Cancel = true;
+    RequestStop("SIGTERM");
+});
+using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, context =>
+{
+    context.Cancel = true;
+    RequestStop("SIGINT");
+});
 
 WorkerSettings settings;
 try
@@ -38,7 +59,7 @@ catch (Exception problem)
 }
 
 Log($"name={settings.Name} backend={settings.BackendUrl} state={settings.StateDirectory} "
-    + $"concurrency={settings.MaxConcurrentSessions} headless={settings.Headless} tz={settings.TimeZone}");
+    + $"one class at a time, headless={settings.Headless} tz={settings.TimeZone}");
 
 var checks = await Preflight.RunAsync(settings, stopping.Token);
 Console.WriteLine(Preflight.Describe(checks));

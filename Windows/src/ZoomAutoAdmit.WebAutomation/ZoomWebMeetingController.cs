@@ -16,6 +16,14 @@ public sealed class ZoomWebMeetingController
     // Zoom's PWA meeting page loads its client frame well after the first paint; 30 s used to
     // expire while a perfectly good saved session was still connecting.
     private static readonly TimeSpan HeadlessStartupTimeout = TimeSpan.FromSeconds(75);
+
+    /// <summary>How long a headed browser waits for a sign-in nobody asked for a deadline on.
+    ///
+    /// There has to be one. A headed window on somebody's desk can wait while they find their
+    /// phone for a code, which is why this is generous; a headed window on a server has nobody at
+    /// all, and waiting for ever there means the class never starts, the job never finishes, and
+    /// the worker's one slot is held until somebody notices by hand.</summary>
+    private static readonly TimeSpan HeadedStartupCeiling = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan ManualLoginPollInterval = TimeSpan.FromSeconds(2);
     private readonly IZoomWebMeetingLocator _locator;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
@@ -50,11 +58,9 @@ public sealed class ZoomWebMeetingController
             ConsoleLogger.Info("Waiting for manual login...");
         }
 
-        DateTimeOffset? deadline = session.IsHeadless
-            ? DateTimeOffset.UtcNow + HeadlessStartupTimeout
-            : manualLoginTimeout.HasValue
-                ? DateTimeOffset.UtcNow + manualLoginTimeout.Value
-                : null;
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + (session.IsHeadless
+            ? HeadlessStartupTimeout
+            : manualLoginTimeout ?? HeadedStartupCeiling);
         var nextLauncherCheck = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(3);
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -104,7 +110,7 @@ public sealed class ZoomWebMeetingController
                 catch (Exception ex) when (ex is not OperationCanceledException) { ConsoleLogger.Debug($"WEB_LAUNCHER_PAGE: {ex.Message}"); }
             }
 
-            if (deadline != null && DateTimeOffset.UtcNow >= deadline.Value)
+            if (DateTimeOffset.UtcNow >= deadline)
                 throw new ZoomWebSignInRequiredException(
                     session.Profile.Name,
                     session.IsHeadless

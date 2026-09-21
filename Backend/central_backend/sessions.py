@@ -103,8 +103,17 @@ def _stage_state(
         if job.status == "failed" and job.error:
             entry["detail"] = (job.error or {}).get("message") or (job.error or {}).get("code")
             entry["retryable"] = bool((job.error or {}).get("retryable"))
-        elif job.status == "succeeded" and job.finished_at:
-            entry["detail"] = f"Done {job.finished_at.astimezone(CAIRO):%H:%M}"
+        elif job.status == "succeeded":
+            # A stage can succeed and still have something worth reading: a class that was held but
+            # whose meeting could not be closed is not the same as one that ran clean, and drawn as
+            # a plain tick it looks identical. The warning is shown instead of the time, because the
+            # time is the part nobody needs when something is wrong.
+            warning = (job.result or {}).get("warning")
+            if warning:
+                entry["warning"] = warning
+                entry["detail"] = warning
+            elif job.finished_at:
+                entry["detail"] = f"Done {job.finished_at.astimezone(CAIRO):%H:%M}"
         return entry
 
     when = _due(shape, plan)

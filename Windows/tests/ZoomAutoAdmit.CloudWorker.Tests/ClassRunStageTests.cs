@@ -16,6 +16,10 @@ public sealed class ClassRunStageTests : IDisposable
     private const string Coordinator = "66666666-7777-8888-9999-000000000000";
     private const string ZoomAccount = "cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa";
 
+    /// <summary>The class's own hour, so these tests answer the same in September and in January.</summary>
+    private static readonly Func<DateTimeOffset> DuringTheClass =
+        () => new DateTimeOffset(2026, 9, 20, 19, 5, 0, TimeSpan.FromHours(3));
+
     public void Dispose() => ZoomSignInCredential.Resolver = null;
 
     private sealed class Accounts(ZoomSignInCredential? answer = null) : IZoomAccounts
@@ -49,7 +53,7 @@ public sealed class ClassRunStageTests : IDisposable
     public async Task A_class_with_no_link_never_opens_a_browser()
     {
         var accounts = new Accounts();
-        var outcome = await new ClassRunStage(accounts, headless: true).ExecuteAsync(Payload(url: null), default);
+        var outcome = await new ClassRunStage(accounts, headless: true, now: DuringTheClass).ExecuteAsync(Payload(url: null), default);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal("invalidPayload", outcome.Error!.Code);
@@ -63,7 +67,7 @@ public sealed class ClassRunStageTests : IDisposable
         // Opening by whichever profile the machine happens to have is the wrong person's meeting,
         // and the students are in it before anyone notices.
         var accounts = new Accounts();
-        var outcome = await new ClassRunStage(accounts, headless: true).ExecuteAsync(Payload(zoomAccountId: null), default);
+        var outcome = await new ClassRunStage(accounts, headless: true, now: DuringTheClass).ExecuteAsync(Payload(zoomAccountId: null), default);
 
         Assert.Equal("invalidPayload", outcome.Error!.Code);
         Assert.Contains("zoomAccountId", outcome.Error.Message);
@@ -74,14 +78,14 @@ public sealed class ClassRunStageTests : IDisposable
     public async Task The_account_asked_for_is_the_one_the_class_names()
     {
         var accounts = new Accounts();
-        await new ClassRunStage(accounts, headless: true).ExecuteAsync(Payload(), default);
+        await new ClassRunStage(accounts, headless: true, now: DuringTheClass).ExecuteAsync(Payload(), default);
         Assert.Equal([Guid.Parse(ZoomAccount)], accounts.Asked);
     }
 
     [Fact]
     public async Task A_sign_in_the_server_will_not_give_stops_the_class_there()
     {
-        var outcome = await new ClassRunStage(new Accounts(answer: null), headless: true)
+        var outcome = await new ClassRunStage(new Accounts(answer: null), headless: true, now: DuringTheClass)
             .ExecuteAsync(Payload(), default);
 
         Assert.False(outcome.Succeeded);
@@ -95,7 +99,7 @@ public sealed class ClassRunStageTests : IDisposable
     public async Task A_dry_run_checks_everything_and_opens_nothing()
     {
         var credential = new ZoomSignInCredential("mona@zoom.example.com", "her password");
-        var outcome = await new ClassRunStage(new Accounts(credential), headless: true)
+        var outcome = await new ClassRunStage(new Accounts(credential), headless: true, now: DuringTheClass)
             .ExecuteAsync(Payload(dryRun: true), default);
 
         Assert.True(outcome.Succeeded);
@@ -110,13 +114,13 @@ public sealed class ClassRunStageTests : IDisposable
     {
         var credential = new ZoomSignInCredential("mona@zoom.example.com", "pw");
 
-        var given = await new ClassRunStage(new Accounts(credential), headless: true)
+        var given = await new ClassRunStage(new Accounts(credential), headless: true, now: DuringTheClass)
             .ExecuteAsync(Payload(dryRun: true, minutes: 90), default);
         Assert.Equal(90, given.Result!["holdsFor"]!.GetValue<int>());
 
         // A class that named no length is still bounded: a worker must not sit in an empty meeting
         // for ever, holding the only slot it has.
-        var defaulted = await new ClassRunStage(new Accounts(credential), headless: true)
+        var defaulted = await new ClassRunStage(new Accounts(credential), headless: true, now: DuringTheClass)
             .ExecuteAsync(Payload(dryRun: true), default);
         Assert.Equal((int)ClassRunStage.DefaultLength.TotalMinutes, defaulted.Result!["holdsFor"]!.GetValue<int>());
     }
@@ -127,10 +131,44 @@ public sealed class ClassRunStageTests : IDisposable
         // One class's sign-in must not be readable while another's is running. The resolver
         // answers for this stage's reference and nothing else.
         var credential = new ZoomSignInCredential("mona@zoom.example.com", "her password");
-        await new ClassRunStage(new Accounts(credential), headless: true).ExecuteAsync(Payload(dryRun: true), default);
+        await new ClassRunStage(new Accounts(credential), headless: true, now: DuringTheClass).ExecuteAsync(Payload(dryRun: true), default);
 
         // A dry run sets nothing up, so nothing is left readable afterwards either.
         Assert.Null(ZoomSignInCredential.Read($"server:zoom/{ZoomAccount}"));
         Assert.Null(ZoomSignInCredential.Read("server:zoom/somebody-else"));
+    }
+
+    [Fact]
+    public async Task A_class_that_is_already_over_is_not_opened_however_long_its_job_waited()
+    {
+        // A queued job waits for a worker however long that takes. A worker that was busy, offline
+        // or being redeployed comes back to a job for yesterday's class, and opening it lets people
+        // into a room for a class that ended hours ago.
+        var accounts = new Accounts(new ZoomSignInCredential("mona@zoom.example.com", "pw"));
+        var aDayLater = () => new DateTimeOffset(2026, 9, 21, 19, 0, 0, TimeSpan.FromHours(3));
+
+        var outcome = await new ClassRunStage(accounts, headless: true, now: aDayLater)
+            .ExecuteAsync(Payload(), default);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal("classIsOver", outcome.Error!.Code);
+        Assert.Contains("2026-09-20", outcome.Error.Message);
+        // Not retryable, and no password was fetched on the way to refusing.
+        Assert.False(outcome.Error.Retryable);
+        Assert.Empty(accounts.Asked);
+    }
+
+    [Fact]
+    public async Task Todays_class_is_still_opened_when_the_worker_is_a_little_late()
+    {
+        // The other half of the rule: half an hour past the end is still within reach, because a
+        // worker that restarts mid-class must pick the class back up rather than abandon it.
+        var credential = new ZoomSignInCredential("mona@zoom.example.com", "pw");
+        var lateInTheClass = () => new DateTimeOffset(2026, 9, 20, 20, 50, 0, TimeSpan.FromHours(3));
+
+        var outcome = await new ClassRunStage(new Accounts(credential), headless: true, now: lateInTheClass)
+            .ExecuteAsync(Payload(dryRun: true, minutes: 90), default);
+
+        Assert.True(outcome.Succeeded);
     }
 }

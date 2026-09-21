@@ -49,12 +49,20 @@ function isoDay(offsetDays: number): string {
 
 function StageMark({ stage }: { stage: SessionStage }) {
   const look = LOOK[stage.state]
+  // Done, but not clean. A class that was held and whose meeting could not be closed is drawn as a
+  // tick everywhere else, and reads as a class that ran perfectly - so the ring says otherwise.
+  const warned = stage.state === 'done' && Boolean(stage.warning)
+  const ring = warned ? 'border-amber-400' : look.ring
+  const text = warned ? 'text-amber-600' : look.text
+  const fill = warned ? 'bg-amber-50' : look.fill
   return (
     <div className="flex min-w-20 flex-col items-center gap-1.5 text-center">
       <span
-        className={`flex h-8 w-8 items-center justify-center rounded-full border-2 ${look.ring} ${look.fill} ${look.text}`}
-        title={stage.detail ? `${look.title} — ${stage.detail}` : look.title}
-        aria-label={`${stage.label}: ${look.title}${stage.detail ? `, ${stage.detail}` : ''}`}
+        className={`flex h-8 w-8 items-center justify-center rounded-full border-2 ${ring} ${fill} ${text}`}
+        title={stage.detail ? `${warned ? 'Done, with a problem' : look.title} — ${stage.detail}` : look.title}
+        aria-label={`${stage.label}: ${warned ? 'done, with a problem' : look.title}${
+          stage.detail ? `, ${stage.detail}` : ''
+        }`}
       >
         {stage.state === 'done' ? (
           <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
@@ -76,7 +84,11 @@ function StageMark({ stage }: { stage: SessionStage }) {
       <span className="text-[11px] font-medium leading-tight text-slate-700">{stage.label}</span>
       <span
         className={`text-[10px] leading-tight ${
-          stage.state === 'failed' ? 'text-red-600' : stage.state === 'blocked' ? 'text-amber-700' : 'text-slate-400'
+          stage.state === 'failed'
+            ? 'text-red-600'
+            : stage.state === 'blocked' || warned
+              ? 'text-amber-700'
+              : 'text-slate-400'
         }`}
       >
         {stage.detail ?? stage.caption}

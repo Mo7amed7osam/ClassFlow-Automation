@@ -71,6 +71,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         LmsSessions = lmsSessions ?? new LmsSessionsViewModel();
         LmsSessions.Processor = Lms.FollowUpProcessor;
         Central = central ?? new CentralViewModel();
+        // What the signed-in person may see on this shared PC. Every page that lists things keyed
+        // by group narrows through it, so a coordinator never finds somebody else's work here. It
+        // exists before anything can raise Central's PropertyChanged, which asks it to refresh.
+        Scope = new SignedInScope(() => Central.Api.Me);
         Central.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is not (nameof(CentralViewModel.IsSignedIn) or nameof(CentralViewModel.IsAdmin))) return;
@@ -100,12 +104,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // And the classes this PC opens by itself, so a new PC - a cloud one - finds them there
         // instead of being set up again.
         OwnSchedules = new ScheduleServerSync(Central.Api);
-        // What the signed-in person may see on this shared PC. Every page that lists things keyed
-        // by group narrows through it, so a coordinator never finds somebody else's work here.
-        Scope = new SignedInScope(() => Central.Api.Me);
         StartMeeting = new StartMeetingViewModel(service);
         Accounts = new AccountsViewModel(service, scope: Scope);
-        Schedules = new SchedulesViewModel(service);
+        Schedules = new SchedulesViewModel(service, scope: Scope);
         Logs = new LogsViewModel();
         SessionRoles = new SessionRolesViewModel(scope: Scope);
         AiMatching = new AiMatchingViewModel(aiCredentials ?? new AiCredentialStore(), aiService ?? new AiMatchingService());

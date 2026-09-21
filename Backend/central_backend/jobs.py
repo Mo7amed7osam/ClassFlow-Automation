@@ -171,6 +171,27 @@ async def agent_rejected(
     if job is None or job.device_id != device_id or job.status != "assigned":
         return False
     add_event(session, job.id, "rejected", now, device_id, {"reason": reason[:100]})
+
+    # 'busy' is worth trying again - the device is running something else and will not be in a
+    # minute. 'unsupportedType' is not: no device on this deployment can run a job type none of
+    # them was built with, and requeue does not spend an attempt, so it came back every ten
+    # seconds for ever. The job sat queued, the log filled with the same line, and nothing said
+    # what was actually wrong.
+    if reason == "unsupportedType":
+        job.status = "failed"
+        job.device_id = None
+        job.assigned_at = None
+        job.accepted_at = None
+        job.error = {"code": "unsupportedType",
+                     "message": f"No agent on this deployment runs '{job.type}'. The job was not retried, "
+                                "because waiting does not give a device a capability it was not built with.",
+                     "retryable": False}
+        job.finished_at = now
+        job.updated_at = now
+        add_event(session, job.id, "failed", now, device_id, {"reason": "unsupportedType"})
+        emit("job.failed", jobId=str(job.id), deviceId=str(device_id), code="unsupportedType")
+        return True
+
     requeue(job, now, settings.rejected_retry_delay_seconds, f"rejected: {reason[:100]}")
     return True
 

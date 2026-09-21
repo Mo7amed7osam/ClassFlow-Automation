@@ -305,6 +305,9 @@ export interface SessionStage {
   dueAt?: string | null
   jobId?: string | null
   retryable?: boolean
+  /** Set when the stage succeeded and something is still wrong - a meeting that could not be
+   *  closed, most often. Drawn as a tick with an amber ring rather than a clean one. */
+  warning?: string | null
 }
 
 /** A class is `needsAttention` when any stage failed, `blocked` when one cannot run at all. */

@@ -53,8 +53,9 @@ needs a real machine to validate.
 
 - A VPS with Coolify, with room for PostgreSQL, a Python service and a Chromium container.
   **Capacity has not been measured.** Each concurrent class is its own Chromium; budget roughly
-  400–700 MB per class plus the backend and the database, and start with
-  `ZAA_MAX_CONCURRENT_SESSIONS=2` until you have measured this machine.
+  400–700 MB per class plus the backend and the database. A worker runs one class at a time
+  (`ZAA_WORKER_MEMORY`, 2 GB by default, caps it); start with one worker and add a second
+  service only after measuring this machine.
 - A domain pointed at the VPS. Coolify gets the certificate.
 - The repository: `https://github.com/Mo7amed7osam/ClassFlow-Automation`, branch **`Windows_and_web`**.
   Not `main` — the two have diverged and `main` does not contain the backend or the dashboard.
@@ -235,7 +236,7 @@ Away from Docker: 410 backend tests against a real PostgreSQL, 322 web-automatio
 |---|---|
 | **Nothing has touched real Zoom or the real LMS.** | No admission, no attendance, no LMS step, no co-host assignment, no Zoom report has been run. Chromium starting headless is necessary and not sufficient: whether *Zoom's web client* tolerates a headless browser is a different question. If it refuses, set `ZAA_HEADLESS=false` and the container's Xvfb gives it a display |
 | **The class stages do not exist.** | The worker has no job types for them, so there is nothing to run even with credentials |
-| **Concurrency means more workers.** | A worker takes one job at a time, so a worker holding a meeting is busy for the class's length. Two classes at once means two worker containers, which is what `docker compose up --scale worker=2` does. `ZAA_MAX_CONCURRENT_SESSIONS` is not read by anything and is kept only to be removed |
+| **Concurrency means more workers.** | A worker takes one job at a time, so a worker holding a meeting is busy for the class's length. Two classes at once means two workers, and each worker is its own **service** with its own state volume and its own enrolment token. `--scale worker=2` is wrong: both containers would share one volume, so the backend sees one device heartbeating twice and two Chromiums corrupt the same browser profiles. Copy the `worker` service in the compose file as `worker-2`, give it a volume `classflow-worker-2-state`, a new `ZAA_WORKER_NAME` and a fresh enrolment token. `ZAA_MAX_CONCURRENT_SESSIONS` has been removed |
 | **Only on Docker Desktop.** | The stack has not been run on a real VPS, nor through Coolify itself |
 
 ### Reproducing the build

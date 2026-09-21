@@ -25,8 +25,9 @@ public interface ILmsAccounts
 /// What the three LMS stages share: the account is fetched first, and a stage that cannot get one
 /// says so instead of running under somebody else's.
 /// </summary>
-public abstract class LmsStageHandler(ILmsAccounts accounts, Action<string>? log = null)
-    : ClassStageHandler(log)
+public abstract class LmsStageHandler(ILmsAccounts accounts, Action<string>? log = null,
+                                      Func<DateTimeOffset>? now = null)
+    : ClassStageHandler(log, now)
 {
     protected override string? Requires(ClassStage stage) =>
         stage.LmsAccountId is null
@@ -85,8 +86,9 @@ public abstract class LmsStageHandler(ILmsAccounts accounts, Action<string>? log
 }
 
 /// <summary>lms.run_session: presses Run Session on the class's own LMS session.</summary>
-public sealed class RunSessionStage(ILmsAccounts accounts, Action<string>? log = null)
-    : LmsStageHandler(accounts, log)
+public sealed class RunSessionStage(ILmsAccounts accounts, Action<string>? log = null,
+                                      Func<DateTimeOffset>? now = null)
+    : LmsStageHandler(accounts, log, now)
 {
     public override string JobType => "lms.run_session";
 
@@ -101,8 +103,9 @@ public sealed class RunSessionStage(ILmsAccounts accounts, Action<string>? log =
 }
 
 /// <summary>lms.complete: closes the session once the class is over.</summary>
-public sealed class CompleteSessionStage(ILmsAccounts accounts, Action<string>? log = null)
-    : LmsStageHandler(accounts, log)
+public sealed class CompleteSessionStage(ILmsAccounts accounts, Action<string>? log = null,
+                                      Func<DateTimeOffset>? now = null)
+    : LmsStageHandler(accounts, log, now)
 {
     public override string JobType => "lms.complete";
 
@@ -123,8 +126,9 @@ public sealed class CompleteSessionStage(ILmsAccounts accounts, Action<string>? 
 /// after that; this stage only writes down what it was given, so a correction is another job with
 /// a better list rather than a rerun that hopes for a different answer.
 /// </summary>
-public sealed class AttendanceStage(ILmsAccounts accounts, IAttendanceNames names, Action<string>? log = null)
-    : LmsStageHandler(accounts, log)
+public sealed class AttendanceStage(ILmsAccounts accounts, IAttendanceNames names, Action<string>? log = null,
+                                      Func<DateTimeOffset>? now = null)
+    : LmsStageHandler(accounts, log, now)
 {
     public override string JobType => "lms.attendance";
 
@@ -146,7 +150,10 @@ public sealed class AttendanceStage(ILmsAccounts accounts, IAttendanceNames name
             stage.Group, present, stage.StartTime, stage.Date, headed: false, dryRun: stage.DryRun,
             cancellationToken: cancellationToken);
 
-        if (!result.IsSuccess) return Failed(LmsFailure.Failed, result.Message);
+        // The result's own kind, not a flat "it failed". A session the dashboard has not finished
+        // yet is worth trying again in five minutes; one it does not list at all is not, and
+        // flattening both to lmsFailed loses the difference the retry decision is made on.
+        if (!result.IsSuccess) return Failed(result.FailureKind, result.Message);
 
         var answer = Answer(stage);
         answer["message"] = result.Message;

@@ -47,6 +47,12 @@ public abstract class ZoomAccountStage(IZoomAccounts accounts, Action<string>? l
         }
     }
 
+    /// <summary>
+    /// No freshness limit. These pages only exist once the class is over, and Zoom takes its time
+    /// publishing a recording - reading one the next morning is the point, not a mistake.
+    /// </summary>
+    protected override TimeSpan? Freshness => null;
+
     protected abstract Task<JobOutcome> ReadAsync(ClassStage stage, string profile, CancellationToken cancellationToken);
 
     /// <summary>Not an error, and worth trying again: Zoom has not published this yet.</summary>

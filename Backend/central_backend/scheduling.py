@@ -38,7 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .jobs import create_job
-from .models import ClassPlan, LmsAccount, RunDelegation, User
+from .models import ClassPlan, LmsAccount, RunDelegation, User, ZoomAccount
 from .observability import emit
 from .validation import PayloadError, validate_payload
 
@@ -224,7 +224,16 @@ class Scheduler:
         # wrong account is the wrong person's meeting, and the students are in it before anyone
         # notices.
         if delegation.zoom_account_id is not None:
-            payload["zoomAccountId"] = str(delegation.zoom_account_id)
+            # Checked the same way the LMS account is. A delegation row can name a Zoom account
+            # that was since moved or removed, and copying the id out without looking would open
+            # the class under whoever owns it now.
+            zoom = await session.get(ZoomAccount, delegation.zoom_account_id)
+            if zoom is None or zoom.user_id != plan.coordinator_id:
+                emit("schedule.no_account", level=logging.WARNING, group=plan.group_name,
+                     date=plan.session_date.isoformat(),
+                     reason="the chosen Zoom account is not that coordinator's, or is gone")
+                return None
+            payload["zoomAccountId"] = str(zoom.id)
         if plan.start_time:
             payload["startTime"] = plan.start_time
         if plan.meeting_url:

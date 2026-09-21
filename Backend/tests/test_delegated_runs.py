@@ -535,10 +535,18 @@ def zoom_id_for_self(client: TestClient, account_id: str) -> str:
 
 
 def a_job_for(client: TestClient, device_id: str, account_id: str, status: str = "assigned",
-              job_type: str = "lms.run_session") -> str:
+              job_type: str = "lms.run_session", coordinator_id: str | None = None) -> str:
     """A class stage in the database, already given to that device. The dispatcher is not involved:
-    what is being tested is who may read a sign-in, not how a job got there."""
+    what is being tested is who may read a sign-in, not how a job got there.
+
+    The coordinator defaults to the account's own owner, because that is what a real class says;
+    passing a different one is how the mismatch is tested."""
     import uuid as _uuid
+
+    if coordinator_id is None:
+        owner = run_sql(client.app.state.settings.database_url,
+                        "SELECT user_id FROM lms_accounts WHERE id = $1::uuid", account_id)
+        coordinator_id = str(owner[0]["user_id"]) if owner else str(_uuid.uuid4())
 
     job_id = str(_uuid.uuid4())
     run_sql(
@@ -550,7 +558,7 @@ def a_job_for(client: TestClient, device_id: str, account_id: str, status: str =
         """,
         job_id, job_type, device_id,
         f'{{"classPlanId":"{_uuid.uuid4()}","group":"CAI5_AIS4_S7","date":"2026-09-20",'
-        f'"coordinatorId":"{_uuid.uuid4()}","lmsAccountId":"{account_id}"}}',
+        f'"coordinatorId":"{coordinator_id}","lmsAccountId":"{account_id}"}}',
         status,
     )
     return job_id
@@ -668,3 +676,30 @@ def test_a_job_that_names_no_account_gives_nothing(dash, two):
     refused = secret_for(dash, job_id, token)
     assert refused.status_code == 409
     assert "names no LMS account" in refused.json()["details"]
+
+
+def test_a_job_naming_somebody_elses_account_is_refused_the_password(dash, two):
+    """The check that makes the job the boundary rather than just the doorway.
+
+    Without it the payload decides: a job says the class is Omar's and names Mona's account, and
+    the device is handed Mona's password because it holds a valid job. Whoever could write a
+    payload could then read every saved sign-in, one account id at a time.
+    """
+    from conftest import register
+
+    mona, omar = two
+    monas = dash.get(f"/api/v1/admin/users/{mona}/lms-accounts").json()["accounts"][0]["id"]
+    turn_on(dash, mona, lmsAccountId=monas)
+    turn_on(dash, omar)
+
+    device_id, token = register(dash, "cloud-worker-1")
+    # Omar's class, Mona's account.
+    job = a_job_for(dash, device_id, monas, coordinator_id=omar)
+
+    answer = secret_for(dash, job, token)
+    assert answer.status_code == 409, answer.text
+    assert "different coordinator" in answer.json()["details"]
+    # And nothing was written down as a read, because there was none.
+    rows = run_sql(dash.app.state.settings.database_url,
+                   "SELECT username FROM admin_audit_log WHERE action = $1", "lms_secret.read_by_device")
+    assert rows == []

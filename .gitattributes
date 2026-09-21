@@ -1,0 +1,5 @@
+# Scripts that run inside a Linux container must keep LF endings: checked out with CRLF on
+# Windows, a Docker build from that tree fails with "/bin/sh^M: not found".
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf

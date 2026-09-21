@@ -55,8 +55,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy AS runtime
 # tzdata, because class times are Africa/Cairo and a slim image has no zones at all.
 # xvfb, for the day Zoom's web client refuses a headless browser (ZAA_HEADLESS=false).
 # The rest are what Chromium itself links against; `playwright install --with-deps` adds the others.
+# tini, because Chromium forks helper processes and a .NET worker as PID 1 reaps none of them:
+# over a day of classes they pile up as zombies until the container runs out of process slots.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tzdata xvfb ca-certificates \
+ && apt-get install -y --no-install-recommends tini tzdata xvfb ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -102,10 +104,17 @@ ENV ZAA_STATE_DIR=/var/lib/classflow \
 # image.
 VOLUME ["/var/lib/classflow"]
 
-# No HEALTHCHECK that only asks whether the process is alive: a hung Chromium leaves it alive. The
-# backend already knows this worker's heartbeat, and that is what the Server page reports.
-HEALTHCHECK --interval=60s --timeout=30s --start-period=40s --retries=3 \
-  CMD ["dotnet", "ZoomAutoAdmit.CloudWorker.dll", "preflight"]
+# No HEALTHCHECK. The obvious one - run the preflight - launches a whole second Chromium every
+# minute inside the container that is holding a live class, competing for the memory and the
+# /dev/shm that class needs. The preflight belongs at startup, and the entrypoint runs it once.
+#
+# Whether this worker is alive is the backend's question, and the backend already answers it: the
+# agent heartbeats every 30 seconds and a device is offline after 90 without one. That is what the
+# Server page reports, and it notices a hung Chromium, which a probe on the process would not.
 
-ENTRYPOINT ["dotnet", "ZoomAutoAdmit.CloudWorker.dll"]
+COPY deploy/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
+
+# tini as PID 1: it reaps Chromium's orphans and passes SIGTERM through to the worker, which is
+# what lets a class be closed properly rather than killed.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/worker-entrypoint.sh"]
 CMD ["run"]
