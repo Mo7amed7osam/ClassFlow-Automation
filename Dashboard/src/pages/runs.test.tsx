@@ -105,32 +105,38 @@ describe('running other coordinators’ classes', () => {
     await waitFor(() => {
       const put = calls.find((call) => call.url === '/api/v1/admin/delegations/u-mona' && call.method === 'PUT')
       expect(put).toBeDefined()
-      expect(JSON.parse(put!.body!)).toMatchObject({ enabled: true, zoomAccountId: 'z-CAI5_AIS4_S7' })
+      // Nothing is chosen: every group of theirs opens with its own account.
+      expect(JSON.parse(put!.body!)).toMatchObject({ enabled: true, zoomAccountId: null })
       expect(put!.headers.get('X-Dashboard-Request')).toBe('1')
     })
     expect(await screen.findByText("Running Mona's classes")).toBeInTheDocument()
   })
 
-  it('their meetings are opened by one of their own Zoom accounts, chosen from what they have', async () => {
-    const calls = fakeBackend(
+  it('every group of theirs runs, each shown with the Zoom account that opens it', async () => {
+    fakeBackend(
       signedInAs(adminMe),
-      delegations([person({ enabled: true, zoomAccounts: [zoomAccount('CAI5_AIS4_S7'), zoomAccount('CAI5_AIS4_S9')] })]),
+      delegations([person({
+        enabled: true,
+        groups: [
+          { id: 'g1', name: 'CAI5_AIS4_S7', displayName: null, archived: false },
+          { id: 'g2', name: 'CAI5_AIS4_S8', displayName: null, archived: false },
+          { id: 'g3', name: 'CAI5_AIS4_S9', displayName: null, archived: false },
+        ],
+        zoomAccounts: [zoomAccount('CAI5_AIS4_S7'), zoomAccount('CAI5_AIS4_S8')],
+        groupsWithoutZoom: ['CAI5_AIS4_S9'],
+      })]),
       runPlan([]),
-      accepted,
     )
     renderPage(<RunsPage />)
 
-    const choice = await screen.findByLabelText('Opens with their')
-    expect(within(choice).getAllByRole('option').map((o) => o.textContent)).toEqual(['CAI5_AIS4_S7', 'CAI5_AIS4_S9'])
-    await userEvent.selectOptions(choice, 'z-CAI5_AIS4_S9')
-
-    await waitFor(() => {
-      const put = calls.find((call) => call.method === 'PUT')
-      expect(JSON.parse(put!.body!)).toMatchObject({ enabled: true, zoomAccountId: 'z-CAI5_AIS4_S9' })
-    })
+    const list = await screen.findByLabelText("Mona's groups and their Zoom accounts")
+    expect(within(list).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'CAI5_AIS4_S7', 'CAI5_AIS4_S8', 'CAI5_AIS4_S9 · no Zoom account',
+    ])
+    expect(screen.queryByRole('combobox', { name: /opens with/i })).not.toBeInTheDocument()
   })
 
-  it('an account with no link of its own says so before it is chosen', async () => {
+  it('an account with no link of its own says so', async () => {
     fakeBackend(
       signedInAs(adminMe),
       delegations([person({ enabled: true, zoomAccounts: [zoomAccount('CAI5_AIS4_S7', { meetingUrl: null })] })]),
@@ -138,7 +144,7 @@ describe('running other coordinators’ classes', () => {
     )
     renderPage(<RunsPage />)
 
-    expect(await screen.findByRole('option', { name: 'CAI5_AIS4_S7 — no link yet' })).toBeInTheDocument()
+    expect(await screen.findByText('CAI5_AIS4_S7 — no link yet')).toBeInTheDocument()
   })
 
   it('a coordinator with no Zoom account of their own is told where it comes from', async () => {

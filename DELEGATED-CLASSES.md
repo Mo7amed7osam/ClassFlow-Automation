@@ -36,10 +36,14 @@ instead of typing a link or an account name a second time.
 ## Turning a coordinator on
 
 Either **Dashboard → Run classes**, or the tick box on the app's own **Coordinators & groups** page
-(`Run their classes`). Both write the same thing on the server. Each coordinator is listed with
-their groups, the LMS sign-in their classes go up under, and which of their Zoom accounts opens
-them; where they have more than one, the admin chooses. **Stop running theirs** takes every class of
-theirs off the admin's PC again at the next pass.
+(`Run their classes`). Both write the same thing on the server. Turning a coordinator on runs all
+of their classes, every group of theirs, and there is nothing else to choose: each group opens with
+the one of their Zoom accounts that hosts it (the one kept for that group, else the one named after
+it, else their only account). Beside the tick box every group shows the account that opens it, and a
+group none of their several accounts hosts says so (`CAI5_AIS4_S9 · no Zoom account`) instead of
+borrowing another group's. A class that did borrow one - imported while a single account was chosen
+for the whole coordinator - takes its own group's account and link as soon as there is one.
+**Stop running theirs** takes every class of theirs off the admin's PC again at the next pass.
 
 The admin's PC then, every five minutes:
 

@@ -38,6 +38,8 @@ export interface DashState {
     zoomAccounts: { id: string; name: string; group?: string | null; link: boolean }[]
     planned: number
     needsLink: number
+    /** Their groups none of their Zoom accounts hosts (absent on an older server). */
+    groupsWithoutZoom?: string[]
   }[]
   allGroups: null | { id: string; name: string; displayName?: string | null; archived: boolean; recordings: number; lastSession?: string | null; pending: number; onLms: number; missing: number; coordinators: string[] }[]
   /** The app's own update from the central server (absent in older builds). */

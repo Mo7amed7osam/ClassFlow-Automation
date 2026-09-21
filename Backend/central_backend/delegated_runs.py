@@ -145,6 +145,39 @@ async def _zoom_accounts(session: AsyncSession, user_ids: list[uuid.UUID]) -> di
     return found
 
 
+def _group_zoom(accounts: list[ZoomAccount], group: str) -> ZoomAccount | None:
+    """The Zoom account of theirs that hosts this group: the one kept for it, or the one named after it.
+
+    A coordinator with a single Zoom account uses it for every group. With several, a group none of
+    them hosts has no account, rather than borrowing another group's - running a coordinator's
+    classes means every group of theirs, each opened by its own account.
+    """
+    key = group.lower()
+    for account in accounts:
+        if (account.group_name or "").lower() == key:
+            return account
+    for account in accounts:
+        if account.account_id.lower() == key:
+            return account
+    return accounts[0] if len(accounts) == 1 else None
+
+
+def _borrowed(accounts: list[ZoomAccount], named: str | None, group: str) -> ZoomAccount | None:
+    """The account a class names when it belongs to another group and this group has one of its own.
+
+    Classes imported while a single account was chosen for the whole coordinator took that account,
+    and its link, for groups it does not host. Those are put right on the next read.
+    """
+    if not named:
+        return None
+    own = _group_zoom(accounts, group)
+    named_account = next((a for a in accounts if a.account_id.lower() == named.lower()), None)
+    if own is None or named_account is None or named_account is own:
+        return None
+    hosts = (named_account.group_name or named_account.account_id).lower()
+    return named_account if hosts != group.lower() else None
+
+
 def _chosen_zoom(accounts: list[ZoomAccount], chosen: uuid.UUID | None, named: str | None) -> ZoomAccount | None:
     """The account a delegation names - by reference, by the name it was given, or the active one."""
     for account in accounts:
@@ -241,6 +274,9 @@ async def list_delegations(request: Request) -> JSONResponse:
             "zoomAccountId": str(zoom.id) if zoom else None,
             "zoomAccount": zoom.account_id if zoom else (delegation.zoom_account if delegation else None),
             "zoomAccounts": [zoom_view(a) for a in their_zooms],
+            # Every group of theirs runs, each with its own account; these are the ones that cannot.
+            "groupsWithoutZoom": [g["name"] for g in groups.get(user.id, [])
+                                  if not g["archived"] and _group_zoom(their_zooms, g["name"]) is None],
             "classes": {
                 "planned": counts.get((user.id, "planned"), 0),
                 "done": counts.get((user.id, "done"), 0),
@@ -494,8 +530,23 @@ async def run_plan(
             "zoomAccounts": [zoom_view(a) for a in zooms.get(user_id, [])],
             "lmsAccount": _account_view(chosen) if chosen else None,
         })
-    classes = [_plan_view(plan, (delegations.get(plan.coordinator_id).zoom_account
-                                 if delegations.get(plan.coordinator_id) else None)) for plan in plans]
+    def own_zoom(plan: ClassPlan) -> str | None:
+        account = _group_zoom(zooms.get(plan.coordinator_id, []), plan.group_name)
+        return account.account_id if account else None
+
+    def view(plan: ClassPlan) -> dict[str, Any]:
+        theirs = zooms.get(plan.coordinator_id, [])
+        shown = _plan_view(plan, own_zoom(plan))
+        wrong = _borrowed(theirs, plan.zoom_account, plan.group_name) if plan.status == "planned" else None
+        if wrong is not None:
+            own = _group_zoom(theirs, plan.group_name)
+            shown["zoomAccount"] = own.account_id if own else None
+            if plan.meeting_url == wrong.default_meeting_url:
+                shown["meetingUrl"] = own.default_meeting_url if own else None
+                shown["needsLink"] = not shown["meetingUrl"]
+        return shown
+
+    classes = [view(plan) for plan in plans]
     return _no_store({"classes": classes, "coordinators": people})
 
 
@@ -513,14 +564,7 @@ async def import_plan(body: ImportBody, request: Request, admin: CurrentUser = D
         # classes open, so a class the LMS lists needs nothing typed in: the link and the account
         # that opens it are already theirs. A group with no account of its own falls back to the one
         # the delegation names.
-        delegation = await session.get(RunDelegation, user.id)
         their_zooms = (await _zoom_accounts(session, [user.id])).get(user.id, [])
-        default_zoom = _chosen_zoom(their_zooms, delegation.zoom_account_id if delegation else None,
-                                    delegation.zoom_account if delegation else None)
-        zoom_for: dict[str, ZoomAccount] = {}
-        for account in their_zooms:
-            for key in {(account.group_name or "").lower(), account.account_id.lower()} - {""}:
-                zoom_for.setdefault(key, account)
         existing = {
             (plan.group_name.lower(), plan.session_date, plan.start_time or ""): plan
             for plan in (await session.execute(
@@ -531,6 +575,13 @@ async def import_plan(body: ImportBody, request: Request, admin: CurrentUser = D
         known_link: dict[str, str] = {}
         known_zoom: dict[str, str] = {}
         for plan in sorted(existing.values(), key=lambda p: (p.session_date, p.start_time or "")):
+            wrong = _borrowed(their_zooms, plan.zoom_account, plan.group_name)
+            if wrong is not None and plan.status == "planned":
+                own = _group_zoom(their_zooms, plan.group_name)
+                plan.zoom_account = own.account_id if own else None
+                if plan.meeting_url and plan.meeting_url == wrong.default_meeting_url:
+                    plan.meeting_url = own.default_meeting_url if own else None
+                plan.updated_at = now
             if plan.meeting_url:
                 known_link[plan.group_name.lower()] = plan.meeting_url
             if plan.zoom_account:
@@ -543,7 +594,7 @@ async def import_plan(body: ImportBody, request: Request, admin: CurrentUser = D
             url = _meeting_url(item.meetingUrl)
             key = (group.lower(), item.date, start or "")
             plan = existing.get(key)
-            theirs = zoom_for.get(group.lower()) or default_zoom
+            theirs = _group_zoom(their_zooms, group)
             if plan is None:
                 plan = ClassPlan(
                     id=uuid.uuid4(), coordinator_id=user.id, group_name=group, session_date=item.date,

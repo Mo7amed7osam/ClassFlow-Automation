@@ -300,6 +300,7 @@ public partial class DashboardWebView : UserControl
                 zoomAccountId = d.Zoom?.Id, zoomAccount = d.Zoom?.AccountId,
                 zoomAccounts = d.ZoomAccountList.Select(a => new { id = a.Id, name = a.AccountId, group = a.Group, link = a.MeetingUrl != null }),
                 planned = d.Classes?.Planned ?? 0, needsLink = d.Classes?.NeedsLink ?? 0,
+                groupsWithoutZoom = d.GroupsWithoutZoom ?? [],
             }) : null,
             allGroups = central.IsAdmin ? central.Groups.Select(g => new
             {
