@@ -41,6 +41,14 @@ fi
 # launches with its sandbox. A machine that fails this cannot run a class, and finding out now is
 # the whole point.
 if [ "${1:-run}" = "run" ]; then
+    # A new cloud stack starts before the operator can create the database-backed, one-use
+    # enrolment token. Keep this container up as "waiting for enrolment" instead of racing
+    # Docker's restart limit and taking the healthy backend down with it. On the next deploy,
+    # either the token is present or the persisted device token is, so normal preflight follows.
+    if [ ! -s "${ZAA_STATE_DIR}/device-token" ] && [ -z "${ZAA_ENROLLMENT_TOKEN:-}" ]; then
+        echo "[entrypoint] waiting for ZAA_ENROLLMENT_TOKEN; create one in the backend, add it to the service environment, then redeploy"
+        exec tail -f /dev/null
+    fi
     echo "[entrypoint] checking the machine"
     dotnet ZoomAutoAdmit.CloudWorker.dll preflight
 fi
