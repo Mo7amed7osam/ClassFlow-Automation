@@ -120,35 +120,83 @@ public sealed class CompleteSessionStage(ILmsAccounts accounts, Action<string>? 
 }
 
 /// <summary>
-/// lms.attendance: writes up who was in the meeting.
+/// lms.attendance: writes up who was in the meeting, an hour and a half in.
 ///
-/// The names come with the job. Collecting them is class.attendance's work and Zoom's report's
-/// after that; this stage only writes down what it was given, so a correction is another job with
-/// a better list rather than a rerun that hopes for a different answer.
+/// The names are the server's: the meeting lane sends what it sees while the class runs, the server
+/// matches it against the group's roster, and this stage writes down the students it found. It never
+/// writes an empty list - that would mark a whole class absent - and says why there was nothing
+/// instead.
 /// </summary>
 public sealed class AttendanceStage(ILmsAccounts accounts, IAttendanceNames names, Action<string>? log = null,
                                       Func<DateTimeOffset>? now = null)
-    : LmsStageHandler(accounts, log, now)
+    : AttendanceWritingStage(accounts, names, log, now)
 {
     public override string JobType => "lms.attendance";
+
+    protected override Task<LmsAttendanceResult> WriteAsync(
+        LmsSessionRunner runner, ClassStage stage, IReadOnlyCollection<string> present, CancellationToken cancellationToken) =>
+        runner.TakeAttendanceAsync(stage.Group, present, stage.StartTime, stage.Date, headed: false,
+                                   dryRun: stage.DryRun, cancellationToken: cancellationToken);
+
+    protected override string Did(ClassStage stage) =>
+        stage.DryRun ? "would have written the attendance" : "wrote the attendance";
+}
+
+/// <summary>
+/// lms.late_joiners: three hours in, the attendance again from everything the meeting showed, so
+/// whoever arrived after the first write-up is moved from Not-joined to Joined. The Windows app's
+/// CorrectAttendance step, and the same runner method: only the rows that disagree are changed.
+/// </summary>
+public sealed class LateJoinersStage(ILmsAccounts accounts, IAttendanceNames names, Action<string>? log = null,
+                                     Func<DateTimeOffset>? now = null)
+    : AttendanceWritingStage(accounts, names, log, now)
+{
+    public override string JobType => "lms.late_joiners";
+
+    protected override Task<LmsAttendanceResult> WriteAsync(
+        LmsSessionRunner runner, ClassStage stage, IReadOnlyCollection<string> present, CancellationToken cancellationToken) =>
+        runner.CorrectAttendanceAsync(stage.Group, present, stage.StartTime, stage.Date, headed: false,
+                                      dryRun: stage.DryRun, cancellationToken: cancellationToken);
+
+    protected override string Did(ClassStage stage) =>
+        stage.DryRun ? "would have corrected the attendance for late joiners" : "corrected the attendance for late joiners";
+}
+
+/// <summary>What the two attendance stages share: the names come from the server, never empty.</summary>
+public abstract class AttendanceWritingStage(ILmsAccounts accounts, IAttendanceNames names, Action<string>? log,
+                                             Func<DateTimeOffset>? now)
+    : LmsStageHandler(accounts, log, now)
+{
+    protected abstract Task<LmsAttendanceResult> WriteAsync(
+        LmsSessionRunner runner, ClassStage stage, IReadOnlyCollection<string> present, CancellationToken cancellationToken);
+
+    protected abstract string Did(ClassStage stage);
 
     protected override async Task<JobOutcome> RunOnLmsAsync(
         LmsSessionRunner runner, ClassStage stage, CancellationToken cancellationToken)
     {
-        var present = await names.PresentAsync(stage, cancellationToken);
+        IReadOnlyCollection<string> present;
+        try
+        {
+            present = await names.PresentAsync(stage, cancellationToken);
+        }
+        catch (AttendanceUnavailableException problem)
+        {
+            // Not retried: nothing more will be collected from a meeting that is over, and a
+            // missing roster needs a person. The reason goes on the class card as the server gave it.
+            return JobOutcome.Failure("noAttendanceCollected", problem.Message);
+        }
         if (present.Count == 0)
         {
             // Not a failure to retry: an empty list would mark a whole class absent, and that is
             // worse than leaving the attendance for a person to look at.
             return JobOutcome.Failure(
                 "noAttendanceCollected",
-                "Nobody was collected for this class, so nothing was written: marking a whole class absent " +
-                "is not something to do by accident. Run class.attendance, or zoom.report once it has ended.");
+                "Nobody on the roster was found in this class's meeting, so nothing was written: marking a whole "
+                + "class absent is not something to do by accident. Check the matches on the attendance page.");
         }
 
-        var result = await runner.TakeAttendanceAsync(
-            stage.Group, present, stage.StartTime, stage.Date, headed: false, dryRun: stage.DryRun,
-            cancellationToken: cancellationToken);
+        var result = await WriteAsync(runner, stage, present, cancellationToken);
 
         // The result's own kind, not a flat "it failed". A session the dashboard has not finished
         // yet is worth trying again in five minutes; one it does not list at all is not, and
@@ -158,7 +206,7 @@ public sealed class AttendanceStage(ILmsAccounts accounts, IAttendanceNames name
         var answer = Answer(stage);
         answer["message"] = result.Message;
         answer["present"] = present.Count;
-        answer["did"] = stage.DryRun ? "would have written the attendance" : "wrote the attendance";
+        answer["did"] = Did(stage);
         return JobOutcome.Success(answer);
     }
 }

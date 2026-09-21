@@ -39,12 +39,13 @@ _local-before-branch-restore/
 # build from Windows/src - just not from these.
 Windows/src/ZoomAutoAdmit.WindowsUI/
 Windows/src/ZoomAutoAdmit.WindowsRuntime/
-Windows/src/ZoomAutoAdmit.UIAutomation/
+Windows/src/ZoomAutoAdmit.UIAutomation/**
+# Its project file is read by restore (Attendance names it for its Windows target); nothing else is.
+!Windows/src/ZoomAutoAdmit.UIAutomation/ZoomAutoAdmit.UIAutomation.csproj
 Windows/src/ZoomAutoAdmit.Inspector/
 Windows/src/ZoomAutoAdmit.WaitingRoomAutomation/
 Windows/src/ZoomAutoAdmit.WaitingRoomTester/
 Windows/src/ZoomAutoAdmit.Setup/
-Windows/src/ZoomAutoAdmit.Attendance/
 Windows/src/ZoomAutoAdmit.SessionRoles/
 Windows/tests/
 Windows/design-reference/

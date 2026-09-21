@@ -53,9 +53,10 @@ needs a real machine to validate.
 
 - A VPS with Coolify, with room for PostgreSQL, a Python service and a Chromium container.
   **Capacity has not been measured.** Each concurrent class is its own Chromium; budget roughly
-  400–700 MB per class plus the backend and the database. A worker runs one class at a time
-  (`ZAA_WORKER_MEMORY`, 2 GB by default, caps it); start with one worker and add a second
-  service only after measuring this machine.
+  400–700 MB per class plus the backend and the database. A worker holds one meeting at a time,
+  and while it does its LMS lane can have a second, headless Chromium open for a few minutes
+  (`ZAA_WORKER_MEMORY`, 2 GB by default, caps both together); start with one worker and add a
+  second service only after measuring this machine.
 - A domain pointed at the VPS. Coolify gets the certificate.
 - The repository: `https://github.com/Mo7amed7osam/ClassFlow-Automation`, branch **`Windows_and_web`**.
   Not `main` — the two have diverged and `main` does not contain the backend or the dashboard.
@@ -164,6 +165,17 @@ a device token written to the state volume at `/var/lib/classflow/device-token`,
 
 **Then clear `ZAA_ENROLLMENT_TOKEN` from Coolify.** It is spent, and leaving it there only causes
 confusion at the next deployment.
+
+**One worker is two devices on the dashboard: `cloud-worker-1` and `cloud-worker-1-lms`.** A device
+runs one job at a time, and the meeting lane is busy for the whole of every class it holds. The LMS
+steps - Run Session at the start, attendance at +1:30, late joiners at +3:00, Complete after - run in
+a second lane beside it, as they run in their own queue on Windows. The worker enrols that second
+device itself with a one-time token its own device token asks for; there is nothing to do by hand.
+Its files are in `/var/lib/classflow/lms-lane/`. If the server refuses it, the worker logs why and
+runs everything on one lane, where the LMS steps wait until the meeting is over.
+
+Revoking a worker means revoking both. A revoked LMS lane is enrolled again by the worker at its
+next start.
 
 The device token is a file, not a keyring entry, and that is a real trade: a container has no
 Windows account to hang a secret on. What limits it is what the token is — it identifies one device

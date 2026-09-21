@@ -18,6 +18,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ZoomAutoAdmit.CentralAgent\ZoomAutoAdmit.CentralAgent.csproj" />
+    <!-- The web half of attendance: reading the meeting's Joined list, which builds on net8.0. -->
+    <ProjectReference Include="..\ZoomAutoAdmit.Attendance\ZoomAutoAdmit.Attendance.csproj" />
   </ItemGroup>
 
   <ItemGroup>

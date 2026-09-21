@@ -31,7 +31,8 @@ public sealed class ClassRunStage(
     IZoomAccounts accounts,
     bool headless,
     Action<string>? log = null,
-    Func<DateTimeOffset>? now = null) : ClassStageHandler(log, now)
+    Func<DateTimeOffset>? now = null,
+    IAttendanceSnapshots? attendance = null) : ClassStageHandler(log, now)
 {
     /// <summary>How long after the class's own length to keep holding it. Nothing is admitted to a
     /// meeting nobody is in, and a worker that lost the backend must not hold its slot for ever.</summary>
@@ -136,6 +137,13 @@ public sealed class ClassRunStage(
         catch (Exception problem) { Log($"could not mute or turn the camera off: {problem.GetType().Name}"); }
 
         Log($"{stage.Group} is live; admitting for {length.TotalMinutes:0} minutes");
+
+        // Who is there, read beside the admitting and sent to the server, which is where the LMS
+        // stages later get the names from. Stopped with the class, and read once more at the end.
+        using var collecting = CancellationTokenSource.CreateLinkedTokenSource(classOver.Token);
+        var reader = attendance is null ? null
+            : new MeetingAttendance(token => ReadJoinedAsync(engine, token), attendance, stage, Log);
+        var collector = reader?.RunAsync(collecting.Token) ?? Task.CompletedTask;
         try
         {
             await engine.MonitorAsync(options, classOver.Token);
@@ -146,6 +154,19 @@ public sealed class ClassRunStage(
         }
         finally
         {
+            // The last read comes before the meeting is ended, while the list still holds whoever
+            // stayed to the end - after it, there is nobody left to read.
+            await collecting.CancelAsync();
+            try { await collector; } catch (Exception problem) { Log($"attendance stopped badly: {problem.GetType().Name}"); }
+            if (reader is not null)
+            {
+                using var lastRead = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                try { await reader.FinalAsync(lastRead.Token); }
+                catch (Exception problem) { Log($"the last attendance read failed: {problem.GetType().Name}"); }
+                answer["attended"] = reader.MostSeen;
+                answer["rows"] = reader.Sent;
+            }
+
             // StopAsync closes the browser; the meeting would stay open and hostless, and the
             // account cannot start its next class while one is running. So the meeting is ended
             // for everyone first, and the browser closed after.
@@ -190,5 +211,21 @@ public sealed class ClassRunStage(
               + "could not be ended. It may still be open, and this account cannot start its next class while "
               + "it is. Check whether this account is the meeting's host.";
         return JobOutcome.Success(answer);
+    }
+
+    /// <summary>
+    /// The meeting's Joined list, read the way the Windows app reads the web client's: found again
+    /// on the page each time, because Zoom replaces it while a class runs, and walked top to bottom.
+    /// </summary>
+    private static async Task<MeetingRead> ReadJoinedAsync(WebAutoAdmitEngine engine, CancellationToken cancellationToken)
+    {
+        var page = engine.ActiveMeetingPage
+                   ?? throw new InvalidOperationException("the meeting page is not open");
+        var found = await ZoomAutoAdmit.Attendance.WebParticipantList.FindAsync(page, cancellationToken);
+        if (found.List is not { } list)
+            throw new InvalidOperationException($"no participants list on the page ({found.Seen})");
+        var read = await new ZoomAutoAdmit.Attendance.WebAttendanceParticipantSource(page, _ => list)
+            .ReadAsync(cancellationToken);
+        return new MeetingRead(read.Participants.Select(p => p.Name).ToList(), read.IsComplete);
     }
 }

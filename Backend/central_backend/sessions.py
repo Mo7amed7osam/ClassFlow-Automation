@@ -42,6 +42,9 @@ from .scheduling import CAIRO, GRACE, STAGES, due_at, idempotency_key
 
 router = APIRouter()
 
+# The stages the scheduler makes only once the meeting was held.
+FOLLOWS_MEETING = frozenset(stage.job_type for stage in STAGES if stage.follows_meeting)
+
 
 @dataclass(frozen=True)
 class StageShape:
@@ -61,11 +64,13 @@ SHAPES: tuple[StageShape, ...] = (
     StageShape("zoom", "Zoom", "Opens", "class.run", timedelta(minutes=-15), True),
     StageShape("run", "Run", "At start", "lms.run_session", timedelta(0), True),
     StageShape("attendance", "Attendance", "Later", "lms.attendance", timedelta(minutes=90), True),
-    StageShape("lateJoiners", "Late joiners", "Later", None, timedelta(minutes=180), False),
-    StageShape("complete", "Complete", "Later", "lms.complete", timedelta(minutes=180), True),
-    StageShape("ended", "Ended", "After class", "class.end", None, True),
-    StageShape("zoomReport", "Zoom report", "Later", "zoom.report", None, True),
-    StageShape("zoomRecording", "Zoom recording", "Later", "zoom.recording", None, True),
+    StageShape("lateJoiners", "Late joiners", "Later", "lms.late_joiners", timedelta(minutes=180), True),
+    StageShape("complete", "Complete", "Later", "lms.complete", timedelta(minutes=190), True),
+    # No job of its own: a meeting is ended by the class.run that held it, at the end of holding
+    # it. So this stage is read from how that job finished - see _ended.
+    StageShape("ended", "Ended", "After class", None, None, True),
+    StageShape("zoomReport", "Zoom report", "Later", "zoom.report", timedelta(minutes=200), True),
+    StageShape("zoomRecording", "Zoom recording", "Later", "zoom.recording", timedelta(minutes=210), True),
     StageShape("drive", "Drive", "After class", "recording.process", None, True),
     StageShape("material", "Material", "After class", None, None, False),
     StageShape("assignment", "Assignment", "Due", None, None, False),
@@ -137,6 +142,41 @@ def _stage_state(
     return entry
 
 
+def _ended(shape: StageShape, held: Job | None) -> dict[str, Any]:
+    """Whether the meeting was closed, from the class.run that held it.
+
+    There is no separate job to end a meeting: the worker holding it is the only thing in the
+    meeting, and it ends it for everyone when the class's time is up. A separate job would queue
+    behind the one holding the meeting and arrive after it was already over. So this stage says
+    what that job reported, and a meeting left open is a failure here rather than a quiet tick.
+    """
+    entry: dict[str, Any] = {"key": shape.key, "label": shape.label, "caption": shape.caption}
+    if held is None or held.status in ("queued", "assigned"):
+        entry["state"] = "later"
+        return entry
+    if held.status == "running":
+        entry["state"] = "waiting"
+        entry["detail"] = "when the class's time is up"
+        return entry
+    result = held.result or {}
+    if held.status != "succeeded":
+        entry["state"] = "blocked"
+        entry["detail"] = "the meeting was not held"
+        return entry
+    if result.get("dryRun"):
+        entry["state"] = "done"
+        entry["detail"] = "rehearsal: nothing was opened"
+    elif result.get("endedTheMeeting") is False:
+        entry["state"] = "failed"
+        entry["detail"] = result.get("warning") or "the meeting could not be ended and may still be open"
+    else:
+        entry["state"] = "done"
+        if held.finished_at:
+            entry["detail"] = f"Ended {held.finished_at.astimezone(CAIRO):%H:%M}"
+    entry["jobId"] = str(held.id)
+    return entry
+
+
 def _due(shape: StageShape, plan: ClassPlan) -> datetime | None:
     """When this stage is due, in UTC, or None for one that has no clock of its own."""
     if shape.offset is None or not plan.start_time:
@@ -159,11 +199,10 @@ def _blocked(shape: StageShape, plan: ClassPlan, delegation: RunDelegation | Non
     """Why this stage cannot run as things stand, or None."""
     if delegation is None or not delegation.enabled:
         return "this coordinator is not turned on"
-    if shape.job_type == "class.run":
-        if not plan.meeting_url:
-            return "no Zoom link on this class"
-        if delegation.zoom_account_id is None:
-            return "no Zoom account chosen for this coordinator"
+    if shape.job_type == "class.run" and not plan.meeting_url:
+        return "no Zoom link on this class"
+    if shape.job_type and shape.job_type.startswith(("class.", "zoom.")) and delegation.zoom_account_id is None:
+        return "no Zoom account chosen for this coordinator"
     if shape.job_type and shape.job_type.startswith("lms.") and delegation.lms_account_id is None:
         return "no LMS account chosen for this coordinator"
     return None
@@ -269,8 +308,19 @@ async def _class_view(session: AsyncSession, plan: ClassPlan, now: datetime) -> 
             if found is not None:
                 jobs[shape.key] = found
 
+    # The scheduler makes no follow-up for a class whose meeting failed or never came, so on the
+    # page those stages say why, instead of turning red one by one as their times pass.
+    meeting = jobs.get("zoom")
+    not_held = meeting is not None and meeting.status in ("failed", "cancelled")
+
+    def blocked(shape: StageShape) -> str | None:
+        if not_held and shape.job_type in FOLLOWS_MEETING and shape.key not in jobs:
+            return "the meeting was not held"
+        return _blocked(shape, plan, delegation)
+
     stages = [
-        _stage_state(shape, plan, jobs.get(shape.key), now, _blocked(shape, plan, delegation))
+        _ended(shape, meeting) if shape.key == "ended"
+        else _stage_state(shape, plan, jobs.get(shape.key), now, blocked(shape))
         for shape in SHAPES
     ]
 

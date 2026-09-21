@@ -18,6 +18,10 @@ COPY Windows/src/ZoomAutoAdmit.Roster/ZoomAutoAdmit.Roster.csproj               
 COPY Windows/src/ZoomAutoAdmit.AttendanceMatching/ZoomAutoAdmit.AttendanceMatching.csproj Windows/src/ZoomAutoAdmit.AttendanceMatching/
 COPY Windows/src/ZoomAutoAdmit.WebAutomation/ZoomAutoAdmit.WebAutomation.csproj       Windows/src/ZoomAutoAdmit.WebAutomation/
 COPY Windows/src/ZoomAutoAdmit.CentralAgent/ZoomAutoAdmit.CentralAgent.csproj         Windows/src/ZoomAutoAdmit.CentralAgent/
+COPY Windows/src/ZoomAutoAdmit.Attendance/ZoomAutoAdmit.Attendance.csproj             Windows/src/ZoomAutoAdmit.Attendance/
+# Only its project file: Attendance names it for its Windows target, and restore reads every target.
+# Nothing of it is built for Linux.
+COPY Windows/src/ZoomAutoAdmit.UIAutomation/ZoomAutoAdmit.UIAutomation.csproj         Windows/src/ZoomAutoAdmit.UIAutomation/
 COPY Windows/src/ZoomAutoAdmit.CloudWorker/ZoomAutoAdmit.CloudWorker.csproj           Windows/src/ZoomAutoAdmit.CloudWorker/
 # EnableWindowsTargeting, and it is not a contradiction. The worker itself is net8.0 alone, but the
 # libraries it references multi-target, and `restore` evaluates every target framework a referenced
@@ -32,6 +36,7 @@ COPY Windows/src/ZoomAutoAdmit.Roster/             Windows/src/ZoomAutoAdmit.Ros
 COPY Windows/src/ZoomAutoAdmit.AttendanceMatching/ Windows/src/ZoomAutoAdmit.AttendanceMatching/
 COPY Windows/src/ZoomAutoAdmit.WebAutomation/      Windows/src/ZoomAutoAdmit.WebAutomation/
 COPY Windows/src/ZoomAutoAdmit.CentralAgent/       Windows/src/ZoomAutoAdmit.CentralAgent/
+COPY Windows/src/ZoomAutoAdmit.Attendance/         Windows/src/ZoomAutoAdmit.Attendance/
 COPY Windows/src/ZoomAutoAdmit.CloudWorker/        Windows/src/ZoomAutoAdmit.CloudWorker/
 
 # The worker targets net8.0 alone. If a Windows-only project ever creeps into its references, this

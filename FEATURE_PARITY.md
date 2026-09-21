@@ -162,12 +162,12 @@ The web page must model these as dependencies with their own clocks, not as a se
 |---|---|---|---|
 | Timetable discovery | `LmsSessionRunner` reads each coordinator's LMS list, every 6 h, 3 profiles in parallel | Worker job; `POST /admin/run-plan/import` already exists | `NOT_STARTED` |
 | Delegation refresh | Windows PC polls `GET /admin/delegations` every 5 min | Worker poll, unchanged contract | `NOT_STARTED` |
-| Meeting startup | `ScheduledClassStarter` + **Windows Task Scheduler**, one task per class | Server-side scheduler with leases | `NOT_STARTED` |
-| Waiting-room admission | `WebAutoAdmitEngine` (portable) or UIA | Web engine only | `NOT_STARTED` |
-| Attendance snapshots | `AttendanceCollector` per live meeting | Worker, web source | `NOT_STARTED` |
-| Attendance correction | Zoom participants report after `Ended` | `ZoomParticipantsReportReader` (portable) | `NOT_STARTED` |
-| Name matching | `AttendanceMatching` + optional AI | Server-side; already portable | `NOT_STARTED` |
-| LMS completion | `LmsSessionRunner` | Worker | `NOT_STARTED` |
+| Meeting startup | `ScheduledClassStarter` + **Windows Task Scheduler**, one task per class | `scheduling.py` makes each stage once, at the Windows times | Built, tested; not yet run against live Zoom |
+| Waiting-room admission | `WebAutoAdmitEngine` (portable) or UIA | Web engine only, in `class.run` | Built; not yet run against live Zoom |
+| Attendance snapshots | `AttendanceCollector` per live meeting | `class.run` reads the Joined list at +2 min, every 10 min and at the end, and posts each read to `/attendance/snapshots` | Built, tested without a browser; not yet run against live Zoom |
+| Attendance correction | Zoom participants report after `Ended` | `lms.late_joiners` at +3:00 from every snapshot. The second pass from Zoom's own report is **not built**: `zoom.report` reads the report but does not correct the LMS from it | Half built |
+| Name matching | `AttendanceMatching` + optional AI | The server matches every snapshot against the group's roster; the LMS lane reads the result from `/agent/jobs/{id}/attendance` | Built, tested |
+| LMS completion | `LmsSessionRunner` | `lms.run_session`, `lms.attendance`, `lms.late_joiners`, `lms.complete` in the worker's LMS lane | Built, tested up to the browser |
 | Recording link → LMS | `RecordingLinkProcessor` via `recording.process` | **Already works** | Exists |
 | n8n integration | `X-API-Key` → backend | Unchanged | Exists |
 | Sheets / Drive | `RecordingSheet`, `RecordingLinks` | Worker | `NOT_STARTED` |

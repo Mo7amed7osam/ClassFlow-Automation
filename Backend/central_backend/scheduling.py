@@ -38,7 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .jobs import create_job
-from .models import ClassPlan, LmsAccount, RunDelegation, User, ZoomAccount
+from .models import ClassPlan, Job, LmsAccount, RunDelegation, User, ZoomAccount
 from .observability import emit
 from .validation import PayloadError, validate_payload
 
@@ -68,6 +68,7 @@ class Stage:
     job_type: str
     offset: timedelta
     what: str
+    follows_meeting: bool = False
 
 
 # What the scheduler creates, and when.
@@ -76,10 +77,24 @@ class Stage:
 # class card means by "Opens 18:45" for a 19:00 class: people arrive before the hour and there has
 # to be somebody there to let them in. The LMS session is started on the hour, because the
 # dashboard is the record of what happened rather than the door.
+#
+# After that the times are the Windows app's own follow-up queue, stage for stage: attendance an
+# hour and a half in, from what the meeting showed until then; the late joiners three hours in,
+# from everything it showed; the session completed after that correction; and Zoom's own report
+# and recording once Zoom has published them, which those stages wait for rather than fail on.
+#
+# The order in this tuple is the order the jobs are made, and a worker's LMS lane takes them first
+# come first served - so the late joiners are always written before the session is completed.
 STAGES: tuple[Stage, ...] = (
     Stage("class.run", timedelta(minutes=-15), "open the meeting and hold it"),
     Stage("lms.run_session", timedelta(0), "press Run Session as the class starts"),
+    Stage("lms.attendance", timedelta(minutes=90), "write up who was there an hour and a half in", follows_meeting=True),
+    Stage("lms.late_joiners", timedelta(minutes=180), "move the people who came late to Joined", follows_meeting=True),
+    Stage("lms.complete", timedelta(minutes=190), "mark the session complete after the correction", follows_meeting=True),
+    Stage("zoom.report", timedelta(minutes=200), "read Zoom's participants report once it is published", follows_meeting=True),
+    Stage("zoom.recording", timedelta(minutes=210), "find the Zoom recording once it is processed", follows_meeting=True),
 )
+
 
 # How late a stage may still be created. A class that came due while the server was down is
 # reopened inside this window and left alone outside it: fifteen minutes is long enough to survive
@@ -157,6 +172,13 @@ class Scheduler:
                              jobType=stage.job_type, lateBySeconds=int((now - when).total_seconds()))
                         continue
 
+                    # What follows the meeting follows from it. A class whose meeting was never
+                    # made, or failed to open, has no attendance to write and no report to read -
+                    # so those stages are not made at all, rather than made to fail. Run Session is
+                    # not one of them: the LMS session is started whether or not there is a link.
+                    if stage.follows_meeting and not await self._meeting_held(session, plan):
+                        continue
+
                     payload = await self._payload(session, plan)
                     if payload is None:
                         continue
@@ -189,6 +211,13 @@ class Scheduler:
                              date=plan.session_date.isoformat(), startTime=plan.start_time)
 
         return counts
+
+    @staticmethod
+    async def _meeting_held(session: AsyncSession, plan: ClassPlan) -> bool:
+        """Whether this class's meeting was made and did not fail - the condition for its follow-ups."""
+        meeting = (await session.execute(
+            select(Job.status).where(Job.idempotency_key == idempotency_key(plan.id, STAGES[0])))).scalar_one_or_none()
+        return meeting is not None and meeting not in ("failed", "cancelled")
 
     async def _payload(self, session: AsyncSession, plan: ClassPlan) -> dict | None:
         """The stage payload for this class, or None when the class cannot say whose it is.
@@ -248,11 +277,10 @@ class Scheduler:
         named: a job that is going to be rejected is better not made, and "this class has no Zoom
         link yet" is something a person can act on.
         """
-        if stage.job_type == "class.run":
-            if "meetingUrl" not in payload:
-                return "no Zoom link on the class"
-            if "zoomAccountId" not in payload:
-                return "no Zoom account chosen for the coordinator"
+        if stage.job_type == "class.run" and "meetingUrl" not in payload:
+            return "no Zoom link on the class"
+        if stage.job_type.startswith(("class.", "zoom.")) and "zoomAccountId" not in payload:
+            return "no Zoom account chosen for the coordinator"
         return None
 
     async def run(self, stop: asyncio.Event) -> None:

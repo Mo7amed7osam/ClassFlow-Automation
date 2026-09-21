@@ -118,7 +118,7 @@ def test_a_stage_nothing_implements_says_so_rather_than_looking_unstarted(dash, 
     as_user(dash, "admin", ADMIN_PASSWORD)
     row = sessions(dash)["classes"][0]
 
-    for key in ("lateJoiners", "material", "assignment"):
+    for key in ("material", "assignment"):
         assert stage(row, key)["state"] == "missing", key
         assert "not built" in stage(row, key)["detail"]
 
@@ -249,3 +249,48 @@ def test_the_window_defaults_to_a_week_and_is_bounded(dash, clock):
 def test_the_page_needs_a_signed_in_person(dash):
     dash.cookies.clear()
     assert dash.get("/api/v1/dashboard/sessions").status_code == 401
+
+
+def test_ended_is_read_from_how_the_meeting_was_held(dash, clock):
+    """There is no job to end a meeting: the one holding it ends it, and says whether it could."""
+    plan, _ = a_class(dash)
+    url = dash.app.state.settings.database_url
+    clock.now = at_local(DAY, "18:45")
+    dash.portal.call(Scheduler(dash.app.state.sessionmaker, clock).schedule_once)
+    key = idempotency_key(uuid.UUID(plan), STAGES[0])
+    as_user(dash, "admin", ADMIN_PASSWORD)
+
+    assert stage(sessions(dash)["classes"][0], "ended")["state"] == "later"
+
+    run_sql(url, "UPDATE jobs SET status = 'running' WHERE idempotency_key = $1", key)
+    assert stage(sessions(dash)["classes"][0], "ended")["state"] == "waiting"
+
+    # Held and closed.
+    run_sql(url, """UPDATE jobs SET status = 'succeeded', finished_at = now(),
+                    result = '{"endedTheMeeting": true}'::jsonb WHERE idempotency_key = $1""", key)
+    assert stage(sessions(dash)["classes"][0], "ended")["state"] == "done"
+
+    # Held, but left open: not a quiet tick.
+    run_sql(url, """UPDATE jobs SET result = '{"endedTheMeeting": false,
+                    "warning": "no End button (is this account the host?)"}'::jsonb WHERE idempotency_key = $1""", key)
+    ended = stage(sessions(dash)["classes"][0], "ended")
+    assert ended["state"] == "failed"
+    assert "host" in ended["detail"]
+
+
+def test_the_follow_ups_of_a_meeting_that_failed_say_so(dash, clock):
+    """Not a row of red as their times pass: the scheduler makes none of them, and the card says why."""
+    plan, _ = a_class(dash)
+    url = dash.app.state.settings.database_url
+    clock.now = at_local(DAY, "18:45")
+    dash.portal.call(Scheduler(dash.app.state.sessionmaker, clock).schedule_once)
+    run_sql(url, "UPDATE jobs SET status = 'failed' WHERE idempotency_key = $1",
+            idempotency_key(uuid.UUID(plan), STAGES[0]))
+
+    clock.now = at_local(DAY, "23:30")
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    row = sessions(dash)["classes"][0]
+    for key in ("attendance", "lateJoiners", "complete", "zoomReport", "zoomRecording"):
+        assert stage(row, key)["state"] == "blocked", key
+        assert stage(row, key)["detail"] == "the meeting was not held"
+    assert stage(row, "ended")["detail"] == "the meeting was not held"

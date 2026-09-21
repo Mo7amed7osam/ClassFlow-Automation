@@ -139,9 +139,10 @@ def test_a_class_whose_time_has_passed_is_not_opened_hours_later(app, clock):
     clock.now = at_local(date(2026, 9, 20), "19:00") + GRACE + timedelta(minutes=1)
     counts = app.portal.call(scheduler.schedule_once)
 
-    # Both stages of the class are past their window: the meeting, due a quarter of an hour before
-    # the class, and the LMS session due on the hour.
-    assert counts == {"created": 0, "missed": len(STAGES)}
+    # The two stages due by now are past their window: the meeting, due a quarter of an hour before
+    # the class, and the LMS session due on the hour. The follow-ups are not due yet, so they are
+    # neither made nor missed - and they are never made for a class whose meeting was not held.
+    assert counts == {"created": 0, "missed": 2}
     assert jobs_of(app) == []
     assert jobs_of(app, "class.run") == []
 
@@ -272,3 +273,51 @@ def test_the_meeting_is_opened_once_however_many_passes_run(app, clock):
         app.portal.call(scheduler.schedule_once)
 
     assert len(jobs_of(app, "class.run")) == 1
+
+
+def test_a_held_class_gets_the_whole_windows_timeline(app, clock):
+    """The Windows app's follow-up queue, stage for stage, at its own times."""
+    plan, _ = a_class(app, with_zoom=True)
+    scheduler = Scheduler(app.app.state.sessionmaker, clock)
+    day = date(2026, 9, 20)
+
+    clock.now = at_local(day, "18:45")
+    app.portal.call(scheduler.schedule_once)
+    # The meeting is being held.
+    run_sql(app.app.state.settings.database_url,
+            "UPDATE jobs SET status = 'running' WHERE type = 'class.run'")
+
+    for hhmm, job_type in (("19:00", "lms.run_session"), ("20:30", "lms.attendance"),
+                           ("22:00", "lms.late_joiners"), ("22:10", "lms.complete"),
+                           ("22:20", "zoom.report"), ("22:30", "zoom.recording")):
+        clock.now = at_local(day, hhmm)
+        assert jobs_of(app, job_type) == [], f"{job_type} before {hhmm}"
+        app.portal.call(scheduler.schedule_once)
+        rows = jobs_of(app, job_type)
+        assert len(rows) == 1, f"{job_type} at {hhmm}"
+        assert rows[0]["idempotency_key"] == f"plan:{plan}:{job_type}"
+
+    # The Zoom stages carry the account whose pages they read; the LMS ones the account they write as.
+    assert jobs_of(app, "zoom.report")[0]["payload"]["zoomAccountId"]
+    assert jobs_of(app, "lms.late_joiners")[0]["payload"]["lmsAccountId"]
+
+
+def test_a_class_whose_meeting_failed_gets_no_follow_ups(app, clock):
+    """No attendance to write and no report to read: nothing is made to fail on the class card."""
+    a_class(app, with_zoom=True)
+    scheduler = Scheduler(app.app.state.sessionmaker, clock)
+    day = date(2026, 9, 20)
+
+    clock.now = at_local(day, "18:45")
+    app.portal.call(scheduler.schedule_once)
+    run_sql(app.app.state.settings.database_url,
+            "UPDATE jobs SET status = 'failed' WHERE type = 'class.run'")
+
+    for hhmm in ("19:00", "20:30", "22:00", "22:10", "22:20", "22:30"):
+        clock.now = at_local(day, hhmm)
+        app.portal.call(scheduler.schedule_once)
+
+    # Run Session still happens: the LMS session is started whether or not the meeting opened.
+    assert len(jobs_of(app, "lms.run_session")) == 1
+    for job_type in ("lms.attendance", "lms.late_joiners", "lms.complete", "zoom.report", "zoom.recording"):
+        assert jobs_of(app, job_type) == [], job_type

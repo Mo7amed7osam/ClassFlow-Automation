@@ -30,7 +30,8 @@ JOB_TYPES: dict[str, str] = {
     "zoom.report": "zoom_web",         # Zoom's own participants report, once it has ended
     "zoom.recording": "zoom_web",      # the recording's link, once Zoom has made one
     "lms.run_session": "lms",          # press Run Session
-    "lms.attendance": "lms",           # write the attendance that was collected
+    "lms.attendance": "lms",
+    "lms.late_joiners": "lms",  # the attendance again, three hours in, for whoever came late           # write the attendance that was collected
     "lms.complete": "lms",             # close the session
 }
 """Job type -> the capability a device must report to be given it.

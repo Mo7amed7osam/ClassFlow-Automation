@@ -103,50 +103,12 @@ if (tokens.Read() is null && string.IsNullOrWhiteSpace(settings.EnrollmentToken)
 
 Log("enrolled" + (tokens.Read() is null ? " (will register with the enrolment token)" : ""));
 
-// ---------------------------------------------------------------------------------------------
-// What this worker can do, and what it therefore says it can do.
-//
-// class.run owns a meeting for the length of a class: it opens it as the host, admits the waiting
-// room as people arrive, and closes it. The three LMS stages drive the same LmsSessionRunner the
-// Windows app drives, under the account the class names.
-//
-// Not built: zoom.report and zoom.recording, which read Zoom's own pages after a meeting has
-// ended. A worker claiming zoom_web can still be handed one, so the handler dictionary is what
-// actually answers - an unknown type is rejected rather than taken and failed.
-//
-// Nothing here has opened a real Zoom meeting yet. lms.run_session has run against the real DEPI
-// LMS from Linux; FEATURE_PARITY.md is where each one's evidence is.
-// ---------------------------------------------------------------------------------------------
 using var http = new HttpClient { BaseAddress = settings.BackendUrl, Timeout = TimeSpan.FromSeconds(30) };
-
-// The server ties a class's sign-in to the job being run, so the account source has to know which
-// one that is. The agent already tracks it; this closure reads it back once the agent exists,
-// which is why it is a closure and not a constructor argument - the two need each other.
-CentralAgentService? agent = null;
-Guid? RunningJob() => Guid.TryParse(agent?.RunningJobId, out var id) ? id : null;
-
-var accountSource = new ServerLmsAccounts(http, tokens.Read, RunningJob, Log);
-var zoomAccounts = new ServerZoomAccounts(http, tokens.Read, RunningJob, Log);
-var attendanceNames = new NoAttendanceCollected();
-
-var handlers = new IJobHandler[]
-{
-    new ClassRunStage(zoomAccounts, settings.Headless, Log),
-    new ZoomReportStage(zoomAccounts, Log),
-    new ZoomRecordingStage(zoomAccounts, Log),
-    new RunSessionStage(accountSource, Log),
-    new CompleteSessionStage(accountSource, Log),
-    new AttendanceStage(accountSource, attendanceNames, Log),
-};
-
-// One job at a time: a worker holding a meeting is busy for the class's length. Several classes
-// at once means several workers, which is what the compose file scales.
-var capabilities = new[] { "zoom_web", "lms" };
-Log($"can run: {string.Join(", ", handlers.Select(h => h.JobType))} (capabilities: {string.Join(", ", capabilities)})");
-
 string version = typeof(WorkerSettings).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
-var identities = new DeviceIdentityStore(Path.Combine(settings.StateDirectory, "device.json"));
 
+// ---- The meeting lane: the device the operator enrolled. Its files stay where they always were,
+// so a worker enrolled before the lanes existed keeps its identity.
+var identities = new DeviceIdentityStore(Path.Combine(settings.StateDirectory, "device.json"));
 DeviceIdentity? identity;
 try
 {
@@ -160,13 +122,11 @@ catch (InvalidDataException problem)
 
 if (identity?.IsRegistered != true)
 {
-    // The enrolment token is spent here and never written down. What replaces it is the device
-    // token, on the state volume, which is what every later connection uses.
     Log("registering with the enrolment token");
     try
     {
         identity = await new AgentRegistrar(http, identities, tokens, Log).RegisterAsync(
-            settings.BackendUrl, settings.EnrollmentToken!, settings.Name, version, capabilities, stopping.Token);
+            settings.BackendUrl, settings.EnrollmentToken!, settings.Name, version, ["zoom_web"], stopping.Token);
     }
     catch (AgentRegistrationException problem)
     {
@@ -176,40 +136,98 @@ if (identity?.IsRegistered != true)
     Log($"registered as {identity.DeviceId}. Clear ZAA_ENROLLMENT_TOKEN: it is spent.");
 }
 
-agent = new CentralAgentService(
-    new CentralAgentSettings
-    {
-        BackendUrl = settings.BackendUrl,
-        Version = version,
-        Capabilities = capabilities,
-    },
+// ---- The LMS lane: a companion device in its own folder, enrolled by the worker itself.
+string lmsState = Path.Combine(settings.StateDirectory, "lms-lane");
+Directory.CreateDirectory(lmsState);
+var lmsTokens = new FileDeviceTokenStore(Path.Combine(lmsState, "device-token"));
+var lmsIdentities = new DeviceIdentityStore(Path.Combine(lmsState, "device.json"));
+var lmsIdentity = await CompanionLane.EnsureAsync(
+    http, tokens.Read, lmsIdentities, lmsTokens, settings.BackendUrl, version, Log, stopping.Token);
+bool twoLanes = lmsIdentity is not null;
+
+CentralAgentService? meetingAgent = null;
+CentralAgentService? lmsAgent = null;
+static Guid? Running(CentralAgentService? agent) => Guid.TryParse(agent?.RunningJobId, out var id) ? id : null;
+
+var zoomAccounts = new ServerZoomAccounts(http, tokens.Read, () => Running(meetingAgent), Log);
+var snapshots = new ServerAttendanceSnapshots(http, tokens.Read, Log);
+var meetingHandlers = new List<IJobHandler>
+{
+    new ClassRunStage(zoomAccounts, settings.Headless, Log, attendance: snapshots),
+    new ZoomReportStage(zoomAccounts, Log),
+    new ZoomRecordingStage(zoomAccounts, Log),
+};
+
+// The LMS stages ask the server as whichever device runs them: the job they hold is that device's.
+Func<string?> lmsToken = twoLanes ? lmsTokens.Read : tokens.Read;
+Func<Guid?> lmsJob = twoLanes ? () => Running(lmsAgent) : () => Running(meetingAgent);
+var lmsAccounts = new ServerLmsAccounts(http, lmsToken, lmsJob, Log);
+var presentNames = new ServerAttendanceNames(http, lmsToken, lmsJob, Log);
+var lmsHandlers = new IJobHandler[]
+{
+    new RunSessionStage(lmsAccounts, Log),
+    new AttendanceStage(lmsAccounts, presentNames, Log),
+    new LateJoinersStage(lmsAccounts, presentNames, Log),
+    new CompleteSessionStage(lmsAccounts, Log),
+};
+
+if (!twoLanes)
+{
+    // Still a working worker, only a slower one: every LMS stage waits for the meeting before it.
+    Log("warning: running on one lane. The LMS stages of a class will wait until its meeting is over.");
+    meetingHandlers.AddRange(lmsHandlers);
+}
+
+string[] meetingCapabilities = twoLanes ? ["zoom_web"] : ["zoom_web", "lms"];
+Log($"meeting lane: {string.Join(", ", meetingHandlers.Select(h => h.JobType))}");
+if (twoLanes) Log($"LMS lane: {string.Join(", ", lmsHandlers.Select(h => h.JobType))}");
+
+meetingAgent = new CentralAgentService(
+    new CentralAgentSettings { BackendUrl = settings.BackendUrl, Version = version, Capabilities = meetingCapabilities },
     identity,
     tokens,
     new ClientWebSocketFactory(),
     new JobJournal(Path.Combine(settings.JournalDirectory, "jobs.jsonl")),
-    handlers,
+    meetingHandlers,
     Log);
 
+if (twoLanes)
+    lmsAgent = new CentralAgentService(
+        new CentralAgentSettings { BackendUrl = settings.BackendUrl, Version = version, Capabilities = ["lms"] },
+        lmsIdentity!,
+        lmsTokens,
+        new ClientWebSocketFactory(),
+        new JobJournal(Path.Combine(settings.JournalDirectory, "lms-jobs.jsonl")),
+        lmsHandlers,
+        message => Log($"[lms lane] {message}"));
+
 Log($"connecting to {settings.BackendUrl}");
-var reason = await agent.RunAsync(stopping.Token);
+var lanes = new List<Task<AgentStopReason>> { meetingAgent.RunAsync(stopping.Token) };
+if (lmsAgent is not null) lanes.Add(lmsAgent.RunAsync(stopping.Token));
+
+// A lane that stops on its own - its token revoked - takes the other with it: half a worker that
+// holds meetings nobody writes up is worse than a stopped one that says why.
+await Task.WhenAny(lanes);
+if (!stopping.IsCancellationRequested) RequestStop("a lane stopped");
+var reasons = await Task.WhenAll(lanes);
 
 // Whatever passwords this run was given go now, whether it stopped cleanly or not.
 credentials.Clear();
 
-switch (reason)
+if (reasons.Contains(AgentStopReason.Unauthorized))
 {
-    case AgentStopReason.Unauthorized:
-        // Reconnecting would be refused the same way, so it stops and says why rather than
-        // retrying against a token somebody revoked on purpose.
-        Log("the backend refused this worker's device token. It may have been revoked; enrol again.");
-        return 1;
-    case AgentStopReason.NotRegistered:
-        Log("this worker has no device identity. Give it ZAA_ENROLLMENT_TOKEN and start it again.");
-        return 1;
-    default:
-        Log("stopped");
-        return 0;
+    // Reconnecting would be refused the same way, so it stops and says why rather than retrying
+    // against a token somebody revoked on purpose.
+    Log("the backend refused a device token of this worker. It may have been revoked; enrol again.");
+    return 1;
 }
+if (reasons.Contains(AgentStopReason.NotRegistered))
+{
+    Log("this worker has no device identity. Give it ZAA_ENROLLMENT_TOKEN and start it again.");
+    return 1;
+}
+Log("stopped");
+return 0;
 
 static void Log(string message) =>
     Console.WriteLine($"[worker] {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}Z {message}");
