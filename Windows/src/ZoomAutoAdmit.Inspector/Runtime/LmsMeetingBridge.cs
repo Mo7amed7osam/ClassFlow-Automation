@@ -85,7 +85,9 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
             lock (_sync)
             {
                 if (_beats.Remove(session.SessionId, out var beat)) { beat.Cancel(); beat.Dispose(); }
-                LiveMeetings.Clear(session.SessionId);
+                // Finish, not Clear: a beat already past its cancellation check would otherwise
+                // write the marker back and leave the class "live" with nothing watching it.
+                LiveMeetings.Finish(session.SessionId);
                 if (_classes.Remove(session.SessionId, out var ended))
                     _pending.Add(Task.Run(() => FinalAttendanceAsync(ended.Group, ended.Day, ended.Start)));
             }

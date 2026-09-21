@@ -219,7 +219,11 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
                     var (ended, message) = await _end(context, token);
                     _ends.Withdraw(session.SessionId);
                     _log($"{session.GroupId}: {message}");
-                    if (ended) Record(session, classStart, ClassEndedHow.Program, $"{decision.Reason}. {message}");
+                    if (ended)
+                    {
+                        Record(session, classStart, ClassEndedHow.Program, $"{decision.Reason}. {message}");
+                        ZoomAutoAdmit.Core.Meetings.LiveMeetings.Finish(session.SessionId);
+                    }
                     // The central server is told the class was ended here, and why.
                     _activity.Write("class.ended", ended ? "done" : "failed",
                         $"{decision.Reason}: {message}", session.GroupId,
@@ -237,6 +241,10 @@ public sealed class AutoEndMeetingBridge : IAsyncDisposable
     private void EndedElsewhere(MeetingSession session, DateTimeOffset classStart)
     {
         _ends.Withdraw(session.SessionId);
+        // Nothing else knows yet: the loop that beats this meeting's live marker is watching its own
+        // token, not Zoom. Saying so here is what lets the steps that wait for a class to end - the
+        // late-joiner pass, the recording - stop waiting.
+        ZoomAutoAdmit.Core.Meetings.LiveMeetings.Finish(session.SessionId);
         _log($"{session.GroupId}: the meeting is over (closed somewhere else); stopped watching.");
         _activity.Write("class.ended", "done", "The meeting was closed somewhere else.", session.GroupId,
             DateOnly.FromDateTime(classStart.LocalDateTime), at: _now());
