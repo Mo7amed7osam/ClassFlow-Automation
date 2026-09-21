@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .api import _json
 from .auth import CurrentUser, current_user
 from .dashboard import group_items
-from .models import ClassPlan, Job, LmsAccount, RunDelegation, User
+from .models import ClassPlan, Job, LmsAccount, RunDelegation, User, ZoomAccount
 from .scheduling import CAIRO, GRACE, STAGES, due_at, idempotency_key
 
 router = APIRouter()
@@ -195,14 +195,15 @@ def _due(shape: StageShape, plan: ClassPlan) -> datetime | None:
     return datetime.combine(plan.session_date, local, tzinfo=CAIRO).astimezone(UTC) + shape.offset
 
 
-def _blocked(shape: StageShape, plan: ClassPlan, delegation: RunDelegation | None) -> str | None:
+def _blocked(shape: StageShape, plan: ClassPlan, delegation: RunDelegation | None,
+             zoom: ZoomAccount | None) -> str | None:
     """Why this stage cannot run as things stand, or None."""
     if delegation is None or not delegation.enabled:
         return "this coordinator is not turned on"
     if shape.job_type == "class.run" and not plan.meeting_url:
         return "no Zoom link on this class"
-    if shape.job_type and shape.job_type.startswith(("class.", "zoom.")) and delegation.zoom_account_id is None:
-        return "no Zoom account chosen for this coordinator"
+    if shape.job_type and shape.job_type.startswith(("class.", "zoom.")) and zoom is None:
+        return "none of this coordinator's Zoom accounts hosts this group"
     if shape.job_type and shape.job_type.startswith("lms.") and delegation.lms_account_id is None:
         return "no LMS account chosen for this coordinator"
     return None
@@ -282,6 +283,11 @@ async def sessions(
 async def _class_view(session: AsyncSession, plan: ClassPlan, now: datetime) -> dict[str, Any]:
     delegation = await session.get(RunDelegation, plan.coordinator_id)
     coordinator = await session.get(User, plan.coordinator_id)
+    # The account that opens this group's meetings, by the scheduler's own rule.
+    from .delegated_runs import _group_zoom, _zoom_accounts
+
+    zoom = _group_zoom((await _zoom_accounts(session, [plan.coordinator_id])).get(plan.coordinator_id, []),
+                       plan.group_name)
 
     # Every job ever made for this class, by the key the scheduler creates them under. A stage run
     # by hand from the dashboard carries the same key, so both show in the same place.
@@ -316,7 +322,7 @@ async def _class_view(session: AsyncSession, plan: ClassPlan, now: datetime) -> 
     def blocked(shape: StageShape) -> str | None:
         if not_held and shape.job_type in FOLLOWS_MEETING and shape.key not in jobs:
             return "the meeting was not held"
-        return _blocked(shape, plan, delegation)
+        return _blocked(shape, plan, delegation, zoom)
 
     stages = [
         _ended(shape, meeting) if shape.key == "ended"

@@ -321,3 +321,27 @@ def test_a_class_whose_meeting_failed_gets_no_follow_ups(app, clock):
     assert len(jobs_of(app, "lms.run_session")) == 1
     for job_type in ("lms.attendance", "lms.late_joiners", "lms.complete", "zoom.report", "zoom.recording"):
         assert jobs_of(app, job_type) == [], job_type
+
+
+def test_each_group_is_opened_by_the_zoom_account_that_hosts_it(app, clock):
+    """No single account for a coordinator: every group with its own, and never another group's."""
+    plan, coordinator = a_class(app, with_zoom=True)          # hosts CAI5_AIS4_S7
+    url = app.app.state.settings.database_url
+    other_zoom = uuid.uuid4()
+    run_sql(url, """INSERT INTO zoom_accounts (id, user_id, account_id, label, zoom_email, group_name,
+                                               active, created_at, updated_at)
+                    VALUES ($1::uuid, $2::uuid, 'CAI5_AIS4_S8', 'S8', 'omar8@zoom.example.com',
+                            'CAI5_AIS4_S8', true, now(), now())""", other_zoom, uuid.UUID(coordinator))
+    for group in ("CAI5_AIS4_S8", "CAI5_NOBODY_HOSTS"):
+        run_sql(url, """INSERT INTO class_plans (id, coordinator_id, group_name, session_date, start_time,
+                                                 meeting_url, source, status, imported_at, created_at, updated_at)
+                        VALUES ($1::uuid, $2::uuid, $3, '2026-09-20', '19:00', 'https://zoom.us/j/1',
+                                'lms', 'planned', now(), now(), now())""",
+                uuid.uuid4(), uuid.UUID(coordinator), group)
+    own = run_sql(url, "SELECT id FROM zoom_accounts WHERE group_name = 'CAI5_AIS4_S7'")[0]["id"]
+
+    clock.now = at_local(date(2026, 9, 20), "18:45")
+    app.portal.call(Scheduler(app.app.state.sessionmaker, clock).schedule_once)
+
+    opened = {row["payload"]["group"]: row["payload"]["zoomAccountId"] for row in jobs_of(app, "class.run")}
+    assert opened == {"CAI5_AIS4_S7": str(own), "CAI5_AIS4_S8": str(other_zoom)}

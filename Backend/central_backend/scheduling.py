@@ -249,19 +249,15 @@ class Scheduler:
             "lmsAccountId": str(account.id),
             "dryRun": False,
         }
-        # The Zoom account the meeting is opened by. Named, never guessed: a meeting opened by the
-        # wrong account is the wrong person's meeting, and the students are in it before anyone
-        # notices.
-        if delegation.zoom_account_id is not None:
-            # Checked the same way the LMS account is. A delegation row can name a Zoom account
-            # that was since moved or removed, and copying the id out without looking would open
-            # the class under whoever owns it now.
-            zoom = await session.get(ZoomAccount, delegation.zoom_account_id)
-            if zoom is None or zoom.user_id != plan.coordinator_id:
-                emit("schedule.no_account", level=logging.WARNING, group=plan.group_name,
-                     date=plan.session_date.isoformat(),
-                     reason="the chosen Zoom account is not that coordinator's, or is gone")
-                return None
+        # The Zoom account the meeting is opened by: the coordinator's account that hosts this
+        # group, by the same rule the run plan shows - the one kept for the group, then the one
+        # named after it, then their only account. Never another group's: a meeting opened by the
+        # wrong account is the wrong room, and the students are in it before anyone notices. A
+        # group none of their accounts hosts gets no Zoom stages, and the page says why.
+        from .delegated_runs import _group_zoom, _zoom_accounts
+
+        theirs = (await _zoom_accounts(session, [plan.coordinator_id])).get(plan.coordinator_id, [])
+        if (zoom := _group_zoom(theirs, plan.group_name)) is not None:
             payload["zoomAccountId"] = str(zoom.id)
         if plan.start_time:
             payload["startTime"] = plan.start_time
@@ -280,7 +276,7 @@ class Scheduler:
         if stage.job_type == "class.run" and "meetingUrl" not in payload:
             return "no Zoom link on the class"
         if stage.job_type.startswith(("class.", "zoom.")) and "zoomAccountId" not in payload:
-            return "no Zoom account chosen for the coordinator"
+            return "none of the coordinator's Zoom accounts hosts this group"
         return None
 
     async def run(self, stop: asyncio.Event) -> None:
