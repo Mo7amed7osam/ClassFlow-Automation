@@ -620,22 +620,29 @@ function GroupPicker({ groups, value, onChange }: { groups: { id: string; name: 
 }
 
 /**
- * Whether this PC runs one coordinator's classes, and which of their own Zoom accounts opens them.
+ * Whether this PC runs one coordinator's classes - all of them, every group of theirs.
  *
- * Everything else a class needs is already theirs: the timetable comes from their LMS session list
- * and the meeting link from the Zoom account chosen here, both read with their own accounts. So the
- * whole decision is one tick box, and the only choice beside it is which of their Zoom accounts -
- * and only when they have more than one.
+ * Everything a class needs is already theirs: the timetable comes from their LMS session list, and
+ * each group's classes open with the Zoom account of theirs that hosts that group, with its link.
+ * So the whole decision is one tick box. Beside it, each group says which account opens it, or
+ * that none of theirs does yet.
  */
 function RunTheirClasses({ row, user, working, run }: {
   row: DashState['runs'] extends (infer R)[] | null | undefined ? R | undefined : never
-  user: { id: string; displayName: string; status: string }
+  user: { id: string; displayName: string; status: string; groups?: { name: string }[] }
   working: boolean
   run: Run
 }) {
   const on = row?.enabled ?? false
+  const groups = (user.groups ?? []).map((g) => g.name)
   const accounts = row?.zoomAccounts ?? []
   const disabled = working || user.status === 'disabled'
+  const without = row?.groupsWithoutZoom ?? []
+  // Which of their accounts opens each group, the same way the server matches them.
+  const hosts = (group: string) =>
+    accounts.find((a) => (a.group ?? '').toLowerCase() === group.toLowerCase())
+    ?? accounts.find((a) => a.name.toLowerCase() === group.toLowerCase())
+    ?? (accounts.length === 1 ? accounts[0] : undefined)
   return (
     <div className={`runs-cell${on ? ' on' : ''}`}>
       <label className="runs-tick" title="This PC opens and finishes their classes, under their own accounts">
@@ -643,22 +650,23 @@ function RunTheirClasses({ row, user, working, run }: {
           type="checkbox"
           checked={on}
           disabled={disabled}
-          onChange={(e) => run('run', 'setRun', { id: user.id, run: e.target.checked, zoomAccountId: row?.zoomAccountId ?? accounts[0]?.id ?? '' })}
+          onChange={(e) => run('run', 'setRun', { id: user.id, run: e.target.checked, zoomAccountId: '' })}
         />
         <span>Run their classes</span>
       </label>
-      {on && accounts.length > 1 && (
-        <select
-          className="runs-account"
-          value={row?.zoomAccountId ?? ''}
-          disabled={disabled}
-          aria-label={`Zoom account that opens ${user.displayName}'s classes`}
-          onChange={(e) => run('run', 'setRun', { id: user.id, run: true, zoomAccountId: e.target.value })}
-        >
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.link ? '' : ' (no link)'}</option>)}
-        </select>
+      {on && accounts.length > 0 && groups.length > 0 && (
+        <span className="runs-groups" aria-label={`${user.displayName}'s groups and the Zoom account each opens with`}>
+          {groups.map((g) => {
+            const account = without.includes(g) ? undefined : hosts(g)
+            return (
+              <span key={g} className={account ? 'runs-note' : 'runs-warn'}
+                title={account ? `${g} opens with ${account.name}${account.link ? '' : ' (no link yet)'}` : `None of their Zoom accounts hosts ${g}`}>
+                {g}{account ? (account.name === g ? '' : ` · ${account.name}`) : ' · no Zoom account'}
+              </span>
+            )
+          })}
+        </span>
       )}
-      {on && accounts.length === 1 && <span className="runs-note">{accounts[0].name}</span>}
       {on && accounts.length === 0 && <span className="runs-warn">no Zoom account of theirs yet</span>}
       {on && !row?.lms && <span className="runs-warn">no LMS sign-in of theirs</span>}
       {on && row?.needsLink ? <span className="runs-warn">{row.needsLink} class(es) need a link</span> : null}

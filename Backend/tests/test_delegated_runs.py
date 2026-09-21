@@ -703,3 +703,79 @@ def test_a_job_naming_somebody_elses_account_is_refused_the_password(dash, two):
     rows = run_sql(dash.app.state.settings.database_url,
                    "SELECT username FROM admin_audit_log WHERE action = $1", "lms_secret.read_by_device")
     assert rows == []
+
+
+# =========================================================================== every group of theirs
+
+
+def _hosam(dash, zoom: tuple[str, ...]) -> str:  # noqa: ANN001
+    user = coordinator(dash, "hosam", groups=("CAI5_IND1_G1", "CAI5_IND1_G2"), lms_email="hosam@example.com",
+                       lms_password="made-up LMS password for Hosam", zoom=zoom)
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    return user
+
+
+def _classes_of_both_groups() -> list[dict[str, str]]:
+    return [{"group": "CAI5_IND1_G1", "date": "2026-09-22", "startTime": "19:00"},
+            {"group": "CAI5_IND1_G2", "date": "2026-09-22", "startTime": "19:00"}]
+
+
+def test_running_a_coordinator_runs_every_group_of_theirs_each_with_its_own_account(dash):
+    hosam = _hosam(dash, ("CAI5_IND1_G1", "CAI5_IND1_G2"))
+    assert turn_on(dash, hosam).status_code == 200      # no account chosen: there is nothing to choose
+    imported(dash, hosam, _classes_of_both_groups())
+
+    by_group = {c["group"]: c for c in plan(dash)["classes"]}
+    assert by_group["CAI5_IND1_G1"]["zoomAccount"] == "CAI5_IND1_G1"
+    assert by_group["CAI5_IND1_G2"]["zoomAccount"] == "CAI5_IND1_G2"
+    assert by_group["CAI5_IND1_G1"]["meetingUrl"] != by_group["CAI5_IND1_G2"]["meetingUrl"]
+    listed = next(d for d in dash.get("/api/v1/admin/delegations").json()["delegations"] if d["username"] == "hosam")
+    assert listed["groupsWithoutZoom"] == []
+
+
+def test_an_account_chosen_for_the_coordinator_does_not_open_another_groups_classes(dash):
+    hosam = _hosam(dash, ("CAI5_IND1_G1", "CAI5_IND1_G2"))
+    turn_on(dash, hosam, zoom="CAI5_IND1_G1")           # what the old drop-down sent
+    imported(dash, hosam, _classes_of_both_groups())
+
+    by_group = {c["group"]: c["zoomAccount"] for c in plan(dash)["classes"]}
+    assert by_group == {"CAI5_IND1_G1": "CAI5_IND1_G1", "CAI5_IND1_G2": "CAI5_IND1_G2"}
+
+
+def test_a_group_none_of_their_several_accounts_hosts_is_named_rather_than_borrowing_one(dash):
+    hosam = _hosam(dash, ("CAI5_IND1_G1", "SOMETHING_ELSE"))
+    turn_on(dash, hosam)
+    imported(dash, hosam, _classes_of_both_groups())
+
+    by_group = {c["group"]: c for c in plan(dash)["classes"]}
+    assert by_group["CAI5_IND1_G2"]["zoomAccount"] is None
+    assert by_group["CAI5_IND1_G2"]["needsLink"] is True
+    listed = next(d for d in dash.get("/api/v1/admin/delegations").json()["delegations"] if d["username"] == "hosam")
+    assert listed["groupsWithoutZoom"] == ["CAI5_IND1_G2"]
+
+
+def test_a_single_zoom_account_opens_every_group_of_theirs(dash):
+    hosam = _hosam(dash, ("CAI5_IND1_G1",))
+    turn_on(dash, hosam)
+    imported(dash, hosam, _classes_of_both_groups())
+
+    assert {c["zoomAccount"] for c in plan(dash)["classes"]} == {"CAI5_IND1_G1"}
+
+
+def test_a_class_that_borrowed_another_groups_account_takes_its_own_once_there_is_one(dash):
+    hosam = _hosam(dash, ("CAI5_IND1_G1",))             # one account: it opened both groups
+    turn_on(dash, hosam)
+    imported(dash, hosam, _classes_of_both_groups())
+
+    as_user(dash, "hosam")
+    dash.put("/api/v1/me/zoom-accounts", headers=DASH, json={"accounts": [
+        {"accountId": "CAI5_IND1_G1", "label": "G1", "group": "CAI5_IND1_G1", "meetingUrl": "https://zoom.us/j/91473108490"},
+        {"accountId": "CAI5_IND1_G2", "label": "G2", "group": "CAI5_IND1_G2", "meetingUrl": "https://zoom.us/j/555555555"}]})
+    as_user(dash, "admin", ADMIN_PASSWORD)
+
+    g2 = next(c for c in plan(dash)["classes"] if c["group"] == "CAI5_IND1_G2")
+    assert (g2["zoomAccount"], g2["meetingUrl"]) == ("CAI5_IND1_G2", "https://zoom.us/j/555555555")
+    imported(dash, hosam, _classes_of_both_groups())    # and it is written down on the next read
+    rows = run_sql(dash.app.state.settings.database_url,
+                   "SELECT zoom_account, meeting_url FROM class_plans WHERE group_name = $1", "CAI5_IND1_G2")
+    assert [(r["zoom_account"], r["meeting_url"]) for r in rows] == [("CAI5_IND1_G2", "https://zoom.us/j/555555555")]

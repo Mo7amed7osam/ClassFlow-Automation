@@ -246,6 +246,8 @@ export interface Delegation {
   zoomAccountId: string | null
   zoomAccount: string | null
   zoomAccounts: ZoomAccountRef[]
+  /** their groups none of their Zoom accounts hosts, so those cannot open yet */
+  groupsWithoutZoom?: string[]
   classes: { planned: number; done: number; skipped: number; needsLink: number }
   updatedAt: string | null
 }

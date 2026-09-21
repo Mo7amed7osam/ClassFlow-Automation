@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useDelegations, useRunPlan, useSetDelegation, useUpdateClassPlan } from '../api/hooks'
-import type { ClassPlan, Delegation, PreferredEngine } from '../api/types'
+import type { ClassPlan, Delegation, PreferredEngine, ZoomAccountRef } from '../api/types'
 import { PageHeader } from '../components/Layout'
 import { useToast } from '../components/Toast'
 import { reason } from '../components/UserModals'
@@ -38,6 +38,21 @@ function when(item: ClassPlan): string {
  * their own copy of the app. A class whose group has no Zoom account of theirs is the only one that
  * still asks for a link, and filling it in once carries it across the group.
  */
+/**
+ * The Zoom account of theirs that opens a group, matched the way the server matches it: the one kept
+ * for that group, then the one named after it, then their only account. Several accounts and none
+ * for the group means that group cannot open yet - it never borrows another group's.
+ */
+function hostOf(person: Delegation, group: string): ZoomAccountRef | undefined {
+  if (person.groupsWithoutZoom?.includes(group)) return undefined
+  const key = group.toLowerCase()
+  return (
+    person.zoomAccounts.find((account) => (account.group ?? '').toLowerCase() === key) ??
+    person.zoomAccounts.find((account) => account.accountId.toLowerCase() === key) ??
+    (person.zoomAccounts.length === 1 ? person.zoomAccounts[0] : undefined)
+  )
+}
+
 export function RunsPage() {
   const delegations = useDelegations()
   const [only, setOnly] = useState<string[]>([])
@@ -55,7 +70,8 @@ export function RunsPage() {
       {
         coordinatorId: person.coordinatorId,
         enabled: !person.enabled,
-        zoomAccountId: person.zoomAccountId ?? person.zoomAccounts[0]?.id ?? null,
+        // Every group of theirs runs, each with the Zoom account of theirs that hosts it.
+        zoomAccountId: null,
       },
       {
         onSuccess: () =>
@@ -67,13 +83,6 @@ export function RunsPage() {
           ),
         onError: (error) => toast.error('Could not change that', reason(error)),
       },
-    )
-  }
-
-  function chooseZoomAccount(person: Delegation, zoomAccountId: string) {
-    setDelegation.mutate(
-      { coordinatorId: person.coordinatorId, enabled: person.enabled, zoomAccountId: zoomAccountId || null },
-      { onError: (error) => toast.error('Could not choose that Zoom account', reason(error)) },
     )
   }
 
@@ -113,28 +122,24 @@ export function RunsPage() {
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Their own Zoom accounts, as their copy of the app keeps them. The meeting link
-                      comes from the one chosen here, so nobody types a link twice. */}
+                  {/* Every group of theirs, and the one of their own Zoom accounts that opens it -
+                      with its link, so nobody types one twice. */}
                   {person.zoomAccounts.length > 0 ? (
-                    <>
-                      <label className="text-xs text-slate-500" htmlFor={`zoom-${person.coordinatorId}`}>
-                        Opens with their
-                      </label>
-                      <select
-                        id={`zoom-${person.coordinatorId}`}
-                        className={`${input} w-52`}
-                        value={person.zoomAccountId ?? ''}
-                        disabled={setDelegation.isPending}
-                        onChange={(event) => chooseZoomAccount(person, event.target.value)}
-                      >
-                        {person.zoomAccounts.map((account) => (
-                          <option key={account.id} value={account.id}>
-                            {account.accountId}
-                            {account.meetingUrl ? '' : ' — no link yet'}
-                          </option>
-                        ))}
-                      </select>
-                    </>
+                    <ul className="flex flex-wrap gap-1.5" aria-label={`${person.displayName}'s groups and their Zoom accounts`}>
+                      {person.groups.filter((group) => !group.archived).map((group) => {
+                        const account = hostOf(person, group.name)
+                        return (
+                          <li key={group.id}>
+                            <Pill tone={account ? (account.meetingUrl ? 'green' : 'amber') : 'red'}>
+                              {group.name}
+                              {account
+                                ? `${account.accountId === group.name ? '' : ` · ${account.accountId}`}${account.meetingUrl ? '' : ' — no link yet'}`
+                                : ' · no Zoom account'}
+                            </Pill>
+                          </li>
+                        )
+                      })}
+                    </ul>
                   ) : (
                     <span className="text-xs text-amber-700">
                       No Zoom account of theirs yet — they add it in their own copy of the app.

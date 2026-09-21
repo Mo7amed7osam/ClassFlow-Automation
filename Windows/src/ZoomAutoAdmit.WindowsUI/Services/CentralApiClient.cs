@@ -70,6 +70,11 @@ public sealed record CentralDelegation(string CoordinatorId, string Username, st
         ?? ZoomAccountList.FirstOrDefault(a => a.AccountId.Equals(ZoomAccount, StringComparison.OrdinalIgnoreCase))
         ?? ZoomAccountList.FirstOrDefault(a => a.Active);
     public IReadOnlyList<CentralGroupRef> GroupList => Groups ?? [];
+    /// <summary>
+    /// Their groups that none of their Zoom accounts hosts. Running a coordinator runs every group
+    /// of theirs, each opened by its own account, so these are the ones that cannot open yet.
+    /// </summary>
+    public List<string>? GroupsWithoutZoom { get; init; }
     public string GroupsText => GroupList.Count == 0 ? "no groups" : string.Join(", ", GroupList.Select(g => g.Name));
     /// <summary>Everything needed to actually run their classes is there.</summary>
     public bool IsReady => Enabled && LmsAccount != null && Zoom != null;
