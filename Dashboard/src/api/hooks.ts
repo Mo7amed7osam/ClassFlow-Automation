@@ -23,6 +23,8 @@ import type {
   User,
   UserList,
   UserStatus,
+  LmsAccountRef,
+  ZoomAccountRef,
 } from './types'
 
 // How often each view refreshes itself. Agents change fastest (heartbeats every 30 s); a recording
@@ -106,6 +108,45 @@ export function useChangePassword() {
       api<{ status: string }>('/api/v1/auth/password', { method: 'POST', body: JSON.stringify(body) }),
   })
 }
+
+// ----------------------------------------------------------------------------- my LMS and Zoom sign-ins
+
+export function useLmsAccounts() {
+  return useQuery({
+    queryKey: ['lms-accounts'],
+    queryFn: () => api<{ accounts: LmsAccountRef[]; canKeepPasswords: boolean }>('/api/v1/me/lms-accounts'),
+  })
+}
+
+export function useZoomAccounts() {
+  return useQuery({
+    queryKey: ['zoom-accounts'],
+    queryFn: () => api<{ accounts: ZoomAccountRef[] }>('/api/v1/me/zoom-accounts'),
+  })
+}
+
+function refreshMyAccounts(client: QueryClient) {
+  for (const key of ['lms-accounts', 'zoom-accounts', 'delegations', 'run-plan']) client.invalidateQueries({ queryKey: [key] })
+}
+
+function useMyAccountMutation<Vars, Result>(request: (vars: Vars) => Promise<Result>) {
+  const client = useQueryClient()
+  return useMutation({ mutationFn: request, onSuccess: () => refreshMyAccounts(client) })
+}
+
+export const useSaveLmsAccount = () =>
+  useMyAccountMutation((body: { label: string; email: string; role: 'admin' | 'coordinator'; password: string; active: boolean }) =>
+    api<LmsAccountRef>('/api/v1/me/lms-accounts', send('POST', body)),
+  )
+
+export const useUseLmsAccount = () =>
+  useMyAccountMutation((id: string) => api<LmsAccountRef>(`/api/v1/me/lms-accounts/${id}/use`, send('POST')))
+
+export const useSaveZoomAccounts = () =>
+  useMyAccountMutation((accounts: Array<{
+    accountId: string; label: string; zoomEmail?: string | null; group?: string | null; meetingUrl?: string | null
+    preferredEngine?: 'desktop' | 'web' | null; password?: string | null; active: boolean
+  }>) => api<{ accounts: ZoomAccountRef[] }>('/api/v1/me/zoom-accounts', send('PUT', { accounts })))
 
 export function useOverview() {
   return useQuery({

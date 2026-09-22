@@ -229,6 +229,8 @@ export interface ZoomAccountRef {
   meetingUrl: string | null
   preferredEngine: PreferredEngine | null
   active: boolean
+  hasPassword?: boolean
+  updatedAt?: string
 }
 
 /** A coordinator, and whether the admin's PC opens and finishes their classes for them. */

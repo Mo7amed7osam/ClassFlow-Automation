@@ -2,6 +2,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router'
 import { useMe } from './api/hooks'
 import { Layout } from './components/Layout'
 import { AccountPage } from './pages/AccountPage'
+import { AccountsPage } from './pages/AccountsPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { AttendancePage } from './pages/AttendancePage'
 import { AttendanceSessionPage } from './pages/AttendanceSessionPage'
@@ -46,6 +47,7 @@ export function App() {
         <Route path="students" element={<StudentsPage />} />
         <Route path="groups" element={<GroupsPage />} />
         <Route path="account" element={<AccountPage />} />
+        <Route path="accounts" element={<AccountsPage />} />
         <Route element={<RequireAdmin />}>
           <Route path="agents" element={<AgentsPage />} />
           <Route path="users" element={<UsersPage />} />
