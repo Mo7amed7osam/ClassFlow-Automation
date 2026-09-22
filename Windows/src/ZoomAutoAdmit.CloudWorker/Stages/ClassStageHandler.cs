@@ -85,6 +85,16 @@ public abstract class ClassStageHandler(Action<string>? log = null, Func<DateTim
               + "for a class that is over, so it was left alone.";
     }
 
+    /// <summary>This handler's clock, the one the freshness rule reads.</summary>
+    protected DateTimeOffset Now => _now();
+
+    /// <summary>When the class starts, in the zone class times are written in; midnight when it has no time.</summary>
+    protected static DateTimeOffset StartOf(ClassStage stage)
+    {
+        var at = stage.StartTime ?? TimeOnly.MinValue;
+        return new DateTimeOffset(stage.Date.ToDateTime(at), CairoOffset(stage.Date, at));
+    }
+
     private static TimeSpan CairoOffset(DateOnly date, TimeOnly at)
     {
         // tzdata is in the image and in the Windows build's dependencies, so this resolves on both.

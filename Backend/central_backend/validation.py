@@ -52,7 +52,7 @@ _CAPABILITY = re.compile(r"^[a-z][a-z0-9_.-]{0,40}$")
 RECORDING_FIELDS = ("group", "recordLink", "date", "startTime", "replaceExisting", "dryRun")
 
 CLASS_STAGE_FIELDS = (
-    "classPlanId", "group", "date", "startTime", "coordinatorId",
+    "classPlanId", "group", "date", "startTime", "coordinatorId", "title",
     "meetingUrl", "zoomAccountId", "lmsAccountId", "durationMinutes", "dryRun",
 )
 
@@ -197,6 +197,15 @@ def validate_class_stage_payload(job_type: str, payload: Any) -> dict[str, Any]:
             raise PayloadError("'startTime' must be HH:mm when given.")
         time.fromisoformat(start.strip())
         normalised["startTime"] = start.strip()
+
+    # The class's name as the timetable gives it ("CAI5_AIS4_S7 • 29 • Freelancing Skills"): what
+    # tells a session's kind, and so who teaches it and is made co-host.
+    title = payload.get("title")
+    if title is not None:
+        if not isinstance(title, str) or len(title) > 200 or any(ord(c) < 32 for c in title):
+            raise PayloadError("'title' must be a single line of at most 200 characters when given.")
+        if title.strip():
+            normalised["title"] = title.strip()
 
     for field in ("zoomAccountId", "lmsAccountId"):
         if (value := _identifier(payload, field, required=False)) is not None:

@@ -1,6 +1,9 @@
 using System.Text.Json.Nodes;
 using ZoomAutoAdmit.CentralAgent;
+using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.Core.Models;
+using ZoomAutoAdmit.Core.Sessions;
+using ZoomAutoAdmit.SessionRoles;
 using ZoomAutoAdmit.WebAutomation;
 using ZoomAutoAdmit.WebAutomation.Browser;
 
@@ -17,28 +20,44 @@ public interface IZoomAccounts
 }
 
 /// <summary>
-/// class.run: opens the class's meeting and holds it for the class.
+/// class.run: opens the class's meeting and holds it for the class, as the Windows app does.
 ///
 /// This is one long job, not four short ones, because a meeting is one long thing. It opens as the
-/// host, admits the waiting room as people arrive, and ends when the class's time is up or when the
-/// worker is asked to stop. Splitting it would mean a browser left alive between jobs, and a worker
-/// restart would orphan it with nobody able to say whether the class was still running.
+/// host, admits the waiting room as people arrive, makes the instructor co-host, writes down who
+/// was there, and ends the class for everyone by the Windows app's own rule - from three hours after
+/// its time, once the room is empty or the instructor and the class have left. Splitting it would
+/// mean a browser left alive between jobs, and a worker restart would orphan it.
 ///
-/// The worker takes one job at a time, so a worker running a class is busy for the class's length.
-/// Several classes at once means several workers; that is what the compose file scales.
+/// The meeting lane takes one job at a time, so it is busy for the class's length; the LMS steps run
+/// in the worker's other lane beside it.
 /// </summary>
 public sealed class ClassRunStage(
     IZoomAccounts accounts,
     bool headless,
     Action<string>? log = null,
     Func<DateTimeOffset>? now = null,
-    IAttendanceSnapshots? attendance = null) : ClassStageHandler(log, now)
+    IAttendanceSnapshots? attendance = null,
+    ServerSessionRoles? roles = null) : ClassStageHandler(log, now)
 {
-    /// <summary>How long after the class's own length to keep holding it. Nothing is admitted to a
-    /// meeting nobody is in, and a worker that lost the backend must not hold its slot for ever.</summary>
-    public static readonly TimeSpan DefaultLength = TimeSpan.FromMinutes(180);
+    /// <summary>The class's length when it names none: the three hours the Windows rule waits for.</summary>
+    public static readonly TimeSpan DefaultLength = AutoEndRule.EndAfter;
+
+    /// <summary>
+    /// How long past the rule's three hours a meeting is held at the most. The rule never ends a class
+    /// while anyone is talking, and on Windows a person is there to notice one that runs on for ever.
+    /// Nobody watches a server, and the meeting lane's only slot must come back, so after this the
+    /// class is ended regardless - and the class card says so.
+    /// </summary>
+    public static readonly TimeSpan Overrun = TimeSpan.FromHours(2);
 
     public override string JobType => "class.run";
+
+    /// <summary>
+    /// A class is still worth opening up to the latest it could be held to. A deployment that stops
+    /// the worker mid-class puts the job back, and the worker that starts again rejoins the class as
+    /// its host - which is what keeps a redeploy from costing the class its waiting room.
+    /// </summary>
+    protected override TimeSpan? Freshness => Overrun;
 
     protected override string? Requires(ClassStage stage)
     {
@@ -79,7 +98,6 @@ public sealed class ClassRunStage(
         ClassStage stage, Guid account, ZoomSignInCredential credential, string reference,
         CancellationToken cancellationToken)
     {
-
         var options = new CliOptions
         {
             Command = "auto-admit",
@@ -93,17 +111,12 @@ public sealed class ClassRunStage(
             LmsGroup = stage.Group,
         };
 
-        var length = stage.Duration ?? DefaultLength;
-        using var classOver = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        classOver.CancelAfter(length);
+        var classStart = StartOf(stage);
+        var length = stage.Duration is { } given && given > DefaultLength ? given : DefaultLength;
+        var latest = classStart + length + Overrun;
 
-        // neverHeaded: a profile that has never signed in is shown to a person by default, and on
-        // a server there is neither a person nor a display. Without this the first class on a
-        // fresh container could not open at all.
-        await using var engine = new WebAutoAdmitEngine(
-            profileManager: new ZoomProfileManager(neverHeaded: headless));
         var answer = Answer(stage);
-        answer["holdsFor"] = (int)length.TotalMinutes;
+        answer["holdsFor"] = (int)(latest - classStart).TotalMinutes;
 
         if (stage.DryRun)
         {
@@ -114,10 +127,16 @@ public sealed class ClassRunStage(
             return JobOutcome.Success(answer);
         }
 
+        // neverHeaded: a profile that has never signed in is shown to a person by default, and on
+        // a server there is neither a person nor a display. Without this the first class on a
+        // fresh container could not open at all.
+        await using var engine = new WebAutoAdmitEngine(
+            profileManager: new ZoomProfileManager(neverHeaded: headless));
+
         try
         {
             Log($"opening {stage.Group} as {credential.Email}");
-            await engine.StartAsync(options, classOver.Token);
+            await engine.StartAsync(options, cancellationToken);
         }
         catch (ZoomWebSignInRequiredException problem)
         {
@@ -127,105 +146,167 @@ public sealed class ClassRunStage(
                 $"Zoom asked for something only a person can answer: {problem.Message}");
         }
 
-        // The Windows path does this and the worker was not: a host that joins unmuted puts a
-        // server's silence - or its noise - into every class.
+        // A host that joins unmuted puts a server's silence - or its noise - into every class.
         try
         {
-            await engine.DisableMicrophoneAsync(classOver.Token);
-            await engine.DisableCameraAsync(classOver.Token);
+            await engine.DisableMicrophoneAsync(cancellationToken);
+            await engine.DisableCameraAsync(cancellationToken);
         }
-        catch (Exception problem) { Log($"could not mute or turn the camera off: {problem.GetType().Name}"); }
+        catch (Exception problem) when (problem is not OperationCanceledException)
+        {
+            Log($"could not mute or turn the camera off: {problem.GetType().Name}");
+        }
 
-        Log($"{stage.Group} is live; admitting for {length.TotalMinutes:0} minutes");
+        // The meeting as the Windows app's own observers know one. The class's id is the session's,
+        // so a worker that restarts mid-class picks up the same co-host and the same class.
+        var sessionId = stage.ClassPlanId;
+        var context = new MeetingLaunchContext(
+            new MeetingSession(sessionId,
+                new ScheduledMeeting(stage.MeetingUrl!, stage.Group, classStart, sessionId, SessionEngineType.Web,
+                                     stage.Group, classStart),
+                Now),
+            new MeetingAccount(stage.Group, stage.Group, reference, SessionEngineType.Web),
+            SessionEngineType.Web,
+            options.WebProfile);
+        var events = new MeetingLifecycleEvents();
+        var joined = new WebJoinedList(() => engine.ActiveMeetingPage);
+
+        // The instructor made co-host by the Windows app's own bridge, woken by every admission.
+        SessionRoleBridge? bridge = null;
+        if (roles is not null)
+        {
+            await roles.RefreshAsync(cancellationToken);
+            bridge = new SessionRoleBridge(events, _ => joined, new ClassTitle(stage.Title), roles,
+                new WebCoHostAssigner(() => engine.ActiveMeetingPage), Log,
+                presenters: NoPresenterSource.Instance, autoCoHostOn: () => true);
+        }
+        await events.PublishAsync(context, MeetingLifecycleEventKind.Active);
+
+        Log($"{stage.Group} is live; admitting until the class is over (at the latest {latest.ToOffset(classStart.Offset):HH:mm})");
+
+        using var holding = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var untilLatest = latest - Now;
+        holding.CancelAfter(untilLatest > TimeSpan.FromMinutes(1) ? untilLatest : TimeSpan.FromMinutes(1));
 
         // Who is there, read beside the admitting and sent to the server, which is where the LMS
-        // stages later get the names from. Stopped with the class, and read once more at the end.
-        using var collecting = CancellationTokenSource.CreateLinkedTokenSource(classOver.Token);
+        // stages get the names from.
         var reader = attendance is null ? null
-            : new MeetingAttendance(token => ReadJoinedAsync(engine, token), attendance, stage, Log);
-        var collector = reader?.RunAsync(collecting.Token) ?? Task.CompletedTask;
+            : new MeetingAttendance(token => ReadNamesAsync(joined, token), attendance, stage, Log);
+        var collector = reader?.RunAsync(holding.Token) ?? Task.CompletedTask;
+        bool lastReadTaken = false;
+        async Task LastReadAsync(CancellationToken token)
+        {
+            if (reader is null || lastReadTaken) return;
+            lastReadTaken = true;
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            await reader.FinalAsync(limit.Token);
+        }
+
+        var ending = new MeetingEnd(
+            joined,
+            meetingOpen: () => engine.ActiveMeetingPage is { IsClosed: false },
+            breakoutRoomsOpen: _ => ZoomWebBreakoutRooms.AreOpenAsync(engine.ActiveMeetingPage),
+            endForAll: token => ZoomWebMeetingEnder.EndForAllAsync(engine.ActiveMeetingPage, token),
+            classStart, sessionId, Log, now: () => Now,
+            beforeEnding: LastReadAsync);
+
+        // The admitting runs inside the session's scope, so every admission wakes the co-host bridge
+        // the way it does on Windows.
+        var monitor = Task.Run(async () =>
+        {
+            using var scope = MeetingAdmissionScope.Begin(sessionId, events, context);
+            await engine.MonitorAsync(options, holding.Token);
+        }, CancellationToken.None);
+        var watch = ending.WatchAsync(holding.Token);
+
+        MeetingEndOutcome? outcome = null;
+        string? admittingStopped = null;
         try
         {
-            await engine.MonitorAsync(options, classOver.Token);
-        }
-        catch (OperationCanceledException) when (classOver.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-        {
-            // The class's own length ran out, which is the ordinary way a class ends.
+            var first = await Task.WhenAny(monitor, watch);
+            if (first == watch && watch.IsCompletedSuccessfully) outcome = watch.Result;
+            else if (first == monitor && monitor.IsFaulted)
+                admittingStopped = monitor.Exception!.GetBaseException().Message;
         }
         finally
         {
-            // The last read comes before the meeting is ended, while the list still holds whoever
-            // stayed to the end - after it, there is nobody left to read.
-            await collecting.CancelAsync();
+            await holding.CancelAsync();
+            try { await monitor; } catch (Exception) { /* its end is reported below */ }
+            try { outcome ??= await watch; } catch (Exception) { }
             try { await collector; } catch (Exception problem) { Log($"attendance stopped badly: {problem.GetType().Name}"); }
-            if (reader is not null)
-            {
-                using var lastRead = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                try { await reader.FinalAsync(lastRead.Token); }
-                catch (Exception problem) { Log($"the last attendance read failed: {problem.GetType().Name}"); }
-                answer["attended"] = reader.MostSeen;
-                answer["rows"] = reader.Sent;
-            }
+            await events.PublishAsync(context, MeetingLifecycleEventKind.Ending);
+            if (bridge is not null) await bridge.DisposeAsync();
+        }
 
-            // StopAsync closes the browser; the meeting would stay open and hostless, and the
-            // account cannot start its next class while one is running. So the meeting is ended
-            // for everyone first, and the browser closed after.
-            try
+        bool draining = cancellationToken.IsCancellationRequested;
+        try
+        {
+            if (outcome is null && !draining)
             {
-                var (ended, why) = await ZoomWebMeetingEnder.EndForAllAsync(
-                    engine.ActiveMeetingPage, CancellationToken.None);
-                answer["endedTheMeeting"] = ended;
-                if (!ended)
+                // The latest the class is held to, or the admitting stopped on its own. Either way the
+                // lane's slot has to come back, so the class is ended - once the last read is taken.
+                if (engine.ActiveMeetingPage is { IsClosed: false })
                 {
-                    // Reported, not only logged. The ender's own reason distinguishes the case that
-                    // matters: no End button means this account was not the host, so the class was
-                    // joined as a guest and nobody was ever admitted from the waiting room. Read as
-                    // a plain success, that class looks identical to one that ran properly - and
-                    // the meeting is still open, so the account cannot start its next one.
-                    Log($"the meeting was not ended: {why}");
-                    answer["warning"] = why;
+                    try { await LastReadAsync(CancellationToken.None); } catch (Exception) { }
+                    var (ended, message) = await ZoomWebMeetingEnder.EndForAllAsync(engine.ActiveMeetingPage, CancellationToken.None);
+                    string why = admittingStopped is null
+                        ? $"it was still going at {latest.ToOffset(classStart.Offset):HH:mm}, {Overrun.TotalHours:0} hours past the rule's three"
+                        : $"the admitting stopped ({admittingStopped})";
+                    outcome = new(ended ? EndedHow.ByRule : EndedHow.EndFailed,
+                        ended ? $"Ended because {why}. {message}" : $"Could not be ended after {why}: {message}");
+                    if (ended) LiveMeetings.Finish(sessionId);
+                }
+                else
+                {
+                    outcome = new(EndedHow.Elsewhere, "The meeting was closed somewhere else (by the instructor, or from a phone).");
                 }
             }
-            catch (Exception problem) { Log($"ending the meeting failed: {problem.GetType().Name}"); }
-
+            else if (outcome is { How: EndedHow.Elsewhere })
+            {
+                // Nothing left to read, but the server is told the class is over.
+                lastReadTaken = true;
+            }
+        }
+        finally
+        {
             try { await engine.StopAsync(); }
             catch (Exception problem) { Log($"the browser did not close cleanly: {problem.GetType().Name}"); }
         }
 
-        if (cancellationToken.IsCancellationRequested)
+        if (reader is not null)
         {
-            // The worker is draining. The class was held for as long as the worker was allowed to,
-            // and that is worth recording as what happened rather than as a failure.
-            answer["did"] = "held the meeting until the worker was asked to stop";
-            answer["message"] = $"{stage.Group}: the worker stopped before the class's time was up.";
-            return JobOutcome.Success(answer);
+            answer["attended"] = reader.MostSeen;
+            answer["rows"] = reader.Sent;
         }
 
-        bool closed = answer["endedTheMeeting"]?.GetValue<bool>() ?? false;
-        answer["did"] = closed
-            ? "held the meeting for the class"
-            : "held the meeting but could not close it";
-        answer["message"] = closed
-            ? $"{stage.Group}: the meeting was opened, admitted for {length.TotalMinutes:0} minutes, and closed."
-            : $"{stage.Group}: the meeting was opened and admitted for {length.TotalMinutes:0} minutes, but it "
-              + "could not be ended. It may still be open, and this account cannot start its next class while "
-              + "it is. Check whether this account is the meeting's host.";
+        if (draining)
+        {
+            // Not ended: a deployment must not close a class people are in. The browser has left and
+            // the meeting carries on with its co-host; the job goes back to the queue, and a worker
+            // that starts again inside the class's time joins it again as the host.
+            throw new OperationCanceledException(cancellationToken);
+        }
+
+        answer["endedTheMeeting"] = outcome!.Closed;
+        answer["did"] = outcome.How switch
+        {
+            EndedHow.ByRule => "held the meeting and ended it when the class was over",
+            EndedHow.Elsewhere => "held the meeting until it was closed",
+            _ => "held the meeting but could not close it",
+        };
+        answer["message"] = $"{stage.Group}: {outcome.Reason}";
+        if (!outcome.Closed)
+            // Reported, not only logged: a meeting left open blocks this account's next class, and a
+            // class that was never the host's was never admitted from its waiting room either.
+            answer["warning"] = outcome.Reason;
+        else if (admittingStopped is not null || outcome.Reason.StartsWith("Ended because it was still going", StringComparison.Ordinal))
+            answer["warning"] = outcome.Reason;
         return JobOutcome.Success(answer);
     }
 
-    /// <summary>
-    /// The meeting's Joined list, read the way the Windows app reads the web client's: found again
-    /// on the page each time, because Zoom replaces it while a class runs, and walked top to bottom.
-    /// </summary>
-    private static async Task<MeetingRead> ReadJoinedAsync(WebAutoAdmitEngine engine, CancellationToken cancellationToken)
+    private static async Task<MeetingRead> ReadNamesAsync(WebJoinedList joined, CancellationToken cancellationToken)
     {
-        var page = engine.ActiveMeetingPage
-                   ?? throw new InvalidOperationException("the meeting page is not open");
-        var found = await ZoomAutoAdmit.Attendance.WebParticipantList.FindAsync(page, cancellationToken);
-        if (found.List is not { } list)
-            throw new InvalidOperationException($"no participants list on the page ({found.Seen})");
-        var read = await new ZoomAutoAdmit.Attendance.WebAttendanceParticipantSource(page, _ => list)
-            .ReadAsync(cancellationToken);
+        var read = await joined.ReadAsync(cancellationToken);
         return new MeetingRead(read.Participants.Select(p => p.Name).ToList(), read.IsComplete);
     }
 }

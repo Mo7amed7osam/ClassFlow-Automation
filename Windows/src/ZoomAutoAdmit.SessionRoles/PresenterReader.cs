@@ -1,24 +1,10 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using FlaUI.Core.AutomationElements;
 using FlaUI.UIA3;
 using ZoomAutoAdmit.UIAutomation.Discovery;
 using ZoomAutoAdmit.UIAutomation.Window;
 
 namespace ZoomAutoAdmit.SessionRoles;
-
-/// <summary>Who is sharing their screen in the running meeting, if anybody.</summary>
-public interface IPresenterSource
-{
-    /// <summary>The Zoom display name of the person presenting, or null when nobody is.</summary>
-    string? WhoIsPresenting(CancellationToken cancellationToken);
-}
-
-/// <summary>Nobody is presenting. Used when the meeting is not a Zoom Desktop one.</summary>
-public sealed class NoPresenterSource : IPresenterSource
-{
-    public static NoPresenterSource Instance { get; } = new();
-    public string? WhoIsPresenting(CancellationToken cancellationToken) => null;
-}
 
 /// <summary>
 /// Reads the name Zoom shows while somebody shares their screen ("Ahmed's screen",

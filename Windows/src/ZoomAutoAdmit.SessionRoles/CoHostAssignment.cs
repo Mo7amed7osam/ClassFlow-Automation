@@ -1,4 +1,4 @@
-using FlaUI.Core.AutomationElements;
+﻿using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.UIA3;
 using System.Text.RegularExpressions;
@@ -8,13 +8,6 @@ using ZoomAutoAdmit.UIAutomation.Interop;
 using ZoomAutoAdmit.UIAutomation.Window;
 
 namespace ZoomAutoAdmit.SessionRoles;
-
-public sealed record CoHostOutcome(bool Success, string Message, bool AlreadyCoHost = false);
-
-public interface ICoHostAssigner
-{
-    CoHostOutcome Assign(string observedDisplayName, CancellationToken token = default);
-}
 
 /// <summary>
 /// Grants co-host through Zoom's own accessibility tree: open the participants panel, find the

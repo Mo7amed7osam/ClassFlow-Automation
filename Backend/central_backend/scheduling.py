@@ -261,6 +261,8 @@ class Scheduler:
             payload["zoomAccountId"] = str(zoom.id)
         if plan.start_time:
             payload["startTime"] = plan.start_time
+        if plan.title:
+            payload["title"] = plan.title
         if plan.meeting_url:
             payload["meetingUrl"] = plan.meeting_url
         return payload

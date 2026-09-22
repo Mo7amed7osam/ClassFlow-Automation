@@ -110,19 +110,25 @@ public sealed class ClassRunStageTests : IDisposable
     }
 
     [Fact]
-    public async Task How_long_a_meeting_is_held_comes_from_the_class_or_has_a_limit()
+    public async Task A_meeting_is_held_until_the_rule_ends_it_and_no_longer_than_the_limit()
     {
         var credential = new ZoomSignInCredential("mona@zoom.example.com", "pw");
+        int limit = (int)(ClassRunStage.DefaultLength + ClassRunStage.Overrun).TotalMinutes;
 
+        // A class shorter than the rule's three hours is not ended at its own length: the rule waits
+        // for the three hours, and the class runs as long as people are in it.
         var given = await new ClassRunStage(new Accounts(credential), headless: true, now: DuringTheClass)
             .ExecuteAsync(Payload(dryRun: true, minutes: 90), default);
-        Assert.Equal(90, given.Result!["holdsFor"]!.GetValue<int>());
+        Assert.Equal(limit, given.Result!["holdsFor"]!.GetValue<int>());
 
-        // A class that named no length is still bounded: a worker must not sit in an empty meeting
-        // for ever, holding the only slot it has.
         var defaulted = await new ClassRunStage(new Accounts(credential), headless: true, now: DuringTheClass)
             .ExecuteAsync(Payload(dryRun: true), default);
-        Assert.Equal((int)ClassRunStage.DefaultLength.TotalMinutes, defaulted.Result!["holdsFor"]!.GetValue<int>());
+        Assert.Equal(limit, defaulted.Result!["holdsFor"]!.GetValue<int>());
+
+        // A longer class pushes the limit out with it, so a five-hour class is not cut off at five.
+        var longer = await new ClassRunStage(new Accounts(credential), headless: true, now: DuringTheClass)
+            .ExecuteAsync(Payload(dryRun: true, minutes: 300), default);
+        Assert.Equal(300 + (int)ClassRunStage.Overrun.TotalMinutes, longer.Result!["holdsFor"]!.GetValue<int>());
     }
 
     [Fact]

@@ -1,14 +1,26 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!--
+      Who teaches a session and making them co-host. The web client's half - the matching, the
+      bridge, and pressing "Make Co-Host" in the web client - builds everywhere, so a Linux worker
+      makes the instructor co-host the same way the Windows app does. Only the Zoom app's own
+      assigner and screen-share reader need Windows; they are left out of net8.0, below.
+    -->
+    <TargetFrameworks>net8.0;net8.0-windows10.0.19041.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
     <!-- Read-only reuse of the existing name normaliser. This module never edits attendance matching. -->
     <ProjectReference Include="..\ZoomAutoAdmit.AttendanceMatching\ZoomAutoAdmit.AttendanceMatching.csproj" />
-    <!-- Read-only reuse of the existing participant monitoring and UI automation. Neither is modified. -->
+    <!-- Read-only reuse of the existing participant monitoring. It is not modified. -->
     <ProjectReference Include="..\ZoomAutoAdmit.Attendance\ZoomAutoAdmit.Attendance.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows10.0.19041.0'">
     <ProjectReference Include="..\ZoomAutoAdmit.UIAutomation\ZoomAutoAdmit.UIAutomation.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <Compile Remove="CoHostAssignment.cs" />
+    <Compile Remove="PresenterReader.cs" />
   </ItemGroup>
 </Project>

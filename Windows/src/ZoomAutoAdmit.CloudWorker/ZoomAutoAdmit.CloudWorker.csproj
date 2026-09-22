@@ -20,6 +20,8 @@
     <ProjectReference Include="..\ZoomAutoAdmit.CentralAgent\ZoomAutoAdmit.CentralAgent.csproj" />
     <!-- The web half of attendance: reading the meeting's Joined list, which builds on net8.0. -->
     <ProjectReference Include="..\ZoomAutoAdmit.Attendance\ZoomAutoAdmit.Attendance.csproj" />
+    <!-- Making the instructor co-host: the same bridge and web assigner the Windows app runs. -->
+    <ProjectReference Include="..\ZoomAutoAdmit.SessionRoles\ZoomAutoAdmit.SessionRoles.csproj" />
   </ItemGroup>
 
   <ItemGroup>

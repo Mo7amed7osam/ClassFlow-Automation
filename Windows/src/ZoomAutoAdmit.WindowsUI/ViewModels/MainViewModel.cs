@@ -108,7 +108,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Accounts = new AccountsViewModel(service, scope: Scope);
         Schedules = new SchedulesViewModel(service, scope: Scope);
         Logs = new LogsViewModel();
-        SessionRoles = new SessionRolesViewModel(scope: Scope);
+        SessionRoles = new SessionRolesViewModel(scope: Scope)
+        {
+            // The cloud worker makes the instructor co-host from these, as this PC does.
+            Publish = profiles => Central.Api.SaveSettingAsync("sessionRoles", new
+            {
+                profiles = System.Text.Json.JsonSerializer.SerializeToElement(profiles, RolesJson),
+            }),
+        };
         AiMatching = new AiMatchingViewModel(aiCredentials ?? new AiCredentialStore(), aiService ?? new AiMatchingService());
         Roster = new GroupRosterViewModel(groups ?? new GroupRosterStore(log: ConsoleLogger.Info),
             groupDialogs ?? new GroupRosterDialogs(), Scope);
@@ -152,6 +159,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (int.TryParse(value?.ToString(), out var index)) SelectedTabIndex = index;
         });
     }
+
+    /// <summary>Session roles as the server keeps them: names for the enums, as the file on disk has.</summary>
+    private static readonly System.Text.Json.JsonSerializerOptions RolesJson =
+        new(System.Text.Json.JsonSerializerDefaults.Web) { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
 
     public SessionRolesViewModel SessionRoles { get; }
     /// <summary>Matches every recorded class to its roster by itself, hourly from the class's time.</summary>

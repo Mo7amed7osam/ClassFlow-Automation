@@ -27,12 +27,32 @@ public sealed class SessionRolesViewModel : ObservableObject
         // One PC holds everybody's session types; a coordinator sees the ones that name a group of
         // theirs, and the ones that name no group at all because those cover their meetings too.
         _scope = scope ?? new Services.SignedInScope(() => null);
-        _scope.Changed += Load;
+        _scope.Changed += () => { Load(); PublishQuietly(); };
         NewCommand = new RelayCommand(_ => ClearEditor());
         SaveCommand = new RelayCommand(_ => Save());
         DeleteCommand = new RelayCommand(_ => Delete());
         ReloadCommand = new RelayCommand(_ => Load());
         Load();
+    }
+
+    /// <summary>
+    /// Sends the profiles to the central server, where a cloud worker reads them to make the same
+    /// instructor co-host. Set by the shell; called after every save and when the admin signs in.
+    /// Only the admin may change shared settings, so nobody else's copy is sent.
+    /// </summary>
+    public Func<IReadOnlyList<SessionRoleProfile>, Task>? Publish { get; set; }
+
+    private void PublishQuietly()
+    {
+        if (Publish is not { } publish || !_scope.IsAdmin) return;
+        var profiles = _document.Profiles.ToArray();
+        _ = Task.Run(async () =>
+        {
+            // A server that is away for a moment gets the list at the next save or sign-in; the
+            // profiles on this PC are what this PC uses either way.
+            try { await publish(profiles); }
+            catch (Exception ex) { ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Info($"[ROLE] The server did not take the session roles: {ex.Message}"); }
+        });
     }
 
     /// <summary>
@@ -132,6 +152,7 @@ public sealed class SessionRolesViewModel : ObservableObject
             profiles.Add(profile);
             _document = JsonSessionRoleStore.Validate(_document with { Profiles = profiles });
             _store.Save(_document);
+            PublishQuietly();
             RefreshLists();
             SelectedProfile = Profiles.FirstOrDefault(item => SameProfile(item, profile))
                 ?? Profiles.FirstOrDefault(item => string.Equals(item.SessionType, type, StringComparison.OrdinalIgnoreCase));
@@ -158,6 +179,7 @@ public sealed class SessionRolesViewModel : ObservableObject
                 !ReferenceEquals(profile, _selected) && !SameProfile(profile, _selected)).ToList();
             _document = _document with { Profiles = profiles };
             _store.Save(_document);
+            PublishQuietly();
             RefreshLists();
             ClearEditor();
             StatusMessage = $"Deleted {removed}. Remembered assignments for it are kept until it is used again.";

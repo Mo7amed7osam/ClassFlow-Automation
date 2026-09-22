@@ -2,6 +2,7 @@
 
     POST /api/v1/agent/companion-enrollment    a single-use enrolment token for this device's LMS lane
     GET  /api/v1/agent/jobs/{id}/attendance    who was present at the class a held LMS job writes up
+    GET  /api/v1/agent/session-roles           who teaches each kind of session, to make them co-host
 
 Both are answered only to a device, with its own device token, and both are narrow on purpose.
 
@@ -31,7 +32,7 @@ from sqlalchemy import func, select
 from .api import ApiError
 from .delegated_runs import _no_store
 from .devices import authenticate_device, create_enrollment_token
-from .models import AttendanceRecord, AttendanceSession, AttendanceSnapshot, Device, EnrollmentToken, Job, Student
+from .models import AppSetting, AttendanceRecord, AttendanceSession, AttendanceSnapshot, Device, EnrollmentToken, Job, Student
 from .observability import emit
 from .security import bearer_token
 
@@ -154,3 +155,19 @@ async def job_attendance(job_id: str, request: Request) -> Any:
     emit("attendance.read_by_device", deviceId=str(device.id), jobId=str(job.id), present=len(present))
     return _no_store({"sessionId": str(att.id), "present": present, "needsReview": review,
                       "students": len(rows), "snapshots": snapshots})
+
+
+@router.get("/api/v1/agent/session-roles")
+async def session_roles(request: Request) -> Any:
+    """The session-roles profiles the admin's Windows app keeps: who teaches each kind of session.
+
+    What a worker needs to make the instructor co-host the way the Windows app does. Names and the
+    words that recognise a session, nothing more; any device may read them, as any device holding
+    a class may see who is in it.
+    """
+    async with request.app.state.sessionmaker() as session:
+        await _device(session, request)
+        row = await session.get(AppSetting, "sessionRoles")
+    value = row.value if row else None
+    profiles = value.get("profiles") if isinstance(value, dict) else value if isinstance(value, list) else None
+    return _no_store({"profiles": profiles or [], "updatedAt": row.updated_at if row else None})

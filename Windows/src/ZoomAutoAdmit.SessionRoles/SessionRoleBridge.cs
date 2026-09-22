@@ -1,4 +1,4 @@
-using ZoomAutoAdmit.Attendance;
+﻿using ZoomAutoAdmit.Attendance;
 using ZoomAutoAdmit.AttendanceMatching;
 using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Meetings;
@@ -92,8 +92,15 @@ public sealed class SessionRoleBridge : IAsyncDisposable
         _participants = participants;
         _names = names;
         _store = store ?? new JsonSessionRoleStore();
+#if WINDOWS
         _assigner = assigner ?? new ZoomCoHostAssigner();
         _presenters = presenters ?? new ZoomPresenterReader();
+#else
+        // Off Windows there is no Zoom app to read or press: a host gives the web assigner, and
+        // nobody's screen share is read.
+        _assigner = assigner ?? throw new ArgumentNullException(nameof(assigner), "Off Windows a co-host assigner must be given.");
+        _presenters = presenters ?? NoPresenterSource.Instance;
+#endif
         _log = log ?? ConsoleLogger.Info;
         // Slow by design: an admitted participant wakes the watcher, so polling is only a fallback
         // and never competes with the admission engine for the desktop.

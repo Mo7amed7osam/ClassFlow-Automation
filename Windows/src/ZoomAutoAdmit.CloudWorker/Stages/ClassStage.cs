@@ -26,6 +26,10 @@ public sealed record ClassStage
     /// <summary>Where the meeting opens. Present for class.open; the stages that join one already live do not need it.</summary>
     public Uri? MeetingUrl { get; init; }
 
+    /// <summary>The class's name in the timetable, which says what kind of session it is - and so
+    /// who teaches it and is made co-host.</summary>
+    public string? Title { get; init; }
+
     public Guid? ZoomAccountId { get; init; }
 
     /// <summary>Whose sign-in writes this class up. Always present for an LMS stage.</summary>
@@ -105,6 +109,9 @@ public sealed record ClassStage
             CoordinatorId = coordinator!.Value,
             StartTime = start,
             MeetingUrl = meeting,
+            Title = payload.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String
+                ? title.GetString()
+                : null,
             ZoomAccountId = zoomAccount,
             LmsAccountId = lmsAccount,
             Duration = payload.TryGetProperty("durationMinutes", out var minutes)

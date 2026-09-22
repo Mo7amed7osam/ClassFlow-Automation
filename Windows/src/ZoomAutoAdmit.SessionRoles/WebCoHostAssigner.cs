@@ -99,7 +99,7 @@ public sealed class WebCoHostAssigner(Func<IPage?> page, TimeSpan? menuWait = nu
     }
 
     /// <summary>"Cohost Test (Guest),computer audio muted,video off" → "Cohost Test".</summary>
-    internal static string RowName(string label) => Attendance.RuntimeAttendanceSources.CleanParticipantName(label);
+    internal static string RowName(string label) => Attendance.ParticipantNames.Clean(label);
 
     private static async Task<string> LabelAsync(ILocator row)
     {

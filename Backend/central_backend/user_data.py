@@ -48,7 +48,10 @@ from .models import AppSetting, LmsAccount, UserSchedule, ZoomAccount
 from .observability import emit
 
 SECRETS_KEY_VARIABLE = "CENTRAL_SECRETS_KEY"
-SETTING_KEYS = {"recordingsSheet"}
+# sessionRoles: who teaches each kind of session and may be made co-host - the Windows app's
+# session-roles profiles, sent up when they are saved there, so a cloud worker makes the same
+# person co-host. The profiles only; the history of which Zoom name was whom stays per machine.
+SETTING_KEYS = {"recordingsSheet", "sessionRoles"}
 MAX_SETTING_BYTES = 16 * 1024
 
 router = APIRouter()
