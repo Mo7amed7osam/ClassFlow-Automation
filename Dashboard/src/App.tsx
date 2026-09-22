@@ -8,6 +8,7 @@ import { AttendancePage } from './pages/AttendancePage'
 import { AttendanceSessionPage } from './pages/AttendanceSessionPage'
 import { GroupsPage } from './pages/GroupsPage'
 import { LoginPage } from './pages/LoginPage'
+import { LogsPage } from './pages/LogsPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { SessionsPage } from './pages/SessionsPage'
 import { RecordingsPage } from './pages/RecordingsPage'
@@ -48,6 +49,7 @@ export function App() {
         <Route path="groups" element={<GroupsPage />} />
         <Route path="account" element={<AccountPage />} />
         <Route path="accounts" element={<AccountsPage />} />
+        <Route path="logs" element={<LogsPage />} />
         <Route element={<RequireAdmin />}>
           <Route path="agents" element={<AgentsPage />} />
           <Route path="users" element={<UsersPage />} />

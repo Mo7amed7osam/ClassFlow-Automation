@@ -25,6 +25,7 @@ import type {
   UserStatus,
   LmsAccountRef,
   ZoomAccountRef,
+  Activity,
 } from './types'
 
 // How often each view refreshes itself. Agents change fastest (heartbeats every 30 s); a recording
@@ -142,11 +143,24 @@ export const useSaveLmsAccount = () =>
 export const useUseLmsAccount = () =>
   useMyAccountMutation((id: string) => api<LmsAccountRef>(`/api/v1/me/lms-accounts/${id}/use`, send('POST')))
 
+export const useDeleteLmsAccount = () =>
+  useMyAccountMutation((id: string) => api<{ status: string }>(`/api/v1/me/lms-accounts/${id}`, send('DELETE')))
+
 export const useSaveZoomAccounts = () =>
   useMyAccountMutation((accounts: Array<{
     accountId: string; label: string; zoomEmail?: string | null; group?: string | null; meetingUrl?: string | null
     preferredEngine?: 'desktop' | 'web' | null; password?: string | null; active: boolean
   }>) => api<{ accounts: ZoomAccountRef[] }>('/api/v1/me/zoom-accounts', send('PUT', { accounts })))
+
+/** Activity reported by the connected workers. It is scoped by the server to the signed-in user. */
+export function useActivity(params: { group?: string; limit?: number } = {}) {
+  return useQuery({
+    queryKey: ['activity', params],
+    queryFn: () => api<{ items: Activity[] }>(`/api/v1/dashboard/activity${query(params)}`),
+    refetchInterval: REFRESH.agents,
+    placeholderData: keepPreviousData,
+  })
+}
 
 export function useOverview() {
   return useQuery({

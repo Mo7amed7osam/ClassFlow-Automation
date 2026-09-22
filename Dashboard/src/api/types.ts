@@ -233,6 +233,20 @@ export interface ZoomAccountRef {
   updatedAt?: string
 }
 
+/** One completed action reported by a connected worker. */
+export interface Activity {
+  id: number
+  device: string | null
+  deviceId: string
+  at: string
+  kind: string
+  outcome: 'done' | 'failed' | 'skipped'
+  group: string | null
+  date: string | null
+  summary: string
+  detail: Record<string, unknown> | null
+}
+
 /** A coordinator, and whether the admin's PC opens and finishes their classes for them. */
 export interface Delegation {
   coordinatorId: string
