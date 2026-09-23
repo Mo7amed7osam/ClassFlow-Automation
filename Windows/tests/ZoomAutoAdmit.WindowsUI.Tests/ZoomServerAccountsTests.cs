@@ -145,6 +145,20 @@ public sealed class ZoomServerAccountsTests
     }
 
     [Fact]
+    public async Task APasswordSavedWhereTheAccountsPageSavesItGoesUpEvenUnderAHandTypedReference()
+    {
+        // 2026-09-21: G1's reference was typed as "CAI5_IND1_G1", which names nothing.
+        var api = new FakeApi();
+        await new ZoomServerAccounts(api, _ => { }, new FakeCredentials(),
+            readLocal: reference => reference == "wincred:ZoomAutoAdmit/ZoomProfile/CAI5_IND1_G1"
+                ? new ZoomSignInCredential("depi+10@zoom.example.com", "made-up Zoom password") : null).PushAsync([
+            new WindowsMeetingAccountMetadata("CAI5_IND1_G1", "G1", "CAI5_IND1_G1") { ZoomEmail = "depi+10@zoom.example.com" },
+        ]);
+
+        Assert.Contains("made-up Zoom password", Assert.Single(api.Sent));
+    }
+
+    [Fact]
     public async Task APcWithNoSignInForAnAccountSendsNoPasswordForIt()
     {
         var api = new FakeApi();

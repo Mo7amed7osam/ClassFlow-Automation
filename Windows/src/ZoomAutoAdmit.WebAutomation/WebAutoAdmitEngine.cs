@@ -113,7 +113,11 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
         var session = _session!;
         // A profile not yet known to host (new, or it joined as a guest last time) is signed in to
         // Zoom first with the account's saved password, so it joins as the host.
-        if (!profile.HasReusableSession && ZoomSignInCredential.Read(options.WebSignInCredential) is { } credential)
+        var saved = profile.HasReusableSession ? null : ZoomSignInCredential.Read(options.WebSignInCredential);
+        if (!profile.HasReusableSession && saved == null)
+            ConsoleLogger.Warn($"WEB_SIGN_IN: no Zoom password is saved on this PC for profile '{profile.Name}', so it cannot sign itself in. " +
+                               "Save the account's Zoom password on the Accounts page once; until then a person has to sign in.");
+        if (saved is { } credential)
         {
             var outcome = await ZoomWebSignIn.EnsureSignedInAsync(session.Context, credential, _stopCancellation!.Token);
             if (outcome is ZoomSignInOutcome.NeedsPerson or ZoomSignInOutcome.Failed && session.IsHeadless)
@@ -210,8 +214,12 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
                         nextLauncherCheck = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
                         try
                         {
-                            if (!await ZoomLauncherPage.TryJoinFromBrowserAsync(session.Context))
-                                await ZoomLauncherPage.TryPressJoinOnPreviewAsync(session.Context);
+                            // Zoom's own way back in, in the order it offers them: the launcher's
+                            // "Join from browser", the preview's "Join", and - when a join failed -
+                            // the "Retry" it puts in their place.
+                            if (!await ZoomLauncherPage.TryJoinFromBrowserAsync(session.Context)
+                                && !await ZoomLauncherPage.TryPressJoinOnPreviewAsync(session.Context))
+                                await ZoomLauncherPage.TryPressRetryAsync(session.Context);
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException) { ConsoleLogger.Debug($"WEB_LAUNCHER_PAGE: {ex.Message}"); }
                     }

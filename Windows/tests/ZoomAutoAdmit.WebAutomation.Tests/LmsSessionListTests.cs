@@ -30,3 +30,23 @@ public class LmsSessionListTests
     public void AnAttachmentIsRecognisedWhateverItsSpacing(string page, string title, bool shown) =>
         Assert.Equal(shown, LmsSessionRunner.Shows(page, title));
 }
+
+/// <summary>
+/// What a class is called, taken from its row. The dashboard puts the columns in a different order
+/// for a coordinator than for an admin, which is how every class of Hosam's came out named after
+/// its number - "29.0" - instead of the week it belongs to (2026-09-21).
+/// </summary>
+public class LmsSessionTitleTests
+{
+    [Theory]
+    // As the admin's account lists it: the name first.
+    [InlineData("Week 10 - Session 2\tCAI5_IND1_G1\t2026-09-23 18:00\tpending", "Week 10 - Session 2")]
+    // As the coordinator's own account lists it: the session number first, the name further along.
+    [InlineData("29.0\tCoaching\tCAI5_IND1_G1\tWeek 10 - Session 2\t2026-09-23 18:00\tpending", "Week 10 - Session 2")]
+    [InlineData("30.0\nWeek 11 – Session 1\nCAI5_IND1_G2\n2026-09-26 14:00", "Week 11 – Session 1")]
+    // No week anywhere: whatever the row actually says, never the number, the date or the status.
+    [InlineData("29.0\tCoaching\tCAI5_IND1_G1\t2026-09-23 18:00\tpending", "Coaching")]
+    [InlineData("31.0\t2026-09-26\t14:00\tfinished", "31.0")]
+    public void TheNameIsTakenFromTheRowWhateverTheColumnOrder(string row, string expected) =>
+        Assert.Equal(expected, LmsSessionRunner.TitleOfRow(row));
+}

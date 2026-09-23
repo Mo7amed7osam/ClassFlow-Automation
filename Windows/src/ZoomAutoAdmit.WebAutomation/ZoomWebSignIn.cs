@@ -26,6 +26,32 @@ public sealed class ZoomSignInCredential(string email, string password)
     /// password as its secret); anywhere else it is whatever <see cref="Resolver"/> was set to.
     /// Null when no password was saved for the account.
     /// </summary>
+    /// <summary>Where the Accounts page saves an account's Zoom password on this PC.</summary>
+    public static string StandardReference(string accountId) => $"wincred:ZoomAutoAdmit/ZoomProfile/{accountId.Trim()}";
+
+    /// <summary>
+    /// The account's sign-in: by its reference, or - when that names nothing, as a hand-typed
+    /// reference like "CAI5_IND1_G1" does - from where the Accounts page always saves it. A password
+    /// that is there must not be missed because of what was typed into a free-text field
+    /// (2026-09-21: G1 waited for a person at 17:45 with the reference set to its own name).
+    /// </summary>
+    public static ZoomSignInCredential? ReadFor(string? reference, string? accountId)
+    {
+        var found = Read(reference);
+        if (found != null || string.IsNullOrWhiteSpace(accountId)) return found;
+        string standard = StandardReference(accountId);
+        return string.Equals(reference?.Trim(), standard, StringComparison.OrdinalIgnoreCase) ? null : Read(standard);
+    }
+
+    /// <summary>The reference that actually holds the account's sign-in, or null when none does.</summary>
+    public static string? ResolveReference(string? reference, string? accountId)
+    {
+        if (Read(reference) != null) return reference!.Trim();
+        if (string.IsNullOrWhiteSpace(accountId)) return null;
+        string standard = StandardReference(accountId);
+        return Read(standard) != null ? standard : null;
+    }
+
     public static ZoomSignInCredential? Read(string? reference)
     {
         if (string.IsNullOrWhiteSpace(reference)) return null;
@@ -92,8 +118,16 @@ public static class ZoomWebSignIn
         try
         {
             await page.GotoAsync("https://zoom.us/profile", new() { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 30000 });
-            await Task.Delay(1500, token);
-            if (!OnSignInPage(page.Url)) return ZoomSignInOutcome.AlreadySignedIn;
+            // Signed out, zoom.us sends the profile page on to its sign-in page from a script, a
+            // moment after the document arrives. Deciding at once read "still on /profile" as
+            // signed in, and the meeting then waited for a person.
+            try { await page.WaitForURLAsync(url => OnSignInPage(url), new() { Timeout = 8000 }); }
+            catch (TimeoutException) { }
+            if (!OnSignInPage(page.Url))
+            {
+                ConsoleLogger.Info("WEB_SIGN_IN: this profile is already signed in to Zoom.");
+                return ZoomSignInOutcome.AlreadySignedIn;
+            }
             if (credential == null)
             {
                 ConsoleLogger.Warn("WEB_SIGN_IN: this Zoom profile is not signed in and no Zoom password is saved for the account (Accounts page).");

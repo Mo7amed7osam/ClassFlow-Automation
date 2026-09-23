@@ -1,15 +1,23 @@
-using ZoomAutoAdmit.Core.Meetings;
+﻿using ZoomAutoAdmit.Core.Meetings;
 using ZoomAutoAdmit.WindowsRuntime.Scheduling;
 using Xunit;
 
 namespace ZoomAutoAdmit.WindowsRuntime.Tests;
 
+[Collection("ScheduledClassStarter")]
 public sealed class WindowsMeetingSchedulerTests : IDisposable
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
         "ZoomAutoAdmitSchedulerTests",
         Guid.NewGuid().ToString("N"));
+    private readonly string _liveWas = LiveMeetings.Folder;
+
+    public WindowsMeetingSchedulerTests()
+    {
+        // Which meetings are running belongs to this test, not to the PC it runs on.
+        LiveMeetings.Folder = Path.Combine(_root, "live");
+    }
 
     [Fact]
     public async Task CreateSchedulePersistsAllFields()
@@ -160,6 +168,7 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
 
     public void Dispose()
     {
+        LiveMeetings.Folder = _liveWas;
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 
@@ -177,5 +186,99 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
                 meeting,
                 DateTimeOffset.UtcNow));
         }
+    }
+
+    // ------------------------------------------------------------------ a meeting that closed
+
+    /// <summary>A class of today that already opened, at its time, with nothing live for it.</summary>
+    private async Task<(WindowsMeetingScheduleStore Store, MeetingSchedule Schedule, DateOnly Today)> ClassThatOpened(DateTimeOffset now)
+    {
+        var store = Store();
+        var today = DateOnly.FromDateTime(now.LocalDateTime);
+        var at = TimeOnly.FromDateTime(now.LocalDateTime).AddMinutes(-30);
+        var schedule = Schedule(true, ScheduleDays.None, at) with
+        {
+            OccurrenceDate = today, LastTriggeredDate = today, GroupName = "CAI5_IND1_G1", Name = "G1 class",
+        };
+        await store.UpsertAsync(schedule);
+        return (store, schedule, today);
+    }
+
+    private ClassEndings Endings() => new(Path.Combine(_root, "endings.json"));
+
+    [Fact]
+    public async Task AMeetingThatClosedDuringItsClassIsOpenedAgain()
+    {
+        var now = DateTimeOffset.Now;
+        var (store, schedule, _) = await ClassThatOpened(now);
+        var runner = new FakeScheduledMeetingRunner();
+        await using var scheduler = new WindowsMeetingScheduler(store, runner, Endings());
+
+        await scheduler.RunDueAsync(now);
+
+        var opened = Assert.Single(runner.Meetings);
+        Assert.Equal(schedule.MeetingUrl, opened.MeetingUrl.AbsoluteUri);
+        Assert.Equal("CAI5_IND1_G1", opened.GroupId);
+    }
+
+    [Fact]
+    public async Task AMeetingThatIsStillLiveIsLeftAlone()
+    {
+        var now = DateTimeOffset.Now;
+        var (store, _, _) = await ClassThatOpened(now);
+        var runner = new FakeScheduledMeetingRunner();
+        LiveMeetings.Beat(Guid.NewGuid(), "CAI5_IND1_G1", "Web", now);
+        await using var scheduler = new WindowsMeetingScheduler(store, runner, Endings());
+        await scheduler.RunDueAsync(now);
+
+        Assert.Empty(runner.Meetings);
+    }
+
+    [Fact]
+    public async Task AClassSomebodyEndedIsNotOpenedAgain()
+    {
+        var now = DateTimeOffset.Now;
+        var (store, schedule, today) = await ClassThatOpened(now);
+        var endings = Endings();
+        // Ended from a phone, or by the program once the class was over: the class is over.
+        endings.Record(new ClassEnding
+        {
+            Group = "CAI5_IND1_G1", Date = today, Start = schedule.Time, At = now.AddMinutes(-2), How = ClassEndedHow.Elsewhere,
+        });
+        var runner = new FakeScheduledMeetingRunner();
+        await using var scheduler = new WindowsMeetingScheduler(store, runner, endings);
+
+        await scheduler.RunDueAsync(now);
+
+        Assert.Empty(runner.Meetings);
+    }
+
+    [Fact]
+    public async Task AMeetingThatKeepsClosingIsOpenedAgainOnlySoOften()
+    {
+        var now = DateTimeOffset.Now;
+        var (store, _, _) = await ClassThatOpened(now);
+        var runner = new FakeScheduledMeetingRunner();
+        await using var scheduler = new WindowsMeetingScheduler(store, runner, Endings());
+
+        // Each pass a few minutes later, so each is a fresh look rather than the same moment.
+        for (int pass = 0; pass < WindowsMeetingScheduler.MostReopens + 3; pass++)
+            await scheduler.RunDueAsync(now + (WindowsMeetingScheduler.ReopenSettleTime + TimeSpan.FromMinutes(1)) * pass);
+
+        Assert.Equal(WindowsMeetingScheduler.MostReopens, runner.Meetings.Count);
+    }
+
+    [Fact]
+    public async Task AClassWhoseHoursAreOverIsNotOpenedAgain()
+    {
+        var now = DateTimeOffset.Now;
+        var (store, _, _) = await ClassThatOpened(now);
+        var runner = new FakeScheduledMeetingRunner();
+        await using var scheduler = new WindowsMeetingScheduler(store, runner, Endings());
+
+        // Long past the class: its meeting being gone is how a class that is over looks.
+        await scheduler.RunDueAsync(now + WindowsMeetingScheduler.ReopenWithin + TimeSpan.FromMinutes(5));
+
+        Assert.Empty(runner.Meetings);
     }
 }

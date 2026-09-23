@@ -7,6 +7,7 @@ using Xunit;
 
 namespace ZoomAutoAdmit.WindowsRuntime.Tests;
 
+[Collection("ScheduledClassStarter")]
 public sealed class WindowsMeetingRuntimeIntegrationTests : IDisposable
 {
     private readonly string _root = Path.Combine(

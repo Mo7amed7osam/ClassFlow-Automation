@@ -16,7 +16,7 @@
                         <TextBlock Text="Type it exactly as Zoom shows it in its saved accounts." TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="4" />
                         <TextBlock Text="Zoom password" Style="{DynamicResource FieldLabel}"/>
                         <StackPanel Orientation="Horizontal"><PasswordBox x:Name="ZoomPassword" Width="260" MaxLength="512" AutomationProperties.Name="Zoom password"/><Button Content="Save password" Click="SavePassword"/><Button Content="Forget" Click="ForgetPassword"/></StackPanel>
-                        <TextBlock Text="{Binding HasSavedPassword, StringFormat=Password saved securely: {0}}" Foreground="{DynamicResource MutedBrush}" Margin="4"/>
+                        <TextBlock Text="{Binding PasswordState}" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="4"/>
                         <TextBlock Text="Usual meeting link" Style="{DynamicResource FieldLabel}" />
                         <TextBox Text="{Binding DefaultMeetingUrl, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Default meeting URL" />
                         <TextBlock Text="Save this group's link once and it fills in by itself. Change it here whenever it changes."

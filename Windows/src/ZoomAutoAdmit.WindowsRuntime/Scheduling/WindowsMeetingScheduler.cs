@@ -27,10 +27,12 @@ public sealed class WindowsMeetingScheduler : IAsyncDisposable
 
     public WindowsMeetingScheduler(
         WindowsMeetingScheduleStore store,
-        IScheduledMeetingRunner runner)
+        IScheduledMeetingRunner runner,
+        ClassEndings? endings = null)
     {
         _store = store;
         _runner = runner;
+        _endings = endings ?? new ClassEndings();
     }
 
     public event Action<MeetingSession>? SessionStarted;
@@ -96,14 +98,90 @@ public sealed class WindowsMeetingScheduler : IAsyncDisposable
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return null; }
                     catch (Exception ex) { ConsoleLogger.Error($"[SCHEDULER] Failed: {ex.Message}"); return null; }
                 }, CancellationToken.None);
-                lock (_opening) _opening[key] = task;
+                lock (_opening) { _opening[key] = task; _lastOpened[key] = now; }
                 started.Add(task);
             }
         }
         finally { _triggerLock.Release(); }
+        started.AddRange(await ReopenClosedClassesAsync(now, cancellationToken));
         if (!waitForStarts) return started.Count;
         var sessions = await Task.WhenAll(started);
         return sessions.Count(s => s is { State: not MeetingState.Failed });
+    }
+
+    /// <summary>How long after its time a class is still worth putting back on its feet.</summary>
+    public static TimeSpan ReopenWithin { get; set; } = TimeSpan.FromHours(2) + TimeSpan.FromMinutes(30);
+
+    /// <summary>How many times one class may be opened again in a day before a person is needed.</summary>
+    public const int MostReopens = 3;
+
+    /// <summary>
+    /// How long a class that has just been opened is left alone. A meeting takes a while to appear,
+    /// and asking for it again in the meantime would open the same class twice.
+    /// </summary>
+    public static TimeSpan ReopenSettleTime { get; set; } = TimeSpan.FromMinutes(3);
+
+    private readonly Dictionary<string, int> _reopened = [];
+    private readonly Dictionary<string, DateTimeOffset> _lastOpened = [];
+    private readonly ClassEndings _endings;
+
+    /// <summary>
+    /// A class that opened and whose meeting is no longer there, while the class is still going on:
+    /// the browser crashed, the profile was closed, Zoom dropped the connection. It is opened again,
+    /// with its own account and link, up to <see cref="MostReopens"/> times.
+    ///
+    /// A meeting somebody ended - the program at the end of the class, a person, or from a phone -
+    /// is never reopened: that is written down as the class's ending, and a class that ended is over.
+    /// </summary>
+    private async Task<List<Task<MeetingSession?>>> ReopenClosedClassesAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var started = new List<Task<MeetingSession?>>();
+        DateOnly today = DateOnly.FromDateTime(now.LocalDateTime);
+        foreach (var schedule in await _store.ListAsync(cancellationToken))
+        {
+            if (!schedule.Enabled || schedule.LastTriggeredDate != today) continue;
+            var since = now.LocalDateTime - today.ToDateTime(schedule.Time);
+            if (since < TimeSpan.Zero || since > ReopenWithin) continue;
+
+            string group = string.IsNullOrWhiteSpace(schedule.GroupName) ? schedule.AccountId : schedule.GroupName;
+            if (LiveMeetings.IsLive(group, now)) continue;
+            if (_endings.For(group, today, schedule.Time) != null) continue;      // it ended; it is over
+
+            string key = $"{schedule.Id:N}|{today:yyyyMMdd}";
+            lock (_opening)
+            {
+                if (_opening.TryGetValue(key, out var running) && !running.IsCompleted) continue;
+                // Just opened: its meeting has not had time to show itself yet.
+                if (_lastOpened.TryGetValue(key, out var when) && now - when < ReopenSettleTime) continue;
+                if (!_reopened.TryGetValue(key, out int times)) times = 0;
+                if (times >= MostReopens)
+                {
+                    if (times == MostReopens)
+                    {
+                        _reopened[key] = times + 1;
+                        ConsoleLogger.Warn($"[SCHEDULER] {schedule.Name}: its meeting keeps closing; it was opened again {MostReopens} times and is now left alone.");
+                    }
+                    continue;
+                }
+                _reopened[key] = times + 1;
+            }
+            ConsoleLogger.Info($"[SCHEDULER] {schedule.Name}: its meeting is no longer running {since.TotalMinutes:0} min into the class; opening it again.");
+
+            var task = Task.Run(async () =>
+            {
+                try
+                {
+                    var session = await new ScheduledClassStarter(_runner, _store).StartAsync(schedule, today, now, cancellationToken, reopen: true);
+                    if (session is { State: not MeetingState.Failed }) SessionStarted?.Invoke(session);
+                    return session;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return null; }
+                catch (Exception ex) { ConsoleLogger.Error($"[SCHEDULER] {schedule.Name} could not be opened again: {ex.Message}"); return null; }
+            }, CancellationToken.None);
+            lock (_opening) { _opening[key] = task; _lastOpened[key] = now; }
+            started.Add(task);
+        }
+        return started;
     }
 
     private async Task MonitorAsync(CancellationToken cancellationToken)

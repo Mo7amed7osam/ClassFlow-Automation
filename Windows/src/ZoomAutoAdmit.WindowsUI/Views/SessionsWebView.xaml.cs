@@ -286,6 +286,7 @@ public partial class SessionsWebView : UserControl
                 key = r.Key, group = r.Group, date = r.Date.ToString("yyyy-MM-dd"), start = r.Start.ToString("HH:mm"),
                 title = r.Title, tone = r.Tone, next = r.NextStep, zoom = r.Zoom,
                 lmsStatus = r.LmsStatus, lmsReadAt = r.LmsReadAt, lmsUrl = r.LmsUrl, linkKind = r.LinkKind, recordLink = r.RecordLink,
+                zoomAccount = r.ZoomAccount, lmsAccount = r.LmsAccount, coordinator = r.Coordinator,
                 steps = r.Steps.Select(s => new { key = s.Key, label = s.Label, state = s.State, text = s.Text, detail = s.Detail }),
                 details = r.Details,
                 material = r.Material is not { } m ? null : new

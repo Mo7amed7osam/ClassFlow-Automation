@@ -25,6 +25,12 @@ export interface Row {
   lmsReadAt?: string | null
   lmsUrl?: string | null
   linkKind: string
+  /** The Zoom account this class opens with. */
+  zoomAccount?: string
+  /** The LMS sign-in its steps go up under. */
+  lmsAccount?: string
+  /** Whose class it is, when this PC runs it for somebody else. */
+  coordinator?: string
   recordLink?: string | null
   steps: Step[]
   details: string

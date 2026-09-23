@@ -14,6 +14,25 @@ public sealed class LmsFollowUpProcessor
     public delegate Task<(bool IsSuccess, string Message)> RunAction(
         LmsFollowUp item, IReadOnlyCollection<string> present, bool dryRun, CancellationToken token);
 
+    /// <summary>
+    /// A step that has gone wrong often enough to be worth somebody's attention: the class, what
+    /// failed, and how many tries it has had. Raised once per step per run of the app, so a class
+    /// that keeps retrying says so once rather than every few minutes.
+    /// </summary>
+    public static event Action<LmsFollowUp, string, int>? Stuck;
+
+    /// <summary>After this many failed tries a step is not going to fix itself.</summary>
+    public const int TriesBeforeSaying = 3;
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> Said = new();
+
+    private static void SayStuck(LmsFollowUp item, string why, int attempts)
+    {
+        if (attempts < TriesBeforeSaying || Stuck == null) return;
+        if (!Said.TryAdd(item.Describe, 0)) return;
+        try { Stuck(item, why, attempts); } catch { }
+    }
+
     private readonly LmsFollowUpQueue _queue;
     private readonly Func<LmsFollowUp, CancellationToken, Task<IReadOnlyCollection<string>>> _presentNames;
     private readonly RunAction _runAction;
@@ -282,7 +301,11 @@ public sealed class LmsFollowUpProcessor
                         if (!dryRun) await _queue.RecordAsync(item, outcome.IsSuccess, outcome.Message, token);
                         if (!outcome.IsSuccess)
                         {
-                            if (!dryRun) await _queue.RetryAsync(item, outcome.Message, now ?? DateTimeOffset.Now, token);
+                            if (!dryRun)
+                            {
+                                await _queue.RetryAsync(item, outcome.Message, now ?? DateTimeOffset.Now, token);
+                                SayStuck(item, outcome.Message, item.Attempts + 1);
+                            }
                             chainBlocked = true; // Correction must succeed before this session is completed.
                             continue;
                         }
@@ -297,6 +320,7 @@ public sealed class LmsFollowUpProcessor
                         {
                             await _queue.RecordAsync(item, false, message, token);
                             await _queue.RetryAsync(item, message, now ?? DateTimeOffset.Now, token);
+                            SayStuck(item, message, item.Attempts + 1);
                         }
                         chainBlocked = true;
                     }

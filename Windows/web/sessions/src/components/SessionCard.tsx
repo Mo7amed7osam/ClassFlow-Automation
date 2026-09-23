@@ -68,6 +68,16 @@ export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, o
           </span>
         </header>
 
+        {/* Whose accounts this class runs under: the coordinator it belongs to, the Zoom account
+            that opens it, and the LMS sign-in its steps go up under. */}
+        {(row.coordinator || row.zoomAccount || row.lmsAccount) && (
+          <p className="card-accounts">
+            {row.coordinator && <span className="who" title={`${row.coordinator}'s class`}><Icon name="user" size={12} /> {row.coordinator}</span>}
+            {row.zoomAccount && <span title={`Opens with the Zoom account ${row.zoomAccount}`}><Icon name="video" size={12} /> {row.zoomAccount}</span>}
+            {row.lmsAccount && <span title={`Goes up on the LMS as ${row.lmsAccount}`}><Icon name="sheet" size={12} /> {row.lmsAccount}</span>}
+          </p>
+        )}
+
         <ol className="track" aria-label="Where this class stands" style={{ '--steps': row.steps.length } as React.CSSProperties}>
           {row.steps.map((step) => {
             const inFlight = (STEP_ACTIONS[step.key] ?? []).some((a) => working.has(workingKey(row, a)))

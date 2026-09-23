@@ -185,8 +185,8 @@ public partial class WelcomeWindow : Window
         string password = Text(p, "password");
         if (password.Length > 0)
         {
-            accounts.SavePassword(password);
-            if (!accounts.HasSavedPassword) return new { ok = false, message = accounts.StatusMessage };
+            // Kept on this PC and in the database both; either one is enough to go on with.
+            if (!await accounts.SavePasswordAsync(password)) return new { ok = false, message = accounts.StatusMessage };
         }
         await accounts.SaveAsync();
         bool ok = accounts.StatusMessage.StartsWith("Profile saved", StringComparison.Ordinal);

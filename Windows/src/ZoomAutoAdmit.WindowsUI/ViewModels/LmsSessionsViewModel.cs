@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows.Input;
 using ZoomAutoAdmit.Core.Formatting;
@@ -24,6 +24,11 @@ public sealed record ClassRow(
     public string? LmsReadAt { get; init; }
     public string? LmsUrl { get; init; }
     public string LinkKind { get; init; } = "";
+    /// <summary>The Zoom account this class opens with, as this PC knows it.</summary>
+    public string ZoomAccount { get; init; } = "";
+    /// <summary>The LMS sign-in its steps go up under, and whose class it is when it is not this PC's own.</summary>
+    public string LmsAccount { get; init; } = "";
+    public string Coordinator { get; init; } = "";
     public string? RecordLink { get; init; }
     /// <summary>The class's material and assignment, as the Sessions page shows and asks about them.</summary>
     public MaterialInfo? Material { get; init; }
@@ -68,6 +73,8 @@ public sealed class LmsSessionsViewModel : ObservableObject
     private readonly LmsSessionCache _cache;
     private readonly LmsAccountDirectory _accounts;
     private readonly Func<LmsSessionRunner> _runner;
+    /// <summary>Which group belongs to which coordinator, and the LMS account its classes go up under.</summary>
+    private readonly ClassLmsAccounts _classAccounts = new();
     /// <summary>When each class's meeting ended, and how - including one closed from a phone.</summary>
     private readonly ClassEndings _endings;
     private string _status = "";
@@ -75,6 +82,13 @@ public sealed class LmsSessionsViewModel : ObservableObject
     private LmsAccountEntry? _selectedAccount;
     private string _newLabel = "", _newEmail = "", _newRole = "coordinator";
     private DateTimeOffset _lastAutoCheck = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Opens a class's Zoom meeting now, the way its schedule would have: given the account, the
+    /// link and what it opens with, it answers what happened. Set by the window; without it the
+    /// card says so rather than pretending it pressed anything.
+    /// </summary>
+    public Func<string, string, ZoomAutoAdmit.Core.Sessions.SessionEngineType?, CancellationToken, Task<string>>? OpenMeeting { get; set; }
 
     public LmsSessionsViewModel(WindowsMeetingScheduleStore? schedules = null, LmsFollowUpQueue? queue = null,
         LmsSessionCache? cache = null, LmsAccountDirectory? accounts = null, Func<LmsSessionRunner>? runner = null,
@@ -117,6 +131,22 @@ public sealed class LmsSessionsViewModel : ObservableObject
     public ICommand FullCheckCommand { get; }
     public ICommand UseAccountCommand { get; }
     public ICommand RemoveAccountCommand { get; }
+
+    /// <summary>
+    /// The LMS sign-in a class's steps go up under: its own coordinator's when this PC runs their
+    /// classes, otherwise the account in use here.
+    /// </summary>
+    private string LmsEmailFor(string group)
+    {
+        try
+        {
+            if (_classAccounts.Find(group) is { } claim
+                && _accounts.List().FirstOrDefault(a => a.Id.Equals(claim.AccountId, StringComparison.OrdinalIgnoreCase)) is { } theirs)
+                return theirs.Email;
+        }
+        catch { }
+        return _accounts.Active()?.Email ?? "";
+    }
 
     // ------------------------------------------------------------------ accounts
 
@@ -468,6 +498,11 @@ public sealed class LmsSessionsViewModel : ObservableObject
                     LmsReadAt = lms is null ? null : $"{lms.ReadAt.LocalDateTime:ddd HH:mm}",
                     LmsUrl = lms?.Session.PageUrl,
                     LinkKind = linkKind,
+                    // Whose accounts this class runs under. On a PC that runs several people's
+                    // classes, that is the first thing to look at when one of them goes wrong.
+                    ZoomAccount = schedule?.AccountId ?? "",
+                    Coordinator = _classAccounts.Whose(group) is { Length: > 0 } whose ? whose : schedule?.Coordinator ?? "",
+                    LmsAccount = LmsEmailFor(group),
                     RecordLink = lms?.Session.RecordLink is { Length: > 0 } rl ? rl : null,
                     Material = material,
                 });
@@ -518,7 +553,38 @@ public sealed class LmsSessionsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// One step of one class, now. step: run, attendance, correct, complete, zoomRecording, sheet, link.
+    /// Opens this class's meeting, for when its own time came and it did not open - a browser
+    /// profile that was busy, Zoom asking for a person, a PC that was asleep.
+    ///
+    /// A class already live is never opened a second time: joining the same meeting twice is what
+    /// leaves two sessions in the list, each admitting and counting the same people.
+    /// </summary>
+    private async Task<(bool Ok, string Message)> OpenZoomAsync(string group, DateOnly date, TimeOnly start)
+    {
+        if (OpenMeeting == null) return (false, "This window cannot open meetings.");
+        if (ZoomAutoAdmit.Core.Meetings.LiveMeetings.IsLive(group))
+            return (false, $"{group} is already open on this PC; it was not opened a second time.");
+
+        var schedules = await _schedules.ListAsync();
+        var schedule = schedules.FirstOrDefault(s =>
+            string.Equals(string.IsNullOrWhiteSpace(s.GroupName) ? s.AccountId : s.GroupName, group, StringComparison.OrdinalIgnoreCase)
+            && s.Time.Hour == start.Hour && s.Time.Minute == start.Minute
+            && (s.OccurrenceDate is { } once ? once == date : s.Days.Includes(date.DayOfWeek)));
+        if (schedule == null)
+            return (false, $"{group} has no class on this PC at {start:HH\\:mm} on {date:ddd d MMM}, so there is no link to open.");
+
+        try
+        {
+            string said = await OpenMeeting(schedule.AccountId, schedule.MeetingUrl, schedule.PreferredEngine, CancellationToken.None);
+            // It opened: the class counts as opened today, so its own schedule does not open it again.
+            await _schedules.MarkOpenedAsync(schedule.Id, date, CancellationToken.None);
+            return (true, said);
+        }
+        catch (Exception ex) { return (false, $"{group}: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// One step of one class, now. step: zoom, run, attendance, correct, complete, zoomRecording, sheet, link.
     /// These are real: they press the LMS's own buttons, exactly as the automatic cycle does.
     /// </summary>
     public async Task<(bool Ok, string Message)> RunStepAsync(string group, DateOnly date, TimeOnly start, string step, string? link = null)
@@ -538,6 +604,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
                     await processor.RecordManualAsync(group, date, start, LmsFollowUpStep.RunSession, run.IsSuccess, run.Message);
                     return (run.IsSuccess, run.Message);
                 }),
+                "zoom" => await OpenZoomAsync(group, date, start),
                 "attendance" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.TakeAttendance),
                 "correct" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.CorrectAttendance),
                 "report" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.ZoomReportAttendance),

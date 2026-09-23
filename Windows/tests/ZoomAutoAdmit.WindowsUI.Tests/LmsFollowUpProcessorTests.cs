@@ -1,4 +1,4 @@
-using ZoomAutoAdmit.WebAutomation.Lms;
+﻿using ZoomAutoAdmit.WebAutomation.Lms;
 using ZoomAutoAdmit.WindowsUI.Services;
 using Xunit;
 
@@ -159,5 +159,38 @@ public sealed class LmsFollowUpProcessorTests : IDisposable
         await processor.ProcessDueAsync(now.AddMinutes(2));
         Assert.Equal(LmsFollowUpStep.ZoomReportAttendance, calls[^1]);
         Assert.Empty(await queue.ReadAsync());
+    }
+
+    [Fact]
+    public async Task AStepThatKeepsFailingIsSaidOnce()
+    {
+        // Nobody should have to watch the Sessions page to find out that a class stopped moving.
+        var queue = new LmsFollowUpQueue(_path);
+        var now = new DateTimeOffset(2026, 9, 23, 22, 1, 0, TimeSpan.FromHours(3));
+        await queue.ScheduleAsync("CAI5_IND1_G1", new DateOnly(2026, 9, 23), new TimeOnly(18, 0));
+        var processor = new LmsFollowUpProcessor(queue,
+            presentNames: (_, _) => Task.FromResult<IReadOnlyCollection<string>>([]),
+            runAction: (_, _, _, _) => Task.FromResult((false, "The LMS did not accept the sign-in.")));
+        List<(string Group, LmsFollowUpStep Step, int Attempts)> said = [];
+        void Heard(LmsFollowUp item, string why, int attempts) => said.Add((item.Group, item.Step, attempts));
+        LmsFollowUpProcessor.Stuck += Heard;
+        try
+        {
+            // Two tries: nothing is said yet, because a step that fails twice often comes right.
+            await processor.ProcessDueAsync(now);
+            await processor.ProcessDueAsync(now + LmsFollowUpQueue.RetryAfter(1) + TimeSpan.FromMinutes(1));
+            Assert.Empty(said);
+
+            await processor.ProcessDueAsync(now + TimeSpan.FromHours(2));
+            Assert.Contains(said, notice => notice.Step == LmsFollowUpStep.TakeAttendance);
+            Assert.All(said, notice => Assert.Equal("CAI5_IND1_G1", notice.Group));
+
+            // It keeps trying, and never says the same step twice - however many more tries it has.
+            await processor.ProcessDueAsync(now + TimeSpan.FromHours(2));
+            await processor.ProcessDueAsync(now + TimeSpan.FromHours(4));
+            Assert.DoesNotContain(said.GroupBy(n => n.Step), step => step.Count() > 1);
+            Assert.All(said, notice => Assert.True(notice.Attempts >= LmsFollowUpProcessor.TriesBeforeSaying));
+        }
+        finally { LmsFollowUpProcessor.Stuck -= Heard; }
     }
 }

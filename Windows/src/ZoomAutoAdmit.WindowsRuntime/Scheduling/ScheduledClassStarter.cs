@@ -37,7 +37,12 @@ public sealed class ScheduledClassStarter(IScheduledMeetingRunner runner, Window
     }
 
     /// <summary>Null when another process is opening it, or it is already open, disabled or gone.</summary>
-    public async Task<MeetingSession?> StartAsync(MeetingSchedule schedule, DateOnly day, DateTimeOffset now, CancellationToken token = default)
+    /// <param name="reopen">
+    /// The class opened earlier today and its meeting is no longer there. Its "opened today" mark is
+    /// then not a reason to stand down - that mark is what it is for the first opening.
+    /// </param>
+    public async Task<MeetingSession?> StartAsync(MeetingSchedule schedule, DateOnly day, DateTimeOffset now,
+        CancellationToken token = default, bool reopen = false)
     {
         using var claim = TryClaim(schedule.Id, day);
         if (claim == null)
@@ -45,8 +50,28 @@ public sealed class ScheduledClassStarter(IScheduledMeetingRunner runner, Window
             if (Reported.TryAdd($"{schedule.Id:N}{day}", 0)) _log($"{schedule.Name}: already being opened elsewhere; not opened twice.");
             return null;
         }
-        var current = (await store.ListAsync(token)).FirstOrDefault(s => s.Id == schedule.Id);
-        if (current == null || !current.Enabled || current.LastTriggeredDate == day) return null;
+        var all = await store.ListAsync(token);
+        var current = all.FirstOrDefault(s => s.Id == schedule.Id);
+        if (current == null || !current.Enabled || (current.LastTriggeredDate == day && !reopen)) return null;
+
+        // One class, however many entries name it: the same group at the same time is opened once.
+        // The claim below is per class, and an entry whose twin already opened today stands down.
+        string group = string.IsNullOrWhiteSpace(current.GroupName) ? current.AccountId : current.GroupName;
+        using var classClaim = TryClaimClass(group, day, current.Time);
+        if (classClaim == null)
+        {
+            if (Reported.TryAdd($"{schedule.Id:N}{day}", 0)) _log($"{current.Name}: the same class is being opened by another entry; not opened twice.");
+            return null;
+        }
+        var twin = reopen ? null : (await store.ListAsync(token)).FirstOrDefault(s => s.Id != current.Id && s.LastTriggeredDate == day
+            && string.Equals(string.IsNullOrWhiteSpace(s.GroupName) ? s.AccountId : s.GroupName, group, StringComparison.OrdinalIgnoreCase)
+            && s.Time.Hour == current.Time.Hour && s.Time.Minute == current.Time.Minute);
+        if (twin != null)
+        {
+            await store.MarkOpenedAsync(current.Id, day, token);
+            _log($"{current.Name}: already opened today as \"{twin.Name}\"; not opened twice.");
+            return null;
+        }
 
         DateTime classStart = day.ToDateTime(current.Time);
         DateTime deadline = classStart + GiveUpAfterStart;
@@ -88,12 +113,21 @@ public sealed class ScheduledClassStarter(IScheduledMeetingRunner runner, Window
     }
 
     /// <summary>Held while a class is being opened; any other process (or thread) gets null.</summary>
-    public static IDisposable? TryClaim(Guid scheduleId, DateOnly day)
+    public static IDisposable? TryClaim(Guid scheduleId, DateOnly day) => TryLock($"{scheduleId:N}-{day:yyyyMMdd}");
+
+    /// <summary>The same, for the class itself: its group at its time on that day, whichever entry opens it.</summary>
+    public static IDisposable? TryClaimClass(string group, DateOnly day, TimeOnly time)
+    {
+        string safe = string.Concat(group.Trim().ToUpperInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '_'));
+        return TryLock($"class-{safe}-{day:yyyyMMdd}-{time:HHmm}");
+    }
+
+    private static IDisposable? TryLock(string name)
     {
         try
         {
             Directory.CreateDirectory(ClaimFolder);
-            string path = Path.Combine(ClaimFolder, $"{scheduleId:N}-{day:yyyyMMdd}.lock");
+            string path = Path.Combine(ClaimFolder, $"{name}.lock");
             return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
         }
         catch (IOException) { return null; }

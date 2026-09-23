@@ -110,7 +110,9 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
                 WebHeaded = AdmissionControl.ShowWebBrowser,
                 // A profile not signed in to Zoom joins as a guest; with the account's saved password
                 // it is signed in as the host first.
-                WebSignInCredential = string.IsNullOrWhiteSpace(context.Account.CredentialReference) ? null : context.Account.CredentialReference,
+                WebSignInCredential = ZoomAutoAdmit.WebAutomation.ZoomSignInCredential.ResolveReference(
+                    context.Account.CredentialReference, context.Account.AccountId)
+                    ?? (string.IsNullOrWhiteSpace(context.Account.CredentialReference) ? null : context.Account.CredentialReference),
             };
             // Browser/session lifetime is explicitly owned by this launcher. Do not link it to
             // the short-lived meeting-start command token after startup has been accepted.
@@ -119,14 +121,20 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
             // A page that stays blank is a failed start, not a wait without end: after JoinTimeout
             // the browser is closed and the start reports failure, so the other engine can try.
             var starting = _engine.StartAsync(_options, _sessionCancellation.Token);
-            var finished = await Task.WhenAny(starting, Task.Delay(JoinTimeout, cancellationToken));
+            // With no Zoom password saved, the profile can only become host by a person signing in
+            // in that window - which takes longer than a blank page deserves. Closing it at three
+            // minutes threw away a sign-in half typed, over and over (2026-09-21, G1 17:45-18:02).
+            var waitFor = _options.WebSignInCredential is { } reference && ZoomAutoAdmit.WebAutomation.ZoomSignInCredential.Read(reference) != null
+                ? JoinTimeout
+                : SignInByHandTimeout;
+            var finished = await Task.WhenAny(starting, Task.Delay(waitFor, cancellationToken));
             if (finished != starting)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 _sessionCancellation.Cancel();
                 try { await starting; } catch { }
                 await StopEngineQuietlyAsync();
-                return MeetingOperationResult.Failure($"The Web meeting did not open within {JoinTimeout.TotalMinutes:0} minutes.");
+                return MeetingOperationResult.Failure($"The Web meeting did not open within {waitFor.TotalMinutes:0} minutes.");
             }
             await starting;
             _joined = true;
@@ -138,6 +146,9 @@ public sealed class WindowsWebMeetingLauncher : IMeetingEngineRuntime, IAsyncDis
 
     /// <summary>How long a Web meeting may take to open before another way is tried.</summary>
     public static TimeSpan JoinTimeout { get; set; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>How long a window waiting for a person to sign in to Zoom is left open.</summary>
+    public static TimeSpan SignInByHandTimeout { get; set; } = TimeSpan.FromMinutes(12);
 
     private async Task StopEngineQuietlyAsync()
     {

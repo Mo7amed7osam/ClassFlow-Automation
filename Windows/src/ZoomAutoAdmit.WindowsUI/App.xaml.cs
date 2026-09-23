@@ -88,8 +88,42 @@ public partial class App : Application
                 Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show(notice); } catch { } });
             WindowsUiRuntimeLog.Write("SERVICES", "Windows runtime services initialized.");
             // A class that could not be opened after every try is said out loud, not only logged.
+            // The same notices, sent on as well as shown: a webhook (n8n) turns them into an e-mail,
+            // so nobody has to be at this PC to learn that a class needs them.
+            Services.ClassNotifier.Current ??= new Services.ClassNotifier();
             ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduledClassStarter.GaveUp += (schedule, why) =>
-                Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show("Class did not open", $"{schedule.Name}: {why}. Open it by hand.", "#F05252"); } catch { } });
+                Services.ClassNotifier.Current?.Send(new Services.ClassNotice(
+                    "class-did-not-open", $"{schedule.Name} did not open", why)
+                {
+                    Group = schedule.GroupName ?? schedule.AccountId,
+                    Coordinator = schedule.Coordinator,
+                    Date = (schedule.OccurrenceDate ?? DateOnly.FromDateTime(DateTime.Now)).ToString("yyyy-MM-dd"),
+                    Start = schedule.Time.ToString("HH:mm"),
+                });
+            Services.LmsFollowUpProcessor.Stuck += (item, why, attempts) =>
+                Services.ClassNotifier.Current?.Send(new Services.ClassNotice(
+                    "step-stuck", $"{item.Group}: {item.Step} is stuck", why)
+                {
+                    Group = item.Group,
+                    Date = item.SessionDate.ToString("yyyy-MM-dd"),
+                    Start = item.SessionStart.ToString("HH:mm"),
+                    Step = item.Step.ToString(),
+                    Attempts = attempts,
+                });
+            ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduledClassStarter.GaveUp += (schedule, why) =>
+                Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show("Class did not open", $"{schedule.Name}: {why}. Open it from its card with “Open Zoom now”.", "#F05252"); } catch { } });
+            // A step that keeps failing - Run Session, attendance, the recording - is said once, so
+            // nobody has to watch the Sessions page to notice that something stopped moving.
+            Services.LmsFollowUpProcessor.Stuck += (item, why, attempts) =>
+                Dispatcher.BeginInvoke(() =>
+                {
+                    try
+                    {
+                        Views.DesktopToast.Show($"{item.Group}: {item.Step} is stuck",
+                            $"{attempts} tries, the last one: {why} It keeps trying; its card is on the Sessions page.", "#F5A524");
+                    }
+                    catch { }
+                });
             _viewModel = new MainViewModel(_service);
             // Saving a profile says so on the desktop, naming the group it was saved for: with one
             // type set up per group, seeing which one was written is the whole confirmation.
