@@ -17,7 +17,7 @@ export function LiveSessionsPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Live sessions" description="Cloud meetings being opened or monitored now. Attendance snapshots update every 10 seconds." />
+      <PageHeader title="Meetings" description="The cloud equivalent of the Windows Meetings and Waiting Room pages. Attendance snapshots update every 10 seconds." />
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard label="Live now" value={running} hint="Workers holding a Zoom meeting" tone={running ? 'green' : 'slate'} />
         <StatCard label="Starting" value={queued} hint="Waiting for, or assigned to, a worker" tone={queued ? 'blue' : 'slate'} />

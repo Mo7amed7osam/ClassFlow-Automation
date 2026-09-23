@@ -51,9 +51,9 @@ const adminGroups = (call: Call) =>
 
 describe('menus by role', () => {
   it('gives the admin users and agents, a coordinator only their groups', () => {
-    expect(navFor('admin', 2).map((i) => i.label)).toEqual(['Overview', 'Sessions', 'Live sessions', 'What machines did', 'Run classes', 'Attendance', 'Recordings', 'Students', 'Groups', 'Users', 'Zoom accounts', 'LMS sign-ins', 'Opens by itself', 'Who is co-host', 'Agents', 'Settings'])
+    expect(navFor('admin', 2).map((i) => i.label)).toEqual(['Overview', 'Sessions', 'Meetings', 'Schedules', 'Session roles', 'Attendance', 'Recordings', 'Students', 'Groups', 'Coordinators & groups', 'Users', 'Server', 'Accounts', 'LMS accounts', 'Logs', 'Settings'])
     expect(navFor('admin', 2).find((i) => i.label === 'Users')?.badge).toBe(2)
-    expect(navFor('coordinator').map((i) => i.label)).toEqual(['Overview', 'Sessions', 'Live sessions', 'What machines did', 'Attendance', 'Recordings', 'Students', 'My groups', 'Zoom accounts', 'LMS sign-ins', 'Opens by itself', 'Who is co-host', 'Settings'])
+    expect(navFor('coordinator').map((i) => i.label)).toEqual(['Overview', 'Sessions', 'Meetings', 'Schedules', 'Session roles', 'Attendance', 'Recordings', 'Students', 'Groups & students', 'Accounts', 'LMS accounts', 'Logs', 'Settings'])
   })
 
   it('shows a coordinator their own overview, without agents or jobs', async () => {
@@ -87,7 +87,7 @@ describe('menus by role', () => {
       overview({ agents: { total: 0, online: 0, busy: 0 }, jobs: { queued: 0, assigned: 0, running: 0, succeededLast24h: 0, failedLast24h: 0 }, groups: 3 }), noRecordings)
     renderPage(<App />, '/')
     expect(await screen.findAllByLabelText('2 waiting')).not.toHaveLength(0)
-    expect(screen.getAllByRole('link', { name: /Agents/ }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('link', { name: /Server/ }).length).toBeGreaterThan(0)
   })
 })
 

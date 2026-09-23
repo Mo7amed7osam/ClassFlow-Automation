@@ -13,6 +13,7 @@
   }
 
   body {
-    @apply bg-slate-50 text-slate-800 antialiased;
+    background: #f3f5f9;
+    @apply text-slate-800 antialiased;
   }
 }
