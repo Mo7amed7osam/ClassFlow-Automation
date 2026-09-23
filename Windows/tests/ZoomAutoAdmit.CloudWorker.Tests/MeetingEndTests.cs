@@ -35,6 +35,9 @@ public class MeetingEndTests
     {
         public DateTimeOffset Now { get; set; } = ClassStart;
 
+        /// <summary>Called with every wait the watch asks for, before the clock moves on.</summary>
+        public Action<TimeSpan>? OnWait { get; set; }
+
         /// <summary>
         /// The wait a class spends is over at once, with the clock moved on by it - but the watch has
         /// to give the thread back each time, or a class that is never over would never return here.
@@ -42,6 +45,7 @@ public class MeetingEndTests
         public async Task WaitAsync(TimeSpan span, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
+            OnWait?.Invoke(span);
             Now += span;
             await Task.Yield();
         }
@@ -140,28 +144,20 @@ public class MeetingEndTests
         // joins and unmutes. The class is kept, and the watch goes back to waiting.
         var room = new Room("eyouth coordinator,(Host, me), Computer audio muted,Video off");
         var (end, clock, _, ends) = Build(room);
-        int reads = 0;
-        var watching = Task.Run(async () =>
+        clock.OnWait = span =>
         {
-            using var stop = new CancellationTokenSource();
-            var task = end.WatchAsync(stop.Token);
-            while (!task.IsCompleted && clock.Now - ClassStart < TimeSpan.FromHours(4))
-            {
-                if (room.Reads > reads)
-                {
-                    reads = room.Reads;
-                    if (clock.Now - ClassStart >= AutoEndRule.EndAfter)
-                        room.Rows = [
-                            "eyouth coordinator,(Host, me), Computer audio muted,Video off",
-                            "Mostafa Badr,(Guest), Computer audio unmuted,Video on"];
-                }
-                await Task.Yield();
-            }
-            stop.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
-        });
-        await watching;
+            if (span != MeetingEnd.LastLook) return;
+            room.Rows = [
+                "eyouth coordinator,(Host, me), Computer audio muted,Video off",
+                "Mostafa Badr,(Guest), Computer audio unmuted,Video on"];
+        };
 
+        using var stop = new CancellationTokenSource();
+        var watching = end.WatchAsync(stop.Token);
+        while (clock.Now - ClassStart < TimeSpan.FromHours(5) && !watching.IsCompleted) await Task.Yield();
+        stop.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => watching);
         Assert.Equal(0, ends());
     }
 
