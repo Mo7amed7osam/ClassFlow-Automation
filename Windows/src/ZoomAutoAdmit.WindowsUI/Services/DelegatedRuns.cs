@@ -214,9 +214,28 @@ public sealed class DelegatedRuns
             try
             {
                 _log($"{delegation.DisplayName}: reading their LMS timetable ({from:yyyy-MM-dd} to {to:yyyy-MM-dd}).");
-                var listed = await _readTimetable(new LmsCredentialStore(entry.Target, entry.Profile), from, to, groups, token);
+                // Their own account sees their own classes, so the whole list is read and narrowed
+                // here. Narrowing inside the read threw away, without a word, every session of a
+                // group the dashboard does not know they have - which is how a class on Hosam's
+                // LMS was nowhere in the app (2026-09-23).
+                var listed = await _readTimetable(new LmsCredentialStore(entry.Target, entry.Profile), from, to, [], token);
+                var theirs = groups.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var notTheirs = listed
+                    .Where(session => session.Date != null && !theirs.Contains(session.Group))
+                    .GroupBy(session => session.Group, StringComparer.OrdinalIgnoreCase)
+                    .Select(byGroup => $"{byGroup.Key} ({byGroup.Count()})")
+                    .ToArray();
+                if (notTheirs.Length > 0)
+                {
+                    string missing = $"{delegation.DisplayName}: their LMS also lists {string.Join(", ", notTheirs)} - " +
+                                     "those groups are not assigned to them here, so their classes are not run. " +
+                                     "Assign the group on Coordinators & groups to include it.";
+                    lock (said) problems.Add(missing);
+                    _log(missing);
+                }
                 var rows = listed
-                    .Where(session => session.Date != null && !session.ListStatus.Equals("cancelled", StringComparison.OrdinalIgnoreCase))
+                    .Where(session => session.Date != null && theirs.Contains(session.Group)
+                                      && !session.ListStatus.Equals("cancelled", StringComparison.OrdinalIgnoreCase))
                     .Select(session => (object)new
                     {
                         group = session.Group,

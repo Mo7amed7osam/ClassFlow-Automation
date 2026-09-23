@@ -1,4 +1,5 @@
-﻿using ZoomAutoAdmit.WebAutomation.Lms;
+﻿using ZoomAutoAdmit.Core.Meetings;
+using ZoomAutoAdmit.WebAutomation.Lms;
 using ZoomAutoAdmit.WindowsUI.Services;
 using Xunit;
 
@@ -55,7 +56,7 @@ public sealed class LmsFollowUpProcessorTests : IDisposable
 
         // The meeting ended: its final correction is brought forward and everything runs.
         live = false;
-        await queue.ScheduleFinalAttendanceAsync("CAI5_AIS4_S7", new DateOnly(2026, 9, 14), new TimeOnly(19, 0), now.AddMinutes(2));
+        await queue.ScheduleFinalAttendanceAsync("CAI5_AIS4_S7", new DateOnly(2026, 9, 14), new TimeOnly(19, 0), now.AddMinutes(2), completeNotBefore: null);
         await processor.ProcessDueAsync(now.AddMinutes(3));
         Assert.Equal([LmsFollowUpStep.TakeAttendance, LmsFollowUpStep.CorrectAttendance, LmsFollowUpStep.CompleteSession, LmsFollowUpStep.ZoomReportAttendance, LmsFollowUpStep.AttachZoomRecording], calls);
         Assert.Empty(await queue.ReadAsync());
@@ -69,7 +70,7 @@ public sealed class LmsFollowUpProcessorTests : IDisposable
         var due = new DateTimeOffset(2026, 9, 14, 22, 32, 0, TimeSpan.FromHours(3));
 
         // Nothing is owed any more (all done at 3 h), and the meeting only ends now.
-        await queue.ScheduleFinalAttendanceAsync("CAI5_AIS4_S7", day, new TimeOnly(19, 0), due);
+        await queue.ScheduleFinalAttendanceAsync("CAI5_AIS4_S7", day, new TimeOnly(19, 0), due, completeNotBefore: null);
 
         // Both halves of the correction come back: from the snapshots, and from Zoom's report.
         var items = await queue.ReadAsync();
@@ -192,5 +193,45 @@ public sealed class LmsFollowUpProcessorTests : IDisposable
             Assert.All(said, notice => Assert.True(notice.Attempts >= LmsFollowUpProcessor.TriesBeforeSaying));
         }
         finally { LmsFollowUpProcessor.Stuck -= Heard; }
+    }
+
+    [Fact]
+    public async Task AMeetingThatClosedEarlyDoesNotCompleteTheClassEarly()
+    {
+        // 2026-09-23: the browser crashed an hour into a 19:00 class, and Complete Session - which
+        // cannot be undone on the LMS - was pressed at 20:14 while the class was still going on.
+        var queue = new LmsFollowUpQueue(_path);
+        var day = new DateOnly(2026, 9, 23);
+        var start = new TimeOnly(19, 0);
+        var classAt = new DateTimeOffset(2026, 9, 23, 19, 0, 0, TimeSpan.FromHours(3));
+        await queue.ScheduleAsync("CAI5_AIS4_S8", day, start);
+
+        await queue.ScheduleFinalAttendanceAsync("CAI5_AIS4_S8", day, start, classAt.AddMinutes(74),
+            completeNotBefore: classAt.AddHours(3));
+
+        var items = await queue.ReadAsync();
+        var complete = Assert.Single(items, item => item.Step == LmsFollowUpStep.CompleteSession);
+        Assert.Equal(classAt.AddHours(3), complete.DueAt);
+        // The attendance, which can be corrected again afterwards, still runs at once.
+        var correction = Assert.Single(items, item => item.Step == LmsFollowUpStep.CorrectAttendance);
+        Assert.Equal(classAt.AddMinutes(74), correction.DueAt);
+    }
+
+    [Fact]
+    public async Task ACoachingClassIsCompletedWithItsMeeting()
+    {
+        var queue = new LmsFollowUpQueue(_path);
+        var day = new DateOnly(2026, 9, 23);
+        var start = new TimeOnly(18, 0);
+        var ended = new DateTimeOffset(2026, 9, 23, 19, 30, 0, TimeSpan.FromHours(3));
+        await queue.ScheduleAsync("CAI5_IND1_G1", day, start);
+
+        // Coaching is the short one: no floor is given, so its class closes with its meeting.
+        await queue.ScheduleFinalAttendanceAsync("CAI5_IND1_G1", day, start, ended, completeNotBefore: null);
+
+        var complete = Assert.Single(await queue.ReadAsync(), item => item.Step == LmsFollowUpStep.CompleteSession);
+        Assert.Equal(ended, complete.DueAt);
+        Assert.True(ClassCompletionRule.IsCoaching("CAI5_IND1_G1 • 30.0 • Coaching"));
+        Assert.False(ClassCompletionRule.IsCoaching("CAI5_AIS4_S8 • Week 9 - Session 3"));
     }
 }

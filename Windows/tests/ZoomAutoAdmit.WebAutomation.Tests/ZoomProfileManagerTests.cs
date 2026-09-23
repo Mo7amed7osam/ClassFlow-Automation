@@ -61,6 +61,27 @@ public sealed class ZoomProfileManagerTests : IDisposable
         Assert.Throws<ArgumentException>(() => manager.GetOrCreate(name));
     }
 
+    [Fact]
+    public void ACopyOfASignedInProfileCarriesItsSessionButNotTheClaimToBeSignedIn()
+    {
+        var manager = new ZoomProfileManager(_root);
+        var account = manager.GetOrCreate("s8");
+        File.WriteAllText(Path.Combine(account.DirectoryPath, "Preferences"), "{}");
+        Directory.CreateDirectory(Path.Combine(account.DirectoryPath, "Default"));
+        File.WriteAllText(Path.Combine(account.DirectoryPath, "Default", "Cookies"), "the session");
+        File.WriteAllText(account.ReadyMarkerPath, "signed in");
+
+        var copy = manager.GetOrCreate("s8-2");
+
+        // What Zoom might still accept comes along...
+        Assert.True(File.Exists(Path.Combine(copy.DirectoryPath, "Default", "Cookies")));
+        // ...but a copy is never taken for signed in: Zoom does not always accept a session in
+        // another profile, and one that claims to be signed in is never asked to sign in, so it
+        // joined the class as a guest and admitted nobody (2026-09-23, s8-2).
+        Assert.False(copy.HasReusableSession);
+        Assert.False(File.Exists(Path.Combine(copy.DirectoryPath, ".zoom-session-ready")));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);

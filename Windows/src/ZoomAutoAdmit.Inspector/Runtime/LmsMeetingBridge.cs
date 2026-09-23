@@ -118,13 +118,38 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    /// <summary>The meeting closed: its class's late-joiner correction runs once more, with everyone seen until the end.</summary>
-    private async Task FinalAttendanceAsync(string group, DateOnly day, TimeOnly start)
+    /// <summary>
+    /// What this PC calls a class, for telling a Coaching session from the rest. The schedules are
+    /// read; a class this PC does not have is simply unnamed, and then the three hours apply.
+    /// </summary>
+    public static Func<string, DateOnly, TimeOnly, string?> ClassName { get; set; } = NameFromSchedules;
+
+    private static string? NameFromSchedules(string group, DateOnly day, TimeOnly start)
     {
         try
         {
+            var schedules = new ZoomAutoAdmit.WindowsRuntime.Scheduling.WindowsMeetingScheduleStore()
+                .ListAsync().GetAwaiter().GetResult();
+            return schedules.FirstOrDefault(s =>
+                string.Equals(string.IsNullOrWhiteSpace(s.GroupName) ? s.AccountId : s.GroupName, group, StringComparison.OrdinalIgnoreCase)
+                && s.Time.Hour == start.Hour && s.Time.Minute == start.Minute
+                && (s.OccurrenceDate is { } once ? once == day : s.Days.Includes(day.DayOfWeek)))?.Name;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>The meeting closed: its class's late-joiner correction runs once more, with everyone seen until the end.</summary>
+    private async Task FinalAttendanceAsync(string group, DateOnly day, TimeOnly start, string? className = null)
+    {
+        try
+        {
+            className ??= ClassName(group, day, start);
             var due = DateTimeOffset.Now + FinalAttendanceAfter;
-            await _queue.ScheduleFinalAttendanceAsync(group, day, start, due);
+            // Complete Session cannot be undone there, so it waits out the class's own hours -
+            // a meeting that closed early is not the class being over (2026-09-23, S8 at 19:00
+            // completed at 20:14 after the browser crashed).
+            var notBefore = ClassCompletionRule.NotBefore(className, day, start, DateTimeOffset.Now.Offset);
+            await _queue.ScheduleFinalAttendanceAsync(group, day, start, due, notBefore);
             _log($"The meeting of {group} ended; the {start.ToString("HH:mm")} class's attendance is corrected once more at {due.LocalDateTime.ToString("HH:mm")}.");
         }
         catch (Exception ex) { _log($"The final attendance for {group} could not be written down: {ex.Message}"); }

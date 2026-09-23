@@ -122,7 +122,11 @@ public sealed class ZoomDesktopMeetingEnder
             if (!zoom.Contains((int)pid)) return true;
             var cls = new StringBuilder(128);
             NativeMethods.GetClassName(h, cls, 128);
-            if (cls.ToString() == MeetingWindowClass) { found = h; return false; }
+            // Visible, because Zoom keeps windows of this class after the meeting is over - hidden,
+            // but there. Taking them for a meeting left a class "running" for hours after it ended
+            // (2026-09-23, S8 from 20:11 to past 23:00). A minimised meeting is still visible to
+            // Windows, so nothing real is missed.
+            if (cls.ToString() == MeetingWindowClass && NativeMethods.IsWindowVisible(h)) { found = h; return false; }
             return true;
         }, IntPtr.Zero);
         return found;

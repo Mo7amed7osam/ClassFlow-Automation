@@ -18,6 +18,8 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
     // Starts in flight. A session spends a minute or more in Starting, and Stop has to reach it
     // there: until the run returns there is no MeetingSession to end.
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _starting = new();
+    /// <summary>The accounts whose meeting is being opened right now, so one is not opened twice.</summary>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _openingAccounts = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _statusSync = new();
     private UiActionStatus _currentStatus = new("Application startup", "Ready", string.Empty, false, DateTimeOffset.Now);
 
@@ -131,6 +133,25 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
             EnginePreference.Web => SessionEngineType.Web,
             _ => null
         };
+        // A class that is already open is never opened a second time. Pressing Start again took
+        // the same browser profile and closed the meeting that was running on it (2026-09-23,
+        // S8 at 20:10, Start pressed twice within half a second).
+        var known = (await GetAccountsAsync(cancellationToken)).FirstOrDefault(account =>
+            account.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase));
+        string group = known?.GroupName is { Length: > 0 } named ? named : accountId;
+        if (LiveMeetings.IsLive(group))
+        {
+            string already = $"{group} is already open on this PC. Stop it first, or leave it running.";
+            Report("Start meeting", "Not opened twice", already, false);
+            throw new InvalidOperationException(already);
+        }
+        if (!_openingAccounts.TryAdd(accountId, DateTimeOffset.Now))
+        {
+            string opening = $"{group} is already being opened; give it a moment.";
+            Report("Start meeting", "Not opened twice", opening, false);
+            throw new InvalidOperationException(opening);
+        }
+
         // Choosing the id here, rather than letting the orchestrator invent one, is what lets Stop
         // find and cancel this run while it is still starting.
         Guid sessionId = Guid.NewGuid();
@@ -139,9 +160,7 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
         MeetingSession session;
         try
         {
-            var configured = (await GetAccountsAsync(cancellationToken)).FirstOrDefault(account =>
-                account.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase));
-            string groupId = configured?.GroupName ?? accountId;
+            string groupId = known?.GroupName ?? accountId;
             // The orchestration contains synchronous UI Automation and keyboard work (account
             // switch, join checks, mic/camera) that can take tens of seconds. Awaiting it directly
             // resumes every step on the WPF dispatcher thread and freezes the window ("not
@@ -167,6 +186,7 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
         finally
         {
             _starting.TryRemove(sessionId, out _);
+            _openingAccounts.TryRemove(accountId, out _);
             startCancellation.Dispose();
         }
 

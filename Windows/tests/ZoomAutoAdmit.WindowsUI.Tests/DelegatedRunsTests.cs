@@ -122,9 +122,15 @@ public sealed class DelegatedRunsTests : IDisposable
         new(api, service, _directory, _classes, _zoom,
             // Unless a test is about the timetable itself, each coordinator's LMS lists their own
             // one class today - what the plan in these tests already holds.
-            readTimetable: timetable ?? ((_, _, _, groups, _) => Task.FromResult<IReadOnlyList<LmsSessionRunner.LmsSessionInfo>>(
-                [.. groups.Select(g => new LmsSessionRunner.LmsSessionInfo(
-                    g, Today, new TimeOnly(19, 0), "36 • Technical", "pending", null, "", "", "unknown", null, []))])),
+            readTimetable: timetable ?? ((signIn, _, _, _, _) =>
+            {
+                // Their own sign-in shows their own classes: one today per group they were given.
+                var who = api.Delegations.FirstOrDefault(d =>
+                    signIn.Profile?.Contains(d.DisplayName, StringComparison.OrdinalIgnoreCase) == true);
+                return Task.FromResult<IReadOnlyList<LmsSessionRunner.LmsSessionInfo>>(
+                    [.. (who?.GroupList ?? []).Where(g => !g.Archived).Select(g => new LmsSessionRunner.LmsSessionInfo(
+                        g.Name, Today, new TimeOnly(19, 0), "36 • Technical", "pending", null, "", "", "unknown", null, []))]);
+            }),
             log: _ => { }, today: () => Today);
 
     // ------------------------------------------------------------------ nothing to do
@@ -436,10 +442,14 @@ public sealed class DelegatedRunsTests : IDisposable
                 lock (signedInAs) signedInAs.Add(signIn.Profile);
                 Assert.Equal(Today.AddDays(-DelegatedRuns.DaysBack), from);
                 Assert.Equal(Today.AddDays(DelegatedRuns.DaysAhead), to);
+                // Nothing is asked for by group: their own account lists their own classes, and
+                // whose each one is, is decided here.
+                Assert.Empty(groups);
+                string mine = signIn.Profile!.Contains("mona", StringComparison.OrdinalIgnoreCase) ? "CAI5_AIS4_S7" : "CAI5_AIS4_S8";
                 return Task.FromResult<IReadOnlyList<LmsSessionRunner.LmsSessionInfo>>(
                 [
-                    new(groups.First(), Today, new TimeOnly(19, 0), "36 • Technical", "pending", null, "", "", "unknown", null, []),
-                    new(groups.First(), Today.AddDays(7), new TimeOnly(19, 0), "39 • Technical", "pending", null, "", "", "unknown", null, []),
+                    new(mine, Today, new TimeOnly(19, 0), "36 • Technical", "pending", null, "", "", "unknown", null, []),
+                    new(mine, Today.AddDays(7), new TimeOnly(19, 0), "39 • Technical", "pending", null, "", "", "unknown", null, []),
                 ]);
             }).SyncAsync(readTimetables: true);
 
@@ -483,6 +493,30 @@ public sealed class DelegatedRunsTests : IDisposable
 
         await runs.SyncAsync(readTimetables: true);   // somebody pressed Refresh
         Assert.Equal(2, api.Imported.Count);
+    }
+
+    [Fact]
+    public async Task AClassOfAGroupTheyWereNotGivenIsSaidRatherThanDroppedInSilence()
+    {
+        // 2026-09-23: a class sat on Hosam's LMS and was nowhere in the app. The read kept only the
+        // groups the dashboard knows he has, and said nothing at all about the rest.
+        var api = new FakeCentral();
+        api.Delegations.Add(Person("u-hosam", "Hosam", Email("hosam"), ["CAI5_IND1_G1"], "CAI5_IND1_G1"));
+
+        var report = await Runs(api, new UiService("CAI5_IND1_G1"),
+            timetable: (_, _, _, _, _) => Task.FromResult<IReadOnlyList<LmsSessionRunner.LmsSessionInfo>>(
+            [
+                new("CAI5_IND1_G1", Today, new TimeOnly(18, 0), "Week 10 - Session 2", "pending", null, "", "", "unknown", null, []),
+                new("CAI5_IND1_G2", Today, new TimeOnly(19, 0), "Week 9 - Session 3", "pending", null, "", "", "unknown", null, []),
+                new("CAI5_IND1_G2", Today.AddDays(2), new TimeOnly(19, 0), "Week 10 - Session 1", "pending", null, "", "", "unknown", null, []),
+            ])).SyncAsync(readTimetables: true);
+
+        // Only the group he was given is run...
+        Assert.Equal(1, Assert.Single(api.Imported).Rows);
+        // ...and the ones left out are named, with how many, so somebody can assign the group.
+        string said = Assert.Single(report.Problems.Where(p => p.Contains("CAI5_IND1_G2")));
+        Assert.Contains("(2)", said);
+        Assert.Contains("not assigned to them", said);
     }
 
     // ------------------------------------------------------------------ the fake app

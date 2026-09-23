@@ -202,8 +202,16 @@ public sealed class LmsFollowUpQueue
     /// meeting saw until its last minute (added again when it was already done at 3 h), and the
     /// steps after it are brought forward to the same moment. Complete Session is never added back.
     /// </summary>
+    /// <summary>
+    /// The meeting closed, so what is still owed is brought forward - except Complete Session,
+    /// which is not brought before <paramref name="completeNotBefore"/>. Completing a class cannot
+    /// be undone on the LMS, and a meeting can close long before the class is over: a browser that
+    /// crashed, a host who dropped, a class still running on somebody else's Zoom. On 2026-09-23
+    /// that marked a 19:00 class complete at 20:14.
+    /// </summary>
     public Task<IReadOnlyList<LmsFollowUp>> ScheduleFinalAttendanceAsync(
-        string group, DateOnly date, TimeOnly start, DateTimeOffset due, CancellationToken cancellationToken = default) =>
+        string group, DateOnly date, TimeOnly start, DateTimeOffset due,
+        DateTimeOffset? completeNotBefore, CancellationToken cancellationToken = default) =>
         UpdateAsync(items =>
         {
             bool IsClass(LmsFollowUp item) => item.Group.Equals(group, StringComparison.OrdinalIgnoreCase) &&
@@ -214,11 +222,15 @@ public sealed class LmsFollowUpQueue
             var report = Build(group, date, start, LmsFollowUpStep.ZoomReportAttendance, due);
             if (items.FindIndex(item => item.Id == report.Id) < 0) items.Add(report);
             for (int i = 0; i < items.Count; i++)
-                if (IsClass(items[i]) &&
-                    items[i].Step is LmsFollowUpStep.CorrectAttendance or LmsFollowUpStep.CompleteSession
-                        or LmsFollowUpStep.ZoomReportAttendance or LmsFollowUpStep.AttachZoomRecording &&
-                    items[i].DueAt > due)
-                    items[i] = items[i] with { DueAt = due };
+            {
+                if (!IsClass(items[i])) continue;
+                if (items[i].Step is not (LmsFollowUpStep.CorrectAttendance or LmsFollowUpStep.CompleteSession
+                        or LmsFollowUpStep.ZoomReportAttendance or LmsFollowUpStep.AttachZoomRecording)) continue;
+                var moveTo = items[i].Step == LmsFollowUpStep.CompleteSession && completeNotBefore is { } floor && due < floor
+                    ? floor
+                    : due;
+                if (items[i].DueAt > moveTo) items[i] = items[i] with { DueAt = moveTo };
+            }
             return items;
         }, cancellationToken);
 

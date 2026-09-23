@@ -119,10 +119,17 @@ public sealed class ZoomProfileManager
             catch (UnauthorizedAccessException) { }
         }
 
-        // Carry the sign-in marker over only when the copy actually produced a profile.
-        string sourceMarker = Path.Combine(sourceDir, ReadyMarkerFileName);
-        if (copied > 0 && File.Exists(sourceMarker))
-            File.Copy(sourceMarker, Path.Combine(targetDir, ReadyMarkerFileName), overwrite: true);
+        // The sign-in marker is deliberately NOT carried over. Zoom does not always accept a
+        // session copied into another profile, and a copy that claims to be signed in is never
+        // asked to sign in - so it joined the class as a guest, and a guest admits nobody
+        // (2026-09-23, s8-2). Without the marker the copy checks, which costs a couple of seconds
+        // and signs itself in with the account's saved password when the copied session is refused.
+        string carried = Path.Combine(targetDir, ReadyMarkerFileName);
+        if (File.Exists(carried))
+        {
+            try { File.Delete(carried); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
         ConsoleLogger.Info($"[WEB_PROFILE] Seeded a per-session browser profile with {copied} file(s) from '{Path.GetFileName(sourceDir)}'.");
     }
 
