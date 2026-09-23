@@ -402,6 +402,24 @@ describe('what the machines did', () => {
     expect(screen.getByText('1 of these failed.')).toBeInTheDocument()
   })
 
+  it('narrows what is on screen to what a person is looking for', async () => {
+    fakeBackend(signedInAs(adminMe), groups, activity([
+      { id: 2, device: 'worker-1', deviceId: 'd1', at: '2026-09-22T16:05:00Z', kind: 'cohost.assigned', outcome: 'done', group: 'CAI5_AIS4_S7', date: '2026-09-22', summary: 'Nada Instructor was made co-host', detail: null },
+      { id: 1, device: 'worker-1', deviceId: 'd1', at: '2026-09-22T13:00:00Z', kind: 'lms.attendance', outcome: 'done', group: 'CAI5_AIS4_S7', date: '2026-09-22', summary: 'wrote up 23 students', detail: null },
+    ]))
+    renderPage(<ActivityPage />, '/activity')
+    await screen.findByText('Cohost assigned')
+
+    await userEvent.type(screen.getByLabelText('Look for'), 'co-host')
+    expect(screen.getByText('Cohost assigned')).toBeInTheDocument()
+    expect(screen.queryByText('Lms attendance')).toBeNull()
+    expect(screen.getByText('1 thing done')).toBeInTheDocument()
+
+    await userEvent.clear(screen.getByLabelText('Look for'))
+    await userEvent.type(screen.getByLabelText('Look for'), 'nothing like this')
+    expect(await screen.findByText(/Nothing here matches/)).toBeInTheDocument()
+  })
+
   it('asks only for the group that was picked', async () => {
     const calls = fakeBackend(signedInAs(coordinatorMe()), (call) =>
       call.url.startsWith('/api/v1/dashboard/groups') ? { body: { groups: [{ id: 'g1', group: 'CAI5_AIS4_S7', displayName: null, archived: false, recordings: 0, lastSessionDate: null, lastUpdatedAt: null, pending: 0, onLms: 0, missingLink: 0 }], count: 1 } } : undefined,

@@ -58,6 +58,9 @@ export function App() {
         <Route path="session-roles" element={<SessionRolesPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="account" element={<AccountPage />} />
+        {/* Where the accounts and the logs used to live: a bookmark still opens what it meant. */}
+        <Route path="accounts" element={<Navigate to="/zoom-accounts" replace />} />
+        <Route path="logs" element={<Navigate to="/activity" replace />} />
         <Route element={<RequireAdmin />}>
           <Route path="agents" element={<AgentsPage />} />
           <Route path="users" element={<UsersPage />} />

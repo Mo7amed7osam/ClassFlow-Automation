@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useActivity, useGroups } from '../api/hooks'
 import type { ActivityItem } from '../api/types'
 import { PageHeader } from '../components/Layout'
@@ -42,9 +42,19 @@ function Detail({ item }: { item: ActivityItem }) {
 export function ActivityPage() {
   const [group, setGroup] = useState('')
   const [limit, setLimit] = useState(100)
+  const [search, setSearch] = useState('')
   const { data, isLoading, error } = useActivity({ group: group || undefined, limit })
   const groups = useGroups()
-  const items = data?.items ?? []
+
+  // Searching what was fetched rather than asking again: a machine's own words are what a person
+  // looks for ("co-host", "breakout", a student's name), and they are already here.
+  const items = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    const rows = data?.items ?? []
+    if (!needle) return rows
+    return rows.filter((item) => [item.kind, item.summary, item.group, item.device, item.date]
+      .filter(Boolean).join(' ').toLowerCase().includes(needle))
+  }, [data, search])
 
   const failures = items.filter((item) => item.outcome === 'failed').length
 
@@ -64,6 +74,13 @@ export function ActivityPage() {
               <option key={item.id} value={item.group}>{item.group}</option>
             ))}
           </select>
+        </label>
+        <label className="text-sm">
+          <span className="mb-1.5 block font-medium text-slate-700">Look for</span>
+          <input
+            className={`${input} w-56`} value={search} placeholder="co-host, attendance, a name…"
+            aria-label="Look for" onChange={(event) => setSearch(event.target.value)}
+          />
         </label>
         <label className="text-sm">
           <span className="mb-1.5 block font-medium text-slate-700">How much</span>
@@ -94,7 +111,9 @@ export function ActivityPage() {
               <tbody className="divide-y divide-slate-100">
                 {isLoading && <LoadingRows columns={5} />}
                 {!isLoading && items.length === 0 && (
-                  <tr><td colSpan={5}><EmptyState>Nothing yet. A machine writes here as soon as it does something.</EmptyState></td></tr>
+                  <tr><td colSpan={5}><EmptyState>
+                    {search ? `Nothing here matches “${search}”.` : 'Nothing yet. A machine writes here as soon as it does something.'}
+                  </EmptyState></td></tr>
                 )}
                 {items.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50/60">
