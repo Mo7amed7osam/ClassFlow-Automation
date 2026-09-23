@@ -367,6 +367,42 @@ public sealed class DelegatedRunsTests : IDisposable
     }
 
     [Fact]
+    public async Task AClassThisPcAlreadyHasIsNotAddedASecondTime()
+    {
+        // 2026-09-21: S8 at 19:00 was both this PC's own class and Mohab's delegated one, and both
+        // entries would have opened the same meeting.
+        var api = new FakeCentral();
+        api.Delegations.Add(Person("u-mohab", "Mohab", Email("mohab"), ["CAI5_AIS4_S8"], "CAI5_AIS4_S8"));
+        api.Plan.Add(Class("u-mohab", "CAI5_AIS4_S8", Today, new TimeOnly(19, 0), zoom: "CAI5_AIS4_S8"));
+        api.Plan.Add(Class("u-mohab", "CAI5_AIS4_S8", Today.AddDays(2), new TimeOnly(17, 0), zoom: "CAI5_AIS4_S8"));
+        var service = new UiService("CAI5_AIS4_S8");
+        var own = new MeetingSchedule(Guid.NewGuid(), "CAI5_AIS4_S8 • Technical", "https://zoom.us/j/92844609413", "CAI5_AIS4_S8",
+            new TimeOnly(19, 0), ScheduleDays.None, true, OccurrenceDate: Today, GroupName: "CAI5_AIS4_S8");
+        await service.SaveScheduleAsync(own);
+
+        await Runs(api, service).SyncAsync();
+
+        Assert.Equal(2, service.Schedules.Count);
+        Assert.Single(service.Schedules, s => s.OccurrenceDate == Today);           // only its own
+        Assert.Contains(service.Schedules, s => s.OccurrenceDate == Today.AddDays(2) && s.Coordinator == "Mohab");
+    }
+
+    [Fact]
+    public async Task AWeeklyClassOfThisPcCoversTheSameDayOfTheirs()
+    {
+        var api = new FakeCentral();
+        api.Delegations.Add(Person("u-mohab", "Mohab", Email("mohab"), ["CAI5_AIS4_S8"], "CAI5_AIS4_S8"));
+        api.Plan.Add(Class("u-mohab", "CAI5_AIS4_S8", Today, new TimeOnly(19, 0), zoom: "CAI5_AIS4_S8"));
+        var service = new UiService("CAI5_AIS4_S8");
+        await service.SaveScheduleAsync(new MeetingSchedule(Guid.NewGuid(), "S8 weekly", "https://zoom.us/j/92844609413", "CAI5_AIS4_S8",
+            new TimeOnly(19, 0), ScheduleDays.Monday, true, GroupName: "CAI5_AIS4_S8"));     // 2026-09-21 is a Monday
+
+        await Runs(api, service).SyncAsync();
+
+        Assert.Single(service.Schedules);
+    }
+
+    [Fact]
     public async Task AClassThatAlreadyOpenedTodayIsNotOpenedAgainByBeingWrittenOutOnceMore()
     {
         var api = new FakeCentral();

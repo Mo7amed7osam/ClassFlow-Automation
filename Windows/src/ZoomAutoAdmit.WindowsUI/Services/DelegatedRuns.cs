@@ -252,7 +252,13 @@ public sealed class DelegatedRuns
     private async Task<(int Scheduled, int Removed)> WriteSchedulesAsync(
         List<(CentralDelegation Delegation, LmsAccountEntry Entry)> ready, List<string> problems, CancellationToken token)
     {
-        var existing = (await _service.GetSchedulesAsync(token)).Where(s => s.CoordinatorId is { Length: > 0 }).ToList();
+        var all = await _service.GetSchedulesAsync(token);
+        var existing = all.Where(s => s.CoordinatorId is { Length: > 0 }).ToList();
+        // This PC's own classes. A coordinator's class that is already one of them - the same group
+        // at the same time on that day - is not added a second time: two entries would both open,
+        // and one class would be joined twice (2026-09-21, S8 at 19:00). Its LMS steps still go up
+        // under that coordinator, because those follow the group, not the entry.
+        var ownClasses = all.Where(s => s.CoordinatorId is not { Length: > 0 } && s.Enabled).ToList();
         if (ready.Count == 0)
         {
             foreach (var gone in existing) await _service.DeleteScheduleAsync(gone.Id, token);
@@ -278,6 +284,7 @@ public sealed class DelegatedRuns
             if (item.Status != "planned" || item.Day is not { } day || item.Start is not { } start) continue;
             if (!whose.TryGetValue(item.CoordinatorId, out var delegation)) continue;
             string who = delegation.DisplayName;
+            if (ownClasses.Any(s => IsSameClass(s, item.Group, day, start))) { scheduled++; continue; }
 
             if (string.IsNullOrWhiteSpace(item.MeetingUrl))
             {
@@ -343,6 +350,12 @@ public sealed class DelegatedRuns
         }
         return (scheduled, removed);
     }
+
+    /// <summary>The same class: the same group, at the same time, on that day (once, or every week).</summary>
+    internal static bool IsSameClass(MeetingSchedule schedule, string group, DateOnly day, TimeOnly start) =>
+        string.Equals(schedule.GroupName ?? schedule.AccountId, group, StringComparison.OrdinalIgnoreCase)
+        && schedule.Time.Hour == start.Hour && schedule.Time.Minute == start.Minute
+        && (schedule.OccurrenceDate is { } once ? once == day : schedule.Days.Includes(day.DayOfWeek));
 
     private static ZoomAutoAdmit.Core.Sessions.SessionEngineType? EngineOf(string? preferred) => preferred switch
     {

@@ -82,6 +82,18 @@ public sealed class LmsRosterImport(IGroupRosterService? rosters = null, Func<st
             if (whose.Length > 0)
                 ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Info($"[LMS] {group}: reading its students as {whose}, who the group belongs to.");
             var read = await _runner(group).ReadRosterAsync(group, cancellationToken: token);
+            if (!read.IsSuccess && whose.Length > 0)
+            {
+                // Reading students changes nothing on the LMS, so when the owner's sign-in cannot
+                // do it (a password that stopped working, say) this PC's own account - normally the
+                // admin, who sees every group - is asked instead, rather than taking attendance
+                // against no roster at all.
+                ZoomAutoAdmit.Core.Formatting.ConsoleLogger.Warn(
+                    $"[LMS] {group}: {whose}'s account could not read its students ({read.Message}); trying this PC's own account.");
+                var own = await _runner(null).ReadRosterAsync(group, cancellationToken: token);
+                if (own.IsSuccess)
+                    return await SaveAsync(group, own.Names, $"{own.Message} (read with this PC's own account: {read.Message})", token);
+            }
             if (!read.IsSuccess) return new(false, read.Message, group, []);
             return await SaveAsync(group, read.Names, read.Message, token);
         }

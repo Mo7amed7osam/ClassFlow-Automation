@@ -180,7 +180,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             // The step name is safe to show; the exception text is not, because it can quote a
             // value that was typed into a field.
             ConsoleLogger.Warn($"[LMS] Failed while {step}: {ex.GetType().Name}.");
-            return LmsRunResult.Failure($"The dashboard did not respond while {step}.");
+            return LmsRunResult.Failure($"{WhyItFailed(ex, step)}");
         }
     }
 
@@ -255,7 +255,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         catch (Exception ex)
         {
             ConsoleLogger.Warn($"[LMS] Failed while {step}: {ex.GetType().Name}.");
-            return LmsRunResult.Failure($"The dashboard did not respond while {step}.");
+            return LmsRunResult.Failure($"{WhyItFailed(ex, step)}");
         }
     }
 
@@ -386,7 +386,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         catch (Exception ex)
         {
             ConsoleLogger.Warn($"[LMS] Failed while {step}: {ex.GetType().Name}.");
-            return LmsRunResult.Failure($"The dashboard did not respond while {step}.");
+            return LmsRunResult.Failure($"{WhyItFailed(ex, step)}");
         }
     }
 
@@ -506,7 +506,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         catch (Exception ex)
         {
             ConsoleLogger.Warn($"[LMS] Failed while {step}: {ex.GetType().Name}.");
-            return new(false, $"The dashboard did not respond while {step}.", null);
+            return new(false, $"{WhyItFailed(ex, step)}", null);
         }
     }
 
@@ -607,7 +607,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         catch (Exception ex)
         {
             ConsoleLogger.Warn($"[LMS] Failed while {step}: {ex.GetType().Name}.");
-            return new(false, $"The dashboard did not respond while {step}.", null);
+            return new(false, $"{WhyItFailed(ex, step)}", null);
         }
     }
 
@@ -767,7 +767,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
                     DateOnly? date = dateMatch.Success && DateOnly.TryParse(dateMatch.Value, out var d) ? d : null;
                     var status = System.Text.RegularExpressions.Regex.Match(text, @"\b(pending|running|finished|cancelled|completed)\b",
                         System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                    string title = text.Split(SummaryBreaks, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).FirstOrDefault(p => p.Length > 0) ?? "";
+                    string title = TitleOfRow(text);
                     listed.Add((group, date, ReadRowTime(text), title, status.Success ? status.Value.ToLowerInvariant() : "", day, number, index));
                     index++;
                 }
@@ -919,7 +919,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         catch (Exception ex)
         {
             ConsoleLogger.Warn($"[LMS] Failed while {step}: {ex.GetType().Name}.");
-            return new(false, $"The dashboard did not respond while {step}.", []);
+            return new(false, $"{WhyItFailed(ex, step)}", []);
         }
     }
 
@@ -1009,7 +1009,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         catch (Exception ex)
         {
             ConsoleLogger.Warn($"[LMS] Failed while {step}: {ex.GetType().Name}.");
-            return new(false, $"The dashboard did not respond while {step}.{Summary(added, already)}", added, already, false, false);
+            return new(false, $"{WhyItFailed(ex, step)}{Summary(added, already)}", added, already, false, false);
         }
 
         static string Summary(List<string> added, List<string> already) =>
@@ -1438,6 +1438,31 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         return true;
     }
 
+    /// <summary>
+    /// What a failed step is reported as. A refused sign-in says so, with the account, because that
+    /// is something a person can fix; anything else names only the step, never the exception text,
+    /// which can quote a value typed into a field.
+    /// </summary>
+    internal static string WhyItFailed(Exception ex, string step) =>
+        ex is LmsSignInRefusedException refused ? refused.Message : $"The dashboard did not respond while {step}.";
+
+    /// <summary>The error the sign-in form shows, if any; short, and only what the page printed.</summary>
+    private static async Task<string> SignInErrorAsync(IPage page)
+    {
+        try
+        {
+            var shown = page.Locator("[role='alert'], .invalid-feedback, .text-danger, .error, .alert-danger, .toast, .Toastify__toast");
+            foreach (var item in await shown.AllAsync())
+            {
+                if (!await item.IsVisibleAsync()) continue;
+                string text = (await item.InnerTextAsync()).Trim().ReplaceLineEndings(" ");
+                if (text.Length is > 0 and <= 160) return text;
+            }
+        }
+        catch { }
+        return "";
+    }
+
     private static async Task SignInAsync(IPage page, LmsAccount account, CancellationToken cancellationToken)
     {
         await page.GotoAsync(LoginUrl, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
@@ -1474,7 +1499,12 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         }
         catch (TimeoutException)
         {
-            throw new InvalidOperationException("The dashboard stayed on the sign-in page; check the email and password.");
+            // Whatever the page itself says (a wrong password, a locked account) is worth more than
+            // a timeout: it tells the person which account to fix. It never quotes what was typed.
+            string said = await SignInErrorAsync(page);
+            throw new LmsSignInRefusedException(
+                $"The LMS did not accept the sign-in for {account.Email}{(said.Length > 0 ? $" (it said: {said})" : "")}. " +
+                "Check that account's LMS password.");
         }
         await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
         RememberArea(page, page.Url);
@@ -1778,6 +1808,34 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     }
 
     /// <summary>A row squeezed onto one line, for a log that has to stay readable.</summary>
+    /// <summary>What a class is called, from its row in the list.</summary>
+    private static readonly System.Text.RegularExpressions.Regex WeekAndSession = new(
+        @"week\s*\d+\s*[-–]\s*session\s*\d+",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// The class's name as the dashboard shows it - "Week 10 - Session 2".
+    ///
+    /// The columns are not in the same order for every account: read as a coordinator, the first
+    /// cell of the row is the session's number, so every class of theirs was called "29.0" and the
+    /// week it belongs to was lost (2026-09-21, Hosam's classes). The name is therefore looked for,
+    /// and only a row that has none falls back to its first cell.
+    /// </summary>
+    internal static string TitleOfRow(string rowText)
+    {
+        var cells = rowText.Split(SummaryBreaks, StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Trim()).Where(part => part.Length > 0).ToArray();
+        if (cells.FirstOrDefault(cell => WeekAndSession.IsMatch(cell)) is { } named) return named;
+        // Nothing named a week: the first cell that says something - not a number, a date, a time,
+        // a status or the group code the row is already known by.
+        bool Plain(string cell) =>
+            !System.Text.RegularExpressions.Regex.IsMatch(cell, @"^[\d.,:/\s-]+$")
+            && !System.Text.RegularExpressions.Regex.IsMatch(cell, @"^(pending|running|finished|cancelled|completed)$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            && !GroupCode.IsMatch(cell);
+        return cells.FirstOrDefault(Plain) ?? cells.FirstOrDefault() ?? "";
+    }
+
     private static string Summarise(string rowText) =>
         string.Join(" | ", rowText.Split(SummaryBreaks, StringSplitOptions.RemoveEmptyEntries)
             .Select(part => part.Trim()).Where(part => part.Length > 0).Take(4));
@@ -1828,3 +1886,6 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         catch (PlaywrightException) { return string.Empty; }
     }
 }
+
+/// <summary>The LMS kept the sign-in page after the password was sent: the account's password is not accepted.</summary>
+public sealed class LmsSignInRefusedException(string message) : InvalidOperationException(message);
