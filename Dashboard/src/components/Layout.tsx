@@ -28,6 +28,7 @@ export function navFor(role: Role | undefined, pending = 0): NavItem[] {
   const today: NavItem[] = [
     { to: '/', label: 'Overview', end: true, section: 'Today' },
     { to: '/sessions', label: 'Sessions', end: false, section: 'Today' },
+    { to: '/live', label: 'Live sessions', end: false, section: 'Today' },
     { to: '/activity', label: 'What machines did', end: false, section: 'Today' },
   ]
   const setup: NavItem[] = [

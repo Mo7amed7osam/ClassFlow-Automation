@@ -9,6 +9,7 @@ import { AttendanceSessionPage } from './pages/AttendanceSessionPage'
 import { GroupsPage } from './pages/GroupsPage'
 import { LmsAccountsPage } from './pages/LmsAccountsPage'
 import { LoginPage } from './pages/LoginPage'
+import { LiveSessionsPage } from './pages/LiveSessionsPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { SessionsPage } from './pages/SessionsPage'
 import { RecordingsPage } from './pages/RecordingsPage'
@@ -61,6 +62,7 @@ export function App() {
         {/* Where the accounts and the logs used to live: a bookmark still opens what it meant. */}
         <Route path="accounts" element={<Navigate to="/zoom-accounts" replace />} />
         <Route path="logs" element={<Navigate to="/activity" replace />} />
+        <Route path="live" element={<LiveSessionsPage />} />
         <Route element={<RequireAdmin />}>
           <Route path="agents" element={<AgentsPage />} />
           <Route path="users" element={<UsersPage />} />

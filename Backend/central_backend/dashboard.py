@@ -11,6 +11,7 @@ write operations are in dashboard_operations.py, the account management in admin
     GET /api/v1/dashboard/groups                    per group: recordings, last session date, LMS progress
     GET /api/v1/dashboard/agents                    devices, online status, heartbeat, assigned jobs (admin)
     GET /api/v1/dashboard/agents/{deviceId}/jobs    one device's recent jobs (admin)
+    GET /api/v1/dashboard/live                       cloud meetings and their captured attendance
     GET /dashboard/...                              the built React app (Dashboard/dist), when present
 """
 
@@ -30,7 +31,7 @@ from .access import Viewer, current_viewer
 from .auth import require_admin
 from .api import ApiError, _json
 from .devices import device_view, is_online
-from .models import ACTIVE_JOB_STATUSES, AdminAuditLog, Device, Group, Job, Recording
+from .models import ACTIVE_JOB_STATUSES, AdminAuditLog, AttendanceSession, AttendanceSnapshot, Device, Group, Job, Recording
 from .recordings import recording_view
 
 # No blanket dependency: each endpoint states who may use it (a Viewer, or the admin).
@@ -167,6 +168,75 @@ async def overview(request: Request, viewer: Viewer = Depends(current_viewer)) -
         "groups": group_count,
         "serverTime": now,
     })
+
+
+@router.get("/api/v1/dashboard/live")
+async def live_sessions(request: Request, viewer: Viewer = Depends(current_viewer)) -> JSONResponse:
+    """The meetings that a worker is currently opening or holding.
+
+    A cloud class is one long ``class.run`` job. The worker admits while that job is running and
+    sends Zoom participant snapshots to attendance; this endpoint presents those two sources
+    together. It deliberately has no Stop button: a separate queued end job cannot safely
+    interrupt the worker that owns a live browser session.
+    """
+    state = request.app.state
+    active = ("queued", "assigned", "running")
+    group_column = Job.payload["group"].astext
+    conditions = [Job.type == "class.run", Job.status.in_(active)]
+    if viewer.groups is not None:
+        conditions.append(group_column.in_(sorted(viewer.groups)))
+
+    async with state.sessionmaker() as session:
+        jobs = (await session.execute(
+            select(Job).where(*conditions).order_by(Job.started_at.desc().nullslast(), Job.created_at.desc()).limit(100)
+        )).scalars().all()
+        device_ids = {job.device_id for job in jobs if job.device_id is not None}
+        devices = {
+            row.id: row for row in (await session.execute(select(Device).where(Device.id.in_(device_ids)))).scalars().all()
+        } if device_ids else {}
+
+        items = []
+        for job in jobs:
+            payload = job.payload or {}
+            group, day, start = payload.get("group"), payload.get("date"), payload.get("startTime")
+            attendance = None
+            if group and day:
+                try:
+                    from datetime import date
+                    session_day = date.fromisoformat(str(day))
+                    attendance = (await session.execute(
+                        select(AttendanceSession).where(
+                            AttendanceSession.group_name == group,
+                            AttendanceSession.session_date == session_day,
+                            func.coalesce(AttendanceSession.start_time, "") == (start or ""),
+                        ).order_by(AttendanceSession.updated_at.desc()).limit(1)
+                    )).scalar_one_or_none()
+                except ValueError:
+                    attendance = None
+            snapshot_count, observed = 0, 0
+            attendance_id = None
+            if attendance is not None:
+                snapshots = (await session.execute(
+                    select(AttendanceSnapshot).where(AttendanceSnapshot.session_id == attendance.id)
+                    .order_by(AttendanceSnapshot.captured_at.desc()).limit(1)
+                )).scalars().all()
+                snapshot_count = (await session.execute(
+                    select(func.count()).select_from(AttendanceSnapshot).where(AttendanceSnapshot.session_id == attendance.id)
+                )).scalar_one()
+                observed = len(snapshots[0].names or []) if snapshots else 0
+                attendance_id = str(attendance.id)
+            device = devices.get(job.device_id)
+            items.append({
+                **job_summary(job),
+                "meetingUrl": payload.get("meetingUrl"),
+                "durationMinutes": payload.get("durationMinutes"),
+                "worker": device.name if device else None,
+                "attendanceSessionId": attendance_id,
+                "attendanceStatus": attendance.status if attendance else None,
+                "snapshots": snapshot_count,
+                "observed": observed,
+            })
+    return _no_store({"items": items, "count": len(items), "serverTime": state.clock()})
 
 
 @router.get("/api/v1/dashboard/recordings")

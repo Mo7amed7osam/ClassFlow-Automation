@@ -157,6 +157,17 @@ export interface Agent {
   jobsLast24h: { succeeded: number; failed: number }
 }
 
+/** A Zoom meeting currently owned by a cloud worker. */
+export interface LiveSession extends JobSummary {
+  meetingUrl: string | null
+  durationMinutes: number | null
+  worker: string | null
+  attendanceSessionId: string | null
+  attendanceStatus: 'open' | 'closed' | 'finalized' | null
+  snapshots: number
+  observed: number
+}
+
 export interface Overview {
   /** null for a coordinator: agents and jobs span every group */
   agents: { total: number; online: number; busy: number } | null

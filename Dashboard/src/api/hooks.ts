@@ -39,6 +39,7 @@ import type {
   User,
   UserList,
   UserStatus,
+  LiveSession,
 } from './types'
 
 // How often each view refreshes itself. Agents change fastest (heartbeats every 30 s); a recording
@@ -120,6 +121,15 @@ export function useChangePassword() {
   return useMutation({
     mutationFn: (body: { currentPassword: string; newPassword: string }) =>
       api<{ status: string }>('/api/v1/auth/password', { method: 'POST', body: JSON.stringify(body) }),
+  })
+}
+
+/** A cloud meeting is represented by its long-running class job and its attendance snapshots. */
+export function useLiveSessions() {
+  return useQuery({
+    queryKey: ['live-sessions'],
+    queryFn: () => api<{ items: LiveSession[]; count: number; serverTime: string }>('/api/v1/dashboard/live'),
+    refetchInterval: REFRESH.agents,
   })
 }
 

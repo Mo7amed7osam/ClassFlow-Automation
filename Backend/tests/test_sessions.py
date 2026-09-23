@@ -294,3 +294,21 @@ def test_the_follow_ups_of_a_meeting_that_failed_say_so(dash, clock):
         assert stage(row, key)["state"] == "blocked", key
         assert stage(row, key)["detail"] == "the meeting was not held"
     assert stage(row, "ended")["detail"] == "the meeting was not held"
+
+
+def test_live_sessions_show_the_worker_owned_meeting(dash, clock):
+    """The web's Live page reads the same long class.run job the Windows Meetings page follows."""
+    plan, _ = a_class(dash)
+    clock.now = at_local(DAY, "18:45")
+    dash.portal.call(Scheduler(dash.app.state.sessionmaker, clock).schedule_once)
+    run_sql(dash.app.state.settings.database_url, "UPDATE jobs SET status = 'running' WHERE idempotency_key = $1",
+            idempotency_key(uuid.UUID(plan), STAGES[0]))
+    as_user(dash, "admin", ADMIN_PASSWORD)
+
+    response = dash.get("/api/v1/dashboard/live")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 1
+    live = body["items"][0]
+    assert (live["type"], live["status"], live["group"], live["attendanceSessionId"]) == (
+        "class.run", "running", "CAI5_AIS4_S7", None)
