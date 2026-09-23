@@ -124,6 +124,25 @@ public sealed class ZoomRecordingLinkReader(
             var picked = PickRecording(entries, group, day, startTime);
             if (picked == null)
             {
+                // What was there instead: another account's list, an older day, or a topic named
+                // differently all look the same as "not found" without it.
+                ConsoleLogger.Info($"[RECORDING] {group}: the '{profileName}' profile lists " + (entries.Count == 0 ? "nothing." :
+                    string.Join("; ", entries.Where(e => e.RecordedAt.HasValue).Take(10).Select(e =>
+                        $"{e.RecordedAt:yyyy-MM-dd HH:mm} {e.Duration?.ToString(@"hh\:mm\:ss") ?? "?"}"))));
+
+                // The list prints times in the Zoom account's own time zone, and accounts differ: G1's
+                // is set to Pacific time, so its 18:02 class is listed at 08:02 (2026-09-21) and was
+                // never found. Read in the account's zone instead, it is; the share link's own UTC
+                // start, checked below, still decides whether it really is this session.
+                if (PickAcrossZones(entries, group, day, startTime) is { } shifted)
+                {
+                    ConsoleLogger.Info($"[RECORDING] {group}: listed at {shifted.Entry.RecordedAt:HH:mm}, which is " +
+                                       $"{shifted.Entry.RecordedAt!.Value + shifted.Shift:HH:mm} here - the Zoom account shows another time zone.");
+                    picked = shifted.Entry;
+                }
+            }
+            if (picked == null)
+            {
                 string when = day is { } d
                     ? $" on {d:yyyy-MM-dd}{(startTime is { } t ? $" around {t:HH\\:mm}" : string.Empty)}"
                     : string.Empty;
@@ -331,6 +350,36 @@ public sealed class ZoomRecordingLinkReader(
     /// own date could not be read is not eligible either: the wrong week's video attached to a
     /// session is worse than no video at all.
     /// </summary>
+    /// <summary>The time zone offsets that exist, in quarter hours from UTC-12 to UTC+14.</summary>
+    private static readonly TimeSpan[] ZoneShifts = [.. Enumerable.Range(-26 * 4, 52 * 4 + 1).Select(q => TimeSpan.FromMinutes(q * 15))];
+
+    /// <summary>
+    /// The group's recording when the list is printed in another time zone than this computer's.
+    /// Every real zone difference is tried; of the group's recordings that then fall inside this
+    /// session on its day, the longest is taken - the class itself, not a restart's leftover.
+    /// Null without a day and a time, or when nothing fits under any shift.
+    /// </summary>
+    public static (ZoomRecordingEntry Entry, TimeSpan Shift)? PickAcrossZones(
+        IReadOnlyList<ZoomRecordingEntry> entries, string group, DateOnly? day, TimeOnly? startTime)
+    {
+        if (day is not { } wantedDay || startTime is not { } wantedTime || string.IsNullOrWhiteSpace(group)) return null;
+        (ZoomRecordingEntry Entry, TimeSpan Shift)? best = null;
+        foreach (var entry in entries)
+        {
+            if (entry.RecordedAt is not { } listed || !entry.Topic.Contains(group.Trim(), StringComparison.OrdinalIgnoreCase)) continue;
+            // The shift that brings it nearest the session's start is the zone it was listed in.
+            var fits = ZoneShifts
+                .Where(shift => DateOnly.FromDateTime(listed + shift) == wantedDay
+                                && IsWithinSession(TimeOnly.FromDateTime(listed + shift), wantedTime))
+                .OrderBy(shift => Math.Abs((TimeOnly.FromDateTime(listed + shift).ToTimeSpan() - wantedTime.ToTimeSpan()).Ticks))
+                .ToArray();
+            if (fits.Length == 0) continue;
+            if (best == null || (entry.Duration ?? TimeSpan.Zero) > (best.Value.Entry.Duration ?? TimeSpan.Zero))
+                best = (entry, fits[0]);
+        }
+        return best;
+    }
+
     public static ZoomRecordingEntry? PickRecording(
         IReadOnlyList<ZoomRecordingEntry> entries, string group, DateOnly? day = null, TimeOnly? startTime = null)
     {

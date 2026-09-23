@@ -28,6 +28,33 @@ public sealed class ZoomRecordingClockTests
     }
 
     [Fact]
+    public void AnAccountListingInAnotherTimeZoneStillHasItsClassFound()
+    {
+        // G1, 21 September 2026: the class opened at 18:02 in Cairo; depi+10's Zoom shows Pacific
+        // time, so My Recordings printed it at 08:02 - next to a 27-minute and a 3-second leftover.
+        static ZoomRecordingEntry Listed(int h, int m, TimeSpan length, int day = 21) =>
+            new("CAI5_IND1_G1", $"u{h}{m}") { RecordedAt = new DateTime(2026, 9, day, h, m, 0), Duration = length };
+        var list = new[]
+        {
+            Listed(10, 51, TimeSpan.Parse("00:27:07")),
+            Listed(10, 3, TimeSpan.Parse("00:00:03")),
+            Listed(8, 2, TimeSpan.Parse("01:49:42")),
+            Listed(4, 9, TimeSpan.Parse("03:02:56"), day: 19),
+        };
+        var day = new DateOnly(2026, 9, 21);
+        Assert.Null(ZoomRecordingLinkReader.PickRecording(list, "CAI5_IND1_G1", day, new TimeOnly(18, 0)));
+
+        var found = ZoomRecordingLinkReader.PickAcrossZones(list, "CAI5_IND1_G1", day, new TimeOnly(18, 0));
+
+        Assert.NotNull(found);
+        Assert.Equal(TimeSpan.Parse("01:49:42"), found!.Value.Entry.Duration);       // the class, not a leftover
+        Assert.Equal(TimeSpan.FromHours(10), found.Value.Shift);                       // Pacific to Cairo that day
+        // Another group's name, or another day, is never taken this way.
+        Assert.Null(ZoomRecordingLinkReader.PickAcrossZones(list, "CAI5_IND1_G2", day, new TimeOnly(18, 0)));
+        Assert.Null(ZoomRecordingLinkReader.PickAcrossZones(list, "CAI5_IND1_G1", day.AddDays(3), new TimeOnly(18, 0)));
+    }
+
+    [Fact]
     public void TheListsTimeIsMovedFromTheZoomAccountsClockToThisComputers()
     {
         var shown = new ZoomRecordingEntry("CAI5_AIS4_S7", "u") { RecordedAt = new DateTime(2026, 9, 1, 8, 58, 0) };
