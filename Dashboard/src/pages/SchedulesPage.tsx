@@ -67,11 +67,27 @@ function toDraft(row: ScheduleRow): Draft {
   }
 }
 
+/**
+ * An id for a new class, in the shape the app writes them. crypto.randomUUID is only there in a
+ * secure context, and a dashboard opened over plain http on a server's own address is not one, so
+ * this falls back to the same shape built from whatever randomness the browser does offer.
+ */
+export function newId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  const bytes = new Uint8Array(16)
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') crypto.getRandomValues(bytes)
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256)
+  bytes[6] = (bytes[6] & 0x0f) | 0x40          // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80          // variant
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
 /** A draft as the app's own shape, keeping whatever the app put on the row that this page has no field for. */
 function toRow(draft: Draft, was: ScheduleRow | null): ScheduleRow {
   return {
     ...(was ?? {}),
-    id: draft.id || crypto.randomUUID(),
+    id: draft.id || newId(),
     name: draft.name.trim(),
     meetingUrl: draft.meetingUrl.trim(),
     accountId: draft.accountId.trim(),

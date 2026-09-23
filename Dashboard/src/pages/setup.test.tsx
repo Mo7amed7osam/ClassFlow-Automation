@@ -5,7 +5,7 @@ import { navFor, SECTIONS } from '../components/Layout'
 import { adminMe, coordinatorMe, fakeBackend, renderPage, signedInAs, type Call } from '../test/helpers'
 import { ActivityPage, describeKind, outcomeTone } from './ActivityPage'
 import { LmsAccountsPage } from './LmsAccountsPage'
-import { DAYS, parseDays, SchedulesPage, toTimeField, toTimeValue, writeDays } from './SchedulesPage'
+import { DAYS, newId, parseDays, SchedulesPage, toTimeField, toTimeValue, writeDays } from './SchedulesPage'
 import { listPeople, parsePeople, SessionRolesPage } from './SessionRolesPage'
 import { POLICY_DEFAULTS, SettingsPage } from './SettingsPage'
 import { ZoomAccountsPage } from './ZoomAccountsPage'
@@ -215,6 +215,20 @@ describe('classes that open by themselves', () => {
     expect(writeDays([...DAYS])).toBe('EveryDay')
     expect(toTimeField('19:00:00')).toBe('19:00')
     expect(toTimeValue('19:00')).toBe('19:00:00')
+  })
+
+  it('gives a new class an id of the app’s own shape, with or without a secure browser', () => {
+    const shape = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    expect(newId()).toMatch(shape)
+    // A dashboard opened over plain http has no crypto.randomUUID; adding a class still works.
+    const real = globalThis.crypto
+    vi.stubGlobal('crypto', { getRandomValues: real.getRandomValues.bind(real) })
+    try {
+      expect(newId()).toMatch(shape)
+      expect(newId()).not.toBe(newId())
+    } finally {
+      vi.stubGlobal('crypto', real)
+    }
   })
 
   it('lists them with their days and time, and turns one off without touching the others', async () => {

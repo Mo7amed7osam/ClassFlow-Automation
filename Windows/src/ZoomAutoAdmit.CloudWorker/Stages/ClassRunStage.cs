@@ -254,8 +254,9 @@ public sealed class ClassRunStage(
             if (outcome is null && !draining && !autoEnd)
             {
                 try { await LastReadAsync(CancellationToken.None); } catch (Exception) { }
-                outcome = new(EndedHow.LeftOpen,
-                    "Ending classes automatically is off in the dashboard, so the meeting was left running.");
+                outcome = engine.ActiveMeetingPage is { IsClosed: false }
+                    ? new(EndedHow.LeftOpen, "Ending classes automatically is off in the dashboard, so the meeting was left running.")
+                    : new MeetingEndOutcome(EndedHow.Elsewhere, "The meeting was closed somewhere else (by the instructor, or from a phone).");
             }
             else if (outcome is null && !draining)
             {
