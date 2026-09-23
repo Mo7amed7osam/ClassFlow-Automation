@@ -106,6 +106,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OwnSchedules = new ScheduleServerSync(Central.Api);
         StartMeeting = new StartMeetingViewModel(service);
         Accounts = new AccountsViewModel(service, scope: Scope);
+        // A Zoom password typed here goes to the database at once, encrypted against the signed-in
+        // dashboard account - not on the next pass, and not only into this PC's Credential Manager.
+        // Every other PC, a cloud one included, takes it from there.
+        Accounts.SaveToDatabase = async (accountId, password) =>
+        {
+            if (!Central.Api.IsSignedIn) return "nobody is signed in to the dashboard here, so it is only on this PC";
+            var here = await _service.GetAccountsAsync();
+            int? sent = await ZoomAccounts.PushAsync(here, (accountId, password));
+            return sent is > 0
+                ? "it is in the database too, encrypted"
+                : "the database already has this PC's accounts; the password goes up on the next pass";
+        };
         Schedules = new SchedulesViewModel(service, scope: Scope);
         Logs = new LogsViewModel();
         SessionRoles = new SessionRolesViewModel(scope: Scope)
@@ -454,7 +466,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var said = new List<string>();
         try
         {
-            if (await ZoomAccounts.SyncAsync(await _service.GetAccountsAsync(), _service.SaveAccountAsync) is { } accounts)
+            // Only what is theirs goes up as theirs. A coordinator signing in on the admin's PC sent
+            // every account on it as their own (2026-09-21: Hosam "had" S7 and S8, Mohab G1 and G2).
+            // Somebody with none of this PC's accounts neither sends nor takes: taking would write
+            // their accounts over ones of the same name that belong to somebody else.
+            var here = await _service.GetAccountsAsync();
+            var theirs = here.Where(a => Scope.Owns(string.IsNullOrWhiteSpace(a.GroupName) ? a.AccountId : a.GroupName)).ToList();
+            if ((here.Count == 0 || theirs.Count > 0)
+                && await ZoomAccounts.SyncAsync(theirs, _service.SaveAccountAsync) is { } accounts)
                 said.Add(accounts);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -463,7 +482,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         try
         {
-            if (await OwnSchedules.SyncAsync(await _service.GetSchedulesAsync(), _service.SaveScheduleAsync) is { } classes)
+            var all = await _service.GetSchedulesAsync();
+            var ownClasses = all.Where(s => Scope.Owns(string.IsNullOrWhiteSpace(s.GroupName) ? s.AccountId : s.GroupName)).ToList();
+            if ((all.Count == 0 || ownClasses.Count > 0)
+                && await OwnSchedules.SyncAsync(ownClasses, _service.SaveScheduleAsync) is { } classes)
                 said.Add(classes);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
