@@ -272,6 +272,19 @@ async def groups(request: Request, viewer: Viewer = Depends(current_viewer)) -> 
     return _no_store({"groups": items, "count": len(items)})
 
 
+@router.get("/api/v1/dashboard/ai", dependencies=[Depends(require_admin)])
+async def ai(request: Request) -> JSONResponse:
+    """Whether attendance matching can ask an AI, and which model answers.
+
+    The key itself is the server's, set in its environment and never sent anywhere: this says only
+    that there is one, so the admin can see why "Match with AI" is or is not offered without reading
+    a log or a container's settings.
+    """
+    matcher = getattr(request.app.state, "attendance_ai", None)
+    return _no_store({"available": matcher is not None,
+                      "model": getattr(matcher, "model", None)})
+
+
 @router.get("/api/v1/dashboard/agents", dependencies=[Depends(require_admin)])
 async def agents(request: Request) -> JSONResponse:
     state = request.app.state

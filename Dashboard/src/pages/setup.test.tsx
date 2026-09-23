@@ -8,6 +8,7 @@ import { LmsAccountsPage } from './LmsAccountsPage'
 import { DAYS, newId, parseDays, SchedulesPage, toTimeField, toTimeValue, writeDays } from './SchedulesPage'
 import { listPeople, parsePeople, SessionRolesPage } from './SessionRolesPage'
 import { POLICY_DEFAULTS, SettingsPage } from './SettingsPage'
+import { OverviewPage } from './OverviewPage'
 import { ZoomAccountsPage } from './ZoomAccountsPage'
 
 // Made-up passwords, for these tests only.
@@ -372,6 +373,16 @@ describe('settings', () => {
     expect(screen.queryByRole('button', { name: /enrollment token/i })).toBeNull()
   })
 
+  it('says whether attendance matching can ask an AI, and never asks for its key', async () => {
+    fakeBackend(signedInAs(adminMe), policy(null), sheet, (call) =>
+      call.url === '/api/v1/dashboard/ai' ? { body: { available: true, model: 'openai/gpt-4o-mini' } } : undefined)
+    renderPage(<SettingsPage />, '/settings')
+
+    expect(await screen.findByText('openai/gpt-4o-mini')).toBeInTheDocument()
+    expect(screen.getByText(/never sent to a browser/)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/api key/i)).toBeNull()
+  })
+
   it('gives the admin a token for a machine to join with, once', async () => {
     fakeBackend(signedInAs(adminMe), policy(null), sheet, (call) =>
       call.url === '/api/v1/me/devices/enroll' ? { body: { enrollmentToken: 'zaae_test_token', expiresInSeconds: 900 } } : undefined)
@@ -381,6 +392,54 @@ describe('settings', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Make an enrollment token' }))
     expect(await screen.findByText('zaae_test_token')).toBeInTheDocument()
     expect(screen.getByText(/works once/)).toBeInTheDocument()
+  })
+})
+
+describe('the overview', () => {
+  const sessions = (classes: unknown[]) => (call: Call) =>
+    call.url.startsWith('/api/v1/dashboard/sessions')
+      ? { body: { from: '2026-09-23', to: '2026-09-23', classes, counters: { runningOnTheLms: 0, classesToday: classes.length, needAttention: 0, blocked: 0, fullyDone: 0 }, groups: [] } }
+      : undefined
+  const noRecordings = (call: Call) =>
+    call.url.startsWith('/api/v1/dashboard/recordings') ? { body: { items: [], total: 0, page: 1, pageSize: 10, sort: 'updated' } } : undefined
+  const overview = (call: Call) =>
+    call.url === '/api/v1/dashboard/overview'
+      ? { body: { agents: { total: 1, online: 1, busy: 1 }, recordings: { total: 0, pending: 0, onLms: 0, missingLink: 0 }, jobs: { queued: 0, assigned: 0, running: 1, succeededLast24h: 0, failedLast24h: 0 }, groups: 2, serverTime: '' } }
+      : undefined
+  const aClass = (overrides: Record<string, unknown> = {}) => ({
+    classPlanId: 'p1', group: 'CAI5_AIS4_S7', title: 'Freelancing Skills', date: '2026-09-23',
+    startTime: '19:00', startsAt: null, coordinator: { id: 'u1', name: 'Mona' }, meetingUrl: null,
+    planStatus: 'planned', headline: 'running',
+    stages: [{ key: 'class.run', label: 'The meeting', caption: 'Opens', state: 'running' }],
+    ...overrides,
+  })
+
+  it('puts what is happening now first, in the words of the stage doing it', async () => {
+    fakeBackend(signedInAs(adminMe), overview, noRecordings, sessions([
+      aClass(),
+      aClass({ classPlanId: 'p2', group: 'CAI5_AIS4_S8', headline: 'needsAttention',
+        stages: [{ key: 'lms.attendance', label: 'The attendance', caption: 'After class', state: 'failed' }] }),
+      aClass({ classPlanId: 'p3', group: 'CAI5_AIS4_S9', headline: 'planned',
+        stages: [{ key: 'class.run', label: 'The meeting', caption: 'Opens', state: 'later' }] }),
+    ]))
+    renderPage(<OverviewPage />, '/')
+
+    const running = (await screen.findByText('CAI5_AIS4_S7')).closest('tr')!
+    expect(within(running).getByText('The meeting')).toBeInTheDocument()
+    expect(within(running).getByText('Running')).toBeInTheDocument()
+    const failed = screen.getByText('CAI5_AIS4_S8').closest('tr')!
+    expect(within(failed).getByText('The attendance failed')).toBeInTheDocument()
+    expect(within(failed).getByText('Needs somebody')).toBeInTheDocument()
+    // A class that has not started yet is not "right now".
+    expect(screen.queryByText('CAI5_AIS4_S9')).toBeNull()
+  })
+
+  it('says plainly when nothing today wants anybody', async () => {
+    fakeBackend(signedInAs(adminMe), overview, noRecordings, sessions([
+      aClass({ headline: 'done', stages: [{ key: 'lms.complete', label: 'Complete', caption: 'After class', state: 'done' }] }),
+    ]))
+    renderPage(<OverviewPage />, '/')
+    expect(await screen.findByText(/none of them running or waiting for anybody/)).toBeInTheDocument()
   })
 })
 

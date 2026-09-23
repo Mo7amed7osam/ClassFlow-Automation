@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ApiError } from '../api/client'
-import { useCloudPolicy, useEnrollDevice, useMe, useSaveCloudPolicy, useSaveSetting, useSetting } from '../api/hooks'
+import { useAiStatus, useCloudPolicy, useEnrollDevice, useMe, useSaveCloudPolicy, useSaveSetting, useSetting } from '../api/hooks'
 import type { CloudPolicy, RecordingsSheet } from '../api/types'
 import { PageHeader } from '../components/Layout'
 import { useToast } from '../components/Toast'
@@ -46,6 +46,7 @@ export function SettingsPage() {
   const sheet = useSetting<RecordingsSheet>('recordingsSheet', isAdmin)
   const saveSheet = useSaveSetting<RecordingsSheet>('recordingsSheet')
   const enroll = useEnrollDevice()
+  const ai = useAiStatus(isAdmin)
   const toast = useToast()
 
   const current = { ...POLICY_DEFAULTS, ...(policy.data?.value ?? {}) }
@@ -127,6 +128,26 @@ export function SettingsPage() {
                   </button>
                 </div>
               )}
+            </div>
+          </Card>
+        )}
+
+        {isAdmin && (
+          <Card title="AI for attendance matching">
+            <div className="flex flex-col gap-3 px-5 py-4">
+              <p className="text-sm text-slate-600">
+                When the names in Zoom cannot be matched to the roster by the ordinary rules, the server may ask a
+                model which remaining name is which student. It only ever proposes: a person confirms on the
+                attendance page, and a name nobody is sure about stays unmatched.
+              </p>
+              <div className="flex items-center gap-2">
+                {ai.data?.available ? <Pill tone="green">On</Pill> : <Pill tone="slate">Off</Pill>}
+                {ai.data?.model && <span className="text-sm text-slate-700">{ai.data.model}</span>}
+              </div>
+              <p className="text-xs text-slate-500">
+                The key is the server&apos;s own (CENTRAL_AI_API_KEY in its settings) and is never sent to a browser,
+                so it is not changed from here.
+              </p>
             </div>
           </Card>
         )}

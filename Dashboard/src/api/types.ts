@@ -473,6 +473,12 @@ export interface Setting<T> {
   updatedAt: string | null
 }
 
+/** GET /api/v1/dashboard/ai: whether attendance matching can ask an AI, and which model. */
+export interface AiStatus {
+  available: boolean
+  model: string | null
+}
+
 /** 202 from POST /api/v1/admin/run-plan/{id}/run. */
 export type StageRun = JobSummary & { created: boolean }
 

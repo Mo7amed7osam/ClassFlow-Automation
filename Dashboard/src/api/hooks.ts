@@ -3,6 +3,7 @@ import { api, query, UnauthorizedError } from './client'
 import type {
   ActivityItem,
   AdminGroup,
+  AiStatus,
   Agent,
   ClassPlan,
   CloudPolicy,
@@ -438,6 +439,16 @@ export const useRunStage = () => {
     mutationFn: ({ planId, stage }: { planId: string; stage: string }) =>
       api<StageRun>(`/api/v1/admin/run-plan/${planId}/run`, send('POST', { stage })),
     onSuccess: () => { for (const key of ['run-plan', 'sessions', 'overview', 'activity']) client.invalidateQueries({ queryKey: [key] }) },
+  })
+}
+
+/** Whether attendance matching can ask an AI, and which model answers. Never the key. */
+export function useAiStatus(enabled = true) {
+  return useQuery({
+    queryKey: ['ai'],
+    queryFn: () => api<AiStatus>('/api/v1/dashboard/ai'),
+    refetchInterval: REFRESH.groups,
+    enabled,
   })
 }
 

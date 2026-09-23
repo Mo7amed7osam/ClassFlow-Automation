@@ -227,3 +227,21 @@ def test_a_worker_with_no_session_roles_saved_is_given_an_empty_list_rather_than
     answer = client.get("/api/v1/agent/session-roles", headers={"Authorization": f"Bearer {token}"})
     assert answer.status_code == 200
     assert answer.json()["profiles"] == []
+
+
+# =========================================================================== the AI step
+
+
+def test_the_admin_is_told_whether_attendance_matching_can_ask_an_ai(dash, two):
+    as_user(dash, "admin", ADMIN_PASSWORD)
+    answer = dash.get("/api/v1/dashboard/ai")
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert set(body) == {"available", "model"}
+    # Whatever the server has, the key itself is never part of the answer.
+    assert "key" not in answer.text.lower()
+
+
+def test_a_coordinator_is_not_told_about_the_server_s_ai(dash, two):
+    as_user(dash, "mona")
+    assert dash.get("/api/v1/dashboard/ai").status_code == 403

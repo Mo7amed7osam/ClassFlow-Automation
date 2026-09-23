@@ -63,6 +63,11 @@ class ChatCompletionsAi:
     def __repr__(self) -> str:                      # never the key
         return f"ChatCompletionsAi(model={self._model!r}, url={self._url!r})"
 
+    @property
+    def model(self) -> str:
+        """Which model answers. Shown on the dashboard; the key it is used with never leaves here."""
+        return self._model
+
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> ChatCompletionsAi | None:
         env = os.environ if env is None else env

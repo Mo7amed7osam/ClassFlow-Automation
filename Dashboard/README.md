@@ -21,7 +21,7 @@ recording API are unchanged.
 | Zoom accounts, LMS sign-ins | Their own, and (on Run classes) which of a coordinator's are used for that coordinator's classes | Their own: the accounts their classes are hosted and written up with |
 | Opens by itself | Their own timetable | Their own timetable |
 | Who is co-host | Edit the session types and their instructors | Read them |
-| Settings | The switches every machine reads, the recordings sheet, and a token for a machine to join with | The switches, read only |
+| Settings | The switches every machine reads, whether attendance matching can ask an AI, the recordings sheet, and a token for a machine to join with | The switches, read only |
 | What machines did | Every machine, every group | Their own groups |
 
 A coordinator asking for anything outside their groups gets the same `404` as for something that
@@ -31,7 +31,7 @@ request.
 
 | Page | Shows |
 |---|---|
-| Overview | Admin: agents online, pending / on-LMS / no-link counts, jobs. Coordinator: their groups, pending, on LMS, without a link. Both: the 10 latest recordings they may see. |
+| Overview | **Today, right now**: the classes doing something this minute, or waiting for somebody, in the words of the stage doing it. Admin: agents online, pending / on-LMS / no-link counts, jobs. Coordinator: their groups, pending, on LMS, without a link. Both: the 10 latest recordings they may see. |
 | Recordings | Group, date, start time, file name, source (Drive / Zoom / Missing), LMS status, updated, and Actions (Edit, Attach LMS). Filters: group, session date, LMS status, source. Sort: last updated (default), first seen, session date. 25 per page. A row opens its details. |
 | Groups / My groups | Each group: recordings, last recording date, pending, on LMS, without a link, last updated (the admin also sees coordinators, archived groups, and the actions) |
 | Users (admin) | Registrations waiting for approval, then every account with its status, groups, last sign-in and actions |
