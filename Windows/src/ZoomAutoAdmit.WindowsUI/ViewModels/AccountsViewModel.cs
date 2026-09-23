@@ -1,5 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using System.Windows.Input;
+using ZoomAutoAdmit.Core.Formatting;
 using ZoomAutoAdmit.Core.Sessions;
 using ZoomAutoAdmit.WindowsRuntime;
 using ZoomAutoAdmit.WindowsUI.Infrastructure;
@@ -63,7 +64,7 @@ public sealed class AccountsViewModel : ObservableObject
                 AccountEnginePreference.Web => EnginePreference.Web,
                 _ => EnginePreference.Auto
             };
-            OnPropertyChanged(nameof(HasSavedPassword));
+            OnPropertyChanged(nameof(HasSavedPassword)); OnPropertyChanged(nameof(PasswordState));
         }
     }
     public string AccountId { get => _accountId; set => SetProperty(ref _accountId, value); }
@@ -76,6 +77,10 @@ public sealed class AccountsViewModel : ObservableObject
     public EnginePreference PreferredEngine { get => _preferredEngine; set => SetProperty(ref _preferredEngine, value); }
     public string StatusMessage { get => _statusMessage; private set => SetProperty(ref _statusMessage, value); }
     public bool HasSavedPassword => !string.IsNullOrWhiteSpace(AccountId) && SafeHasPassword(AccountId);
+    /// <summary>Said plainly: without a saved password a fresh browser profile cannot sign itself in to Zoom.</summary>
+    public string PasswordState => HasSavedPassword
+        ? "Saved on this PC - a browser profile signs itself in to Zoom with it."
+        : "Not saved - this account cannot sign itself in to Zoom. Type its password and press Save password.";
     public ICommand NewCommand { get; }
     public ICommand SaveCommand { get; }
     public ICommand DeleteCommand { get; }
@@ -117,7 +122,9 @@ public sealed class AccountsViewModel : ObservableObject
             await _service.SaveAccountAsync(new WindowsMeetingAccountMetadata(
                 AccountId.Trim(),
                 DisplayName.Trim(),
-                CredentialReference.Trim(),
+                // A saved password decides the reference; a hand-typed one that names nothing
+                // would leave the profile unable to sign itself in.
+                SafeHasPassword(AccountId) ? _credentials.ReferenceFor(AccountId) : CredentialReference.Trim(),
                 engine) { ZoomEmail = email,
                     GroupName = string.IsNullOrWhiteSpace(GroupName) ? AccountId.Trim() : GroupName.Trim(),
                     DefaultMeetingUrl = WindowsMeetingAccountManager.NormalizeDefaultMeetingUrl(DefaultMeetingUrl),
@@ -132,25 +139,58 @@ public sealed class AccountsViewModel : ObservableObject
         catch (Exception ex) { StatusMessage = ex.Message; }
     }
 
-    public void SavePassword(string? password)
+    /// <summary>
+    /// Sends a just-typed Zoom password to the database, under the signed-in dashboard account,
+    /// and answers what happened. Null when this window has no server to send it to.
+    /// </summary>
+    public Func<string, string, Task<string>>? SaveToDatabase { get; set; }
+
+    /// <summary>
+    /// Keeps the account's Zoom password: on this PC, and - the part every other PC depends on -
+    /// in the database against the signed-in dashboard account, encrypted there. The two are tried
+    /// apart on purpose, so a PC whose Credential Manager refuses still puts the password where a
+    /// cloud PC or a replacement can take it from. What was kept, and where, is said plainly.
+    /// </summary>
+    public async Task<bool> SavePasswordAsync(string? password)
     {
+        string typed = password ?? string.Empty;
+        if (typed.Length == 0) { StatusMessage = "Type the account's Zoom password first."; return false; }
+        string email;
         try
         {
-            var email = WindowsMeetingAccountManager.NormalizeZoomEmail(ZoomEmail)
+            email = WindowsMeetingAccountManager.NormalizeZoomEmail(ZoomEmail)
                 ?? throw new ArgumentException("Enter a valid Zoom Email before saving the password.");
-            _credentials.Save(AccountId, email, password ?? string.Empty);
-            CredentialReference = _credentials.ReferenceFor(AccountId);
-            StatusMessage = "Zoom password saved in Windows Credential Manager. Save the profile to keep its reference.";
         }
-        catch (Exception ex) { StatusMessage = ex.Message; }
-        OnPropertyChanged(nameof(HasSavedPassword));
+        catch (Exception ex) { StatusMessage = ex.Message; return false; }
+
+        string? hereProblem = null;
+        try
+        {
+            _credentials.Save(AccountId, email, typed);
+            CredentialReference = _credentials.ReferenceFor(AccountId);
+        }
+        catch (Exception ex) { hereProblem = ex.Message; }
+
+        string? serverSaid = null;
+        bool inDatabase = false;
+        if (SaveToDatabase != null)
+        {
+            try { serverSaid = await SaveToDatabase(AccountId.Trim(), typed); inDatabase = true; }
+            catch (Exception ex) { serverSaid = $"it did not reach the database ({CentralApiException.Explain(ex)})"; }
+        }
+
+        OnPropertyChanged(nameof(HasSavedPassword)); OnPropertyChanged(nameof(PasswordState));
+        StatusMessage = (hereProblem == null ? "Zoom password saved on this PC" : $"This PC did not keep it ({hereProblem})")
+                        + (serverSaid == null ? ". Sign in on the Dashboard page to keep it in the database too." : $"; {serverSaid}.");
+        ConsoleLogger.Info($"[ACCOUNTS] {AccountId}: {StatusMessage}");
+        return hereProblem == null || inDatabase;
     }
 
     public void ForgetPassword()
     {
         try { _credentials.Delete(AccountId); StatusMessage = "The saved Zoom password was removed."; }
         catch (Exception ex) { StatusMessage = ex.Message; }
-        OnPropertyChanged(nameof(HasSavedPassword));
+        OnPropertyChanged(nameof(HasSavedPassword)); OnPropertyChanged(nameof(PasswordState));
     }
 
     private bool SafeHasPassword(string accountId)

@@ -56,7 +56,18 @@ public sealed class ZoomServerAccounts(
     /// Sends what this PC has, when it is worth sending: signed in, and either the accounts have
     /// changed since last time or an hour has passed. Returns what was sent, or null for nothing.
     /// </summary>
-    public async Task<int?> PushAsync(IReadOnlyList<WindowsMeetingAccountMetadata> accounts, CancellationToken token = default)
+    public async Task<int?> PushAsync(IReadOnlyList<WindowsMeetingAccountMetadata> accounts, CancellationToken token = default) =>
+        await PushAsync(accounts, null, token);
+
+    /// <summary>
+    /// The same, with a password just typed for one account. It is sent whether or not this PC
+    /// managed to keep a copy of it, because the server is where it has to end up: a PC that never
+    /// saw it - a cloud one, a replacement - takes it from there.
+    /// </summary>
+    public async Task<int?> PushAsync(
+        IReadOnlyList<WindowsMeetingAccountMetadata> accounts,
+        (string AccountId, string Password)? typed,
+        CancellationToken token = default)
     {
         if (!api.IsSignedIn) return null;
         var rows = accounts
@@ -78,7 +89,10 @@ public sealed class ZoomServerAccounts(
                 },
                 // Only ever sent when this PC actually has one; an account without it leaves the
                 // kept password alone rather than wiping what another PC saved.
-                password = _readLocal(account.CredentialReference)?.Password,
+                password = typed is { } just && just.AccountId.Equals(account.AccountId, StringComparison.OrdinalIgnoreCase)
+                    ? just.Password
+                    : (_readLocal(account.CredentialReference)
+                       ?? _readLocal(ZoomSignInCredential.StandardReference(account.AccountId)))?.Password,
                 active = false,
             })
             .ToArray();
@@ -88,7 +102,7 @@ public sealed class ZoomServerAccounts(
         if (rows.Length == 0) return null;
 
         string shape = string.Join("|", rows.Select(row => $"{row.accountId}:{row.group}:{row.meetingUrl}:{row.preferredEngine}"));
-        if (shape == _lastShape && DateTimeOffset.Now - _lastSent < SendEvery) return null;
+        if (typed == null && shape == _lastShape && DateTimeOffset.Now - _lastSent < SendEvery) return null;
 
         await api.SaveZoomAccountsAsync(rows, token);
         _lastShape = shape;

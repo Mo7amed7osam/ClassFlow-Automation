@@ -62,7 +62,7 @@ public sealed class ViewModelTests
             ZoomEmail = "teacher@example.com", DefaultMeetingUrl = "https://zoom.us/j/12345678901"
         };
 
-        viewModel.SavePassword("test-only-secret");
+        Assert.True(await viewModel.SavePasswordAsync("test-only-secret"));
         await viewModel.SaveAsync();
 
         Assert.True(viewModel.HasSavedPassword);
@@ -427,7 +427,61 @@ public sealed class ViewModelTests
         public (string Account, string Email, string Password)? Saved { get; private set; }
         public bool HasPassword(string accountId) => Saved?.Account == accountId;
         public string ReferenceFor(string accountId) => $"wincred:ZoomAutoAdmit/ZoomProfile/{accountId}";
-        public void Save(string accountId, string email, string password) => Saved = (accountId, email, password);
+        /// <summary>Set to make this PC refuse to keep a password, as a locked-down Windows does.</summary>
+        public string? Refuse { get; init; }
+        public void Save(string accountId, string email, string password)
+        {
+            if (Refuse != null) throw new InvalidOperationException(Refuse);
+            Saved = (accountId, email, password);
+        }
         public void Delete(string accountId) { if (Saved?.Account == accountId) Saved = null; }
+    }
+
+    [Fact]
+    public async Task AZoomPasswordGoesToTheDatabaseTheMomentItIsTyped()
+    {
+        // "I want everything in the database": a password kept only in this PC's Credential Manager
+        // is of no use to a cloud PC or a replacement, so it goes up as soon as it is saved.
+        var sent = new List<(string Account, string Password)>();
+        var viewModel = new AccountsViewModel(new FakeWindowsUiService(), new FakeZoomCredentials())
+        {
+            AccountId = "CAI5_IND1_G1", ZoomEmail = "depi+10@zoom.example.com",
+        };
+        viewModel.SaveToDatabase = (account, password) => { sent.Add((account, password)); return Task.FromResult("it is in the database too, encrypted"); };
+
+        Assert.True(await viewModel.SavePasswordAsync("made-up Zoom password"));
+
+        Assert.Equal(("CAI5_IND1_G1", "made-up Zoom password"), Assert.Single(sent));
+        Assert.Contains("database", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task APasswordThisPcCannotKeepStillReachesTheDatabaseAndSaysSo()
+    {
+        var credentials = new FakeZoomCredentials { Refuse = "Credential Manager is turned off by policy." };
+        var viewModel = new AccountsViewModel(new FakeWindowsUiService(), credentials)
+        {
+            AccountId = "CAI5_IND1_G1", ZoomEmail = "depi+10@zoom.example.com",
+        };
+        viewModel.SaveToDatabase = (_, _) => Task.FromResult("it is in the database too, encrypted");
+
+        Assert.True(await viewModel.SavePasswordAsync("made-up Zoom password"));
+
+        Assert.Contains("This PC did not keep it", viewModel.StatusMessage);
+        Assert.Contains("database", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task NothingIsSavedForAnEmptyPasswordOrAnAddressThatIsNotOne()
+    {
+        var credentials = new FakeZoomCredentials();
+        var viewModel = new AccountsViewModel(new FakeWindowsUiService(), credentials) { AccountId = "S7", ZoomEmail = "depi+20@zoom.example.com" };
+
+        Assert.False(await viewModel.SavePasswordAsync(""));          // the box was empty: nothing is kept, and it says so
+        Assert.Contains("Type the account's Zoom password", viewModel.StatusMessage);
+
+        viewModel.ZoomEmail = "not an address";
+        Assert.False(await viewModel.SavePasswordAsync("made-up Zoom password"));
+        Assert.Null(credentials.Saved);
     }
 }
