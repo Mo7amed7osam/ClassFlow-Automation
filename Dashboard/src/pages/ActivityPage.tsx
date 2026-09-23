@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { useActivity, useGroups } from '../api/hooks'
 import type { ActivityItem } from '../api/types'
 import { PageHeader } from '../components/Layout'
@@ -40,7 +41,15 @@ function Detail({ item }: { item: ActivityItem }) {
  * own groups; the admin sees every machine.
  */
 export function ActivityPage() {
-  const [group, setGroup] = useState('')
+  // The group comes from the address, so a class card can link straight to its own machine's work.
+  const [params, setParams] = useSearchParams()
+  const group = params.get('group') ?? ''
+  const setGroup = (value: string) => {
+    const next = new URLSearchParams(params)
+    if (value) next.set('group', value)
+    else next.delete('group')
+    setParams(next, { replace: true })
+  }
   const [limit, setLimit] = useState(100)
   const [search, setSearch] = useState('')
   const { data, isLoading, error } = useActivity({ group: group || undefined, limit })

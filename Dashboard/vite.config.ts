@@ -20,6 +20,9 @@ export default defineConfig({
     // Worker threads: the default child-process pool times out starting jsdom on this machine.
     pool: 'threads',
     environment: 'jsdom',
+    // Typing into a form character by character is slow under jsdom, and slower still with every
+    // file running at once: the default five seconds fails tests that pass on their own.
+    testTimeout: 20_000,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
   },

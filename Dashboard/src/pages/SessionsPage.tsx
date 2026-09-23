@@ -1,7 +1,29 @@
 import { useMemo, useState } from 'react'
 import { useSessions } from '../api/hooks'
 import type { SessionClass, SessionStage, SessionsPage as Page, StageState } from '../api/types'
+import { Link } from 'react-router'
 import { Card, Pill, Spinner, StatCard, button } from '../components/ui'
+import { useMe, useRunStage } from '../api/hooks'
+import { useToast } from '../components/Toast'
+import { ApiError } from '../api/client'
+
+/**
+ * Which stage of a class each mark on the card runs, where there is something to run. "Ended" is not
+ * here because no job ends a meeting - the one holding it does, at the end of holding it - and
+ * Drive, Material and Assignment are not started from a class either.
+ */
+export const STAGE_JOBS: Record<string, string> = {
+  zoom: 'class.run',
+  run: 'lms.run_session',
+  attendance: 'lms.attendance',
+  lateJoiners: 'lms.late_joiners',
+  complete: 'lms.complete',
+  zoomReport: 'zoom.report',
+  zoomRecording: 'zoom.recording',
+}
+
+const why = (error: unknown): string =>
+  error instanceof ApiError && typeof error.details === 'string' ? error.details : (error as Error)?.message ?? ''
 
 /**
  * Every class and where it stands: Zoom, the LMS, attendance, Complete and its record link.
@@ -47,7 +69,7 @@ function isoDay(offsetDays: number): string {
   return now.toISOString().slice(0, 10)
 }
 
-function StageMark({ stage }: { stage: SessionStage }) {
+function StageMark({ stage, run, busy }: { stage: SessionStage; run?: () => void; busy?: boolean }) {
   const look = LOOK[stage.state]
   // Done, but not clean. A class that was held and whose meeting could not be closed is drawn as a
   // tick everywhere else, and reads as a class that ran perfectly - so the ring says otherwise.
@@ -55,14 +77,21 @@ function StageMark({ stage }: { stage: SessionStage }) {
   const ring = warned ? 'border-amber-400' : look.ring
   const text = warned ? 'text-amber-600' : look.text
   const fill = warned ? 'bg-amber-50' : look.fill
+  // An admin can tell a machine to do this stage now: the mark itself is the button, so a stage
+  // that failed is fixed where it is read rather than on another page.
+  const mark = `${stage.label}: ${warned ? 'done, with a problem' : look.title}${stage.detail ? `, ${stage.detail}` : ''}`
+  const Mark = run ? 'button' : 'span'
   return (
     <div className="flex min-w-20 flex-col items-center gap-1.5 text-center">
-      <span
-        className={`flex h-8 w-8 items-center justify-center rounded-full border-2 ${ring} ${fill} ${text}`}
-        title={stage.detail ? `${warned ? 'Done, with a problem' : look.title} — ${stage.detail}` : look.title}
-        aria-label={`${stage.label}: ${warned ? 'done, with a problem' : look.title}${
-          stage.detail ? `, ${stage.detail}` : ''
+      <Mark
+        {...(run ? { type: 'button' as const, onClick: run, disabled: busy } : {})}
+        className={`flex h-8 w-8 items-center justify-center rounded-full border-2 ${ring} ${fill} ${text}${
+          run ? ' cursor-pointer hover:brightness-95 disabled:cursor-wait' : ''
         }`}
+        title={run
+          ? `${stage.detail ? `${look.title} — ${stage.detail}. ` : ''}Run this now`
+          : stage.detail ? `${warned ? 'Done, with a problem' : look.title} — ${stage.detail}` : look.title}
+        aria-label={run ? `${mark}. Run it now` : mark}
       >
         {stage.state === 'done' ? (
           <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
@@ -80,7 +109,7 @@ function StageMark({ stage }: { stage: SessionStage }) {
             <path d="M10 6.5V10l2.5 1.5" strokeLinecap="round" />
           </svg>
         )}
-      </span>
+      </Mark>
       <span className="text-[11px] font-medium leading-tight text-slate-700">{stage.label}</span>
       <span
         className={`text-[10px] leading-tight ${
@@ -101,6 +130,27 @@ function ClassCard({ row }: { row: SessionClass }) {
   const headline = HEADLINE[row.headline]
   const when = row.startTime ?? '—'
   const day = new Date(`${row.date}T00:00:00`)
+  const { data: me } = useMe()
+  const runStage = useRunStage()
+  const toast = useToast()
+  const canRun = me?.role === 'admin'
+
+  /**
+   * Hands this stage to the next free machine. A stage that is already done or running is asked
+   * about first: running the meeting stage of a class that is running would open it twice.
+   */
+  function run(stage: SessionStage) {
+    const job = STAGE_JOBS[stage.key]
+    if (!job) return
+    const again = stage.state === 'done' || stage.state === 'running'
+    if (again && !window.confirm(`${stage.label} is ${stage.state === 'done' ? 'already done' : 'running now'}. Do it again?`)) return
+    runStage.mutate({ planId: row.classPlanId, stage: job }, {
+      onSuccess: (answer) => answer.created
+        ? toast.success(`${stage.label}: queued`, `${row.group} — the next free machine takes it.`)
+        : toast.success(`${stage.label}: already queued`, 'It was started a moment ago.'),
+      onError: (error) => toast.error(`Could not run ${stage.label.toLowerCase()}`, why(error)),
+    })
+  }
 
   return (
     <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -133,8 +183,32 @@ function ClassCard({ row }: { row: SessionClass }) {
           than wrapping, so the order stays readable as a line. */}
       <div className="mt-4 flex items-start gap-1 overflow-x-auto pb-1">
         {row.stages.map((stage) => (
-          <StageMark key={stage.key} stage={stage} />
+          <StageMark
+            key={stage.key}
+            stage={stage}
+            run={canRun && STAGE_JOBS[stage.key] ? () => run(stage) : undefined}
+            busy={runStage.isPending}
+          />
         ))}
+      </div>
+      {/* Everything else about this class, one press away: who was there, its recording, and what
+          the machine actually did - which is where a stage that failed says why. */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <Link className="font-medium text-teal-700 hover:underline" to={`/attendance?group=${encodeURIComponent(row.group)}&date=${row.date}`}>
+          Who was there
+        </Link>
+        <Link className="font-medium text-teal-700 hover:underline" to={`/recordings?group=${encodeURIComponent(row.group)}&date=${row.date}`}>
+          Recording
+        </Link>
+        <Link className="font-medium text-teal-700 hover:underline" to={`/activity?group=${encodeURIComponent(row.group)}`}>
+          What the machine did
+        </Link>
+        {row.meetingUrl && (
+          <a className="font-medium text-teal-700 hover:underline" href={row.meetingUrl} target="_blank" rel="noreferrer noopener">
+            Open the meeting
+          </a>
+        )}
+        {canRun && <span className="ml-auto text-[11px] text-slate-400">Press a stage to have a machine do it now.</span>}
       </div>
     </article>
   )
