@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ZoomAutoAdmit.CentralAgent;
+using ZoomAutoAdmit.Core.Central;
 
 namespace ZoomAutoAdmit.CloudWorker.Stages;
 
@@ -23,6 +24,38 @@ public abstract class ClassStageHandler(Action<string>? log = null, Func<DateTim
 
     protected void Log(string message) => _log($"[{JobType}] {message}");
 
+    /// <summary>
+    /// What this worker did, for the dashboard's own record of every machine. A note is written to
+    /// the volume and sent on by the uploader beside the job lanes, so nothing a class does waits
+    /// for the network and a server that was away gets everything on its next pass.
+    /// </summary>
+    public static ActivityLog? Activity { get; set; }
+
+    /// <summary>One line about a class. Writing it can never affect the class it is about.</summary>
+    private void WriteDown(ClassStage stage, JobOutcome outcome)
+    {
+        if (Activity is not { } activity) return;
+        try
+        {
+            string said = outcome.Succeeded
+                ? Text(outcome.Result, "message") ?? Text(outcome.Result, "did") ?? "done"
+                : outcome.Error?.Message ?? outcome.Error?.Code ?? "it failed";
+            // A step that finished but left something behind is not a clean "done": the class card
+            // says so too, and the record must not be tidier than the class was.
+            string how = !outcome.Succeeded ? "failed"
+                : Text(outcome.Result, "warning") is not null ? "skipped"
+                : "done";
+            if (!outcome.Succeeded && outcome.Error is { Retryable: true }) return;   // it will be tried again
+            activity.Write($"{JobType}", how, said.Length > 500 ? said[..500] : said, stage.Group, stage.Date);
+        }
+        catch (Exception problem) { Log($"the note about this class was not written ({problem.GetType().Name})"); }
+    }
+
+    private static string? Text(System.Text.Json.Nodes.JsonObject? result, string field) =>
+        result is not null && result.TryGetPropertyValue(field, out var value) && value is not null
+            ? value.GetValue<string>()
+            : null;
+
     public async Task<JobOutcome> ExecuteAsync(JsonElement payload, CancellationToken cancellationToken)
     {
         if (!ClassStage.TryParse(payload, out var stage, out string error))
@@ -37,7 +70,9 @@ public abstract class ClassStageHandler(Action<string>? log = null, Func<DateTim
         Log($"{stage!.Describe()}{(stage.DryRun ? " (dry run)" : "")}");
         try
         {
-            return await RunAsync(stage, cancellationToken);
+            var outcome = await RunAsync(stage, cancellationToken);
+            WriteDown(stage, outcome);
+            return outcome;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -51,7 +86,9 @@ public abstract class ClassStageHandler(Action<string>? log = null, Func<DateTim
             // The message, never the stack: a stack from inside a browser driver says nothing to
             // whoever reads the class card, and can carry a URL with a token in it.
             Log($"failed: {problem.GetType().Name}");
-            return JobOutcome.Failure("stageFailed", $"{problem.GetType().Name}: {problem.Message}");
+            var failed = JobOutcome.Failure("stageFailed", $"{problem.GetType().Name}: {problem.Message}");
+            WriteDown(stage!, failed);
+            return failed;
         }
     }
 

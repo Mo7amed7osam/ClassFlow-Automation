@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { ApiError } from '../api/client'
-import { useAiStatus, useCloudPolicy, useEnrollDevice, useMe, useSaveCloudPolicy, useSaveSetting, useSetting } from '../api/hooks'
+import {
+  useAiStatus, useCloudPolicy, useEnrollDevice, useMe, useNotifySettings, useSaveCloudPolicy,
+  useSaveNotifySettings, useSaveSetting, useSetting, useTestNotification,
+} from '../api/hooks'
 import type { CloudPolicy, RecordingsSheet } from '../api/types'
 import { PageHeader } from '../components/Layout'
 import { useToast } from '../components/Toast'
@@ -47,10 +50,14 @@ export function SettingsPage() {
   const saveSheet = useSaveSetting<RecordingsSheet>('recordingsSheet')
   const enroll = useEnrollDevice()
   const ai = useAiStatus(isAdmin)
+  const notify = useNotifySettings(isAdmin)
+  const saveNotify = useSaveNotifySettings()
+  const testNotify = useTestNotification()
   const toast = useToast()
 
   const current = { ...POLICY_DEFAULTS, ...(policy.data?.value ?? {}) }
   const [sheetId, setSheetId] = useState<string | null>(null)
+  const [webhook, setWebhook] = useState('')
   const [machine, setMachine] = useState('')
   const [token, setToken] = useState<string | null>(null)
 
@@ -60,7 +67,7 @@ export function SettingsPage() {
     })
   }
 
-  const failed = [savePolicy.error, saveSheet.error, enroll.error].find(Boolean)
+  const failed = [savePolicy.error, saveSheet.error, enroll.error, saveNotify.error, testNotify.error].find(Boolean)
   const message = failed instanceof ApiError && typeof failed.details === 'string' ? failed.details : failed?.message
   const savedSheetId = typeof sheet.data?.value?.spreadsheetId === 'string' ? sheet.data.value.spreadsheetId : ''
 
@@ -127,6 +134,83 @@ export function SettingsPage() {
                     Copy
                   </button>
                 </div>
+              )}
+            </div>
+          </Card>
+        )}
+
+        {isAdmin && (
+          <Card
+            title="Telling somebody a class needs them"
+            action={notify.data?.lastSentAt ? <span className="text-xs text-slate-500">last sent <TimeAgo iso={notify.data.lastSentAt} /></span> : null}
+          >
+            <div className="flex flex-col gap-4 px-5 py-4">
+              <p className="text-sm text-slate-600">
+                When a step of a class fails for good, or a meeting is left open, the server posts it to your n8n
+                webhook and n8n sends the e-mail. Nothing about a class depends on it: a webhook that is down is
+                tried three times and then written off.
+              </p>
+              <label className="flex items-start gap-3">
+                <input
+                  type="checkbox" className="mt-0.5 size-4 rounded border-slate-300"
+                  checked={notify.data?.enabled ?? true} disabled={saveNotify.isPending}
+                  onChange={(event) => saveNotify.mutate({ enabled: event.target.checked }, {
+                    onSuccess: () => toast.success(event.target.checked ? 'Notices are on.' : 'Notices are off.'),
+                  })}
+                />
+                <span>
+                  <span className="block text-sm font-medium text-slate-800">Say when a class needs somebody</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">
+                    {notify.data?.hasUrl
+                      ? `Sent to ${notify.data.urlHost ?? 'your webhook'}.`
+                      : 'There is nowhere to send them yet.'}
+                  </span>
+                </span>
+              </label>
+              <Field
+                label={notify.data?.hasUrl ? 'Replace the webhook address' : 'The n8n webhook address'}
+                hint="Kept like a password: it is never shown again, and never leaves the server."
+              >
+                <input
+                  className={`${input} w-full`} type="url" inputMode="url" autoComplete="off"
+                  placeholder="https://…/webhook/class-notifications"
+                  value={webhook} onChange={(event) => setWebhook(event.target.value)}
+                />
+              </Field>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button" className={button.primary}
+                  disabled={saveNotify.isPending || !webhook.trim()}
+                  onClick={() => saveNotify.mutate({ url: webhook.trim() }, {
+                    onSuccess: () => { setWebhook(''); toast.success('Saved.', 'Try it with Send a test.') },
+                  })}
+                >
+                  {saveNotify.isPending && <Spinner label="Saving" />}
+                  {saveNotify.isPending ? 'Saving…' : 'Save the address'}
+                </button>
+                <button
+                  type="button" className={button.secondary}
+                  disabled={testNotify.isPending || !notify.data?.hasUrl}
+                  onClick={() => testNotify.mutate(undefined, {
+                    onSuccess: (answer) => answer.sent
+                      ? toast.success('It arrived.', 'n8n took the notice.')
+                      : toast.error('It did not arrive', answer.detail ?? ''),
+                  })}
+                >
+                  {testNotify.isPending && <Spinner label="Sending" />}
+                  {testNotify.isPending ? 'Sending…' : 'Send a test'}
+                </button>
+                {notify.data?.hasUrl && (
+                  <button
+                    type="button" className={button.small} disabled={saveNotify.isPending}
+                    onClick={() => saveNotify.mutate({ url: '' }, { onSuccess: () => toast.success('The address was removed.') })}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              {notify.data?.lastError && (
+                <p className="text-xs text-amber-700">Last try: {notify.data.lastError}</p>
               )}
             </div>
           </Card>

@@ -46,6 +46,8 @@ from .activity import router as activity_router
 from .attendance import dashboard_router as attendance_dashboard_router
 from .attendance import router as attendance_router
 from .attendance_ai import AttendanceAi, ChatCompletionsAi
+from .notifications import Notifier
+from .notifications import router as notifications_router
 from .observability import configure_logging, emit
 from .recordings import router as recordings_router
 from .user_data import SecretBox
@@ -138,12 +140,15 @@ def create_app(
         dispatcher = Dispatcher(sessionmaker, registry, settings, clock)
         sweeper = Sweeper(sessionmaker, registry, dispatcher, settings, clock)
         app.state.sessionmaker = sessionmaker
+        # What tells somebody a class needs them. Where it posts is the admin's own webhook, kept in
+        # the database rather than here, so a server nobody has set one on simply says nothing.
+        app.state.notifier = Notifier(sessionmaker, clock)
         app.state.registry = registry
         app.state.dispatcher = dispatcher
         app.state.sweeper = sweeper
         # What makes a class happen at its time. Without it every stage waits for somebody to ask,
         # which is the one thing a server running unattended cannot do.
-        scheduler = Scheduler(sessionmaker, clock)
+        scheduler = Scheduler(sessionmaker, clock, notifier=app.state.notifier)
         app.state.scheduler = scheduler
         stop = asyncio.Event()
         task = asyncio.create_task(sweeper.run(stop)) if run_background else None
@@ -202,6 +207,7 @@ def create_app(
     app.include_router(admin_router)
     app.include_router(dashboard_router)
     app.include_router(dashboard_operations_router)
+    app.include_router(notifications_router)
     app.include_router(delegated_runs_router)
     app.include_router(sessions_router)
     app.include_router(worker_support_router)

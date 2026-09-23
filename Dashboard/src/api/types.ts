@@ -473,6 +473,28 @@ export interface Setting<T> {
   updatedAt: string | null
 }
 
+/**
+ * GET /api/v1/dashboard/notifications: whether a class that needs somebody is said out loud, and
+ * whether there is a webhook to say it to. Never the address itself - that is kept like a password.
+ */
+export interface NotifySettings {
+  enabled: boolean
+  hasUrl: boolean
+  /** just the host of the webhook, to recognise it by */
+  urlHost: string | null
+  label: string
+  updatedAt: string | null
+  lastSentAt: string | null
+  lastError: string | null
+}
+
+/** 200 from POST /api/v1/dashboard/notifications/test. */
+export interface NotifyTest {
+  sent: boolean
+  detail: string | null
+  enabled: boolean
+}
+
 /** GET /api/v1/dashboard/ai: whether attendance matching can ask an AI, and which model. */
 export interface AiStatus {
   available: boolean

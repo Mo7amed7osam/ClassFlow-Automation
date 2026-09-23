@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using ZoomAutoAdmit.CentralAgent;
 using ZoomAutoAdmit.CloudWorker;
 using ZoomAutoAdmit.CloudWorker.Stages;
+using ZoomAutoAdmit.Core.Central;
 using ZoomAutoAdmit.WebAutomation.Lms;
 
 // The cloud worker: the half of Zoom Auto Admit that runs where there is no Windows.
@@ -153,6 +154,10 @@ var zoomAccounts = new ServerZoomAccounts(http, tokens.Read, () => Running(meeti
 var snapshots = new ServerAttendanceSnapshots(http, tokens.Read, Log);
 var sessionRoles = new ServerSessionRoles(http, tokens.Read, Log);
 var cloudPolicy = new ServerPolicy(http, tokens.Read, Log);
+// What this worker did, for the dashboard's record of every machine. The notes are written on the
+// volume as a class runs and sent on by the uploader below, so a server that was away loses none.
+var activity = new ActivityLog();
+ClassStageHandler.Activity = activity;
 var meetingHandlers = new List<IJobHandler>
 {
     new ClassRunStage(zoomAccounts, settings.Headless, Log, attendance: snapshots, roles: sessionRoles, policy: cloudPolicy),
@@ -204,6 +209,8 @@ if (twoLanes)
         message => Log($"[lms lane] {message}"));
 
 Log($"connecting to {settings.BackendUrl}");
+var uploading = new ActivityUploader(settings.BackendUrl, tokens, http, activity,
+                                     message => Log($"[activity] {message}")).RunAsync(stopping.Token);
 var lanes = new List<Task<AgentStopReason>> { meetingAgent.RunAsync(stopping.Token) };
 if (lmsAgent is not null) lanes.Add(lmsAgent.RunAsync(stopping.Token));
 
@@ -212,6 +219,7 @@ if (lmsAgent is not null) lanes.Add(lmsAgent.RunAsync(stopping.Token));
 await Task.WhenAny(lanes);
 if (!stopping.IsCancellationRequested) RequestStop("a lane stopped");
 var reasons = await Task.WhenAll(lanes);
+try { await uploading; } catch (Exception) { /* the last notes wait on the volume for the next run */ }
 
 // Whatever passwords this run was given go now, whether it stopped cleanly or not.
 credentials.Clear();

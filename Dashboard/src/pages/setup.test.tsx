@@ -373,6 +373,60 @@ describe('settings', () => {
     expect(screen.queryByRole('button', { name: /enrollment token/i })).toBeNull()
   })
 
+  const notify = (overrides: Record<string, unknown> = {}) => (call: Call) =>
+    call.url === '/api/v1/dashboard/notifications' && call.method === 'GET'
+      ? { body: { enabled: true, hasUrl: true, urlHost: 'mine.app.n8n.cloud', label: 'cloud', updatedAt: null, lastSentAt: null, lastError: null, ...overrides } }
+      : undefined
+
+  it('takes an n8n webhook, never shows it again, and can try it', async () => {
+    // The server knows an address once one is saved, so reading again says so - which is what
+    // lets "Send a test" be pressed at all.
+    const kept = { enabled: true, hasUrl: false, urlHost: null as string | null, label: 'cloud', updatedAt: null, lastSentAt: null, lastError: null }
+    const calls = fakeBackend(signedInAs(adminMe), policy(null), sheet, (call) => {
+      if (!call.url.startsWith('/api/v1/dashboard/notifications')) return undefined
+      if (call.url.endsWith('/test')) return { body: { sent: true, detail: null, enabled: true } }
+      if (call.method === 'PUT') {
+        Object.assign(kept, { hasUrl: true, urlHost: 'mine.app.n8n.cloud' })
+        return { body: { ...kept } }
+      }
+      return { body: { ...kept } }
+    })
+    renderPage(<SettingsPage />, '/settings')
+
+    expect(await screen.findByText(/nowhere to send them yet/)).toBeInTheDocument()
+    const field = screen.getByLabelText('The n8n webhook address')
+    await userEvent.type(field, 'https://mine.app.n8n.cloud/webhook/class-notifications')
+    await userEvent.click(screen.getByRole('button', { name: 'Save the address' }))
+
+    const put = await waitFor(() => calls.find((call) => call.url === '/api/v1/dashboard/notifications' && call.method === 'PUT')!)
+    expect(JSON.parse(put.body!)).toEqual({ url: 'https://mine.app.n8n.cloud/webhook/class-notifications' })
+    // The field is emptied: the address is not kept on screen, and the server never sends it back.
+    await waitFor(() => expect((screen.getByLabelText(/webhook address/) as HTMLInputElement).value).toBe(''))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Send a test' }))
+    expect(await screen.findByText('It arrived.')).toBeInTheDocument()
+  })
+
+  it('says why a test did not arrive instead of looking as though it did', async () => {
+    fakeBackend(signedInAs(adminMe), policy(null), sheet, notify(), (call) =>
+      call.url.endsWith('/notifications/test')
+        ? { body: { sent: false, detail: 'the webhook answered 404: the n8n workflow is not active (or the address is a test one)', enabled: true } }
+        : undefined)
+    renderPage(<SettingsPage />, '/settings')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Send a test' }))
+    expect(await screen.findByText(/the n8n workflow is not active/)).toBeInTheDocument()
+  })
+
+  it('does not offer a coordinator the webhook at all', async () => {
+    fakeBackend(signedInAs(coordinatorMe()), policy(null))
+    renderPage(<SettingsPage />, '/settings')
+
+    await screen.findByLabelText(/Make the instructor co-host/)
+    expect(screen.queryByText(/n8n webhook/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Send a test' })).toBeNull()
+  })
+
   it('says whether attendance matching can ask an AI, and never asks for its key', async () => {
     fakeBackend(signedInAs(adminMe), policy(null), sheet, (call) =>
       call.url === '/api/v1/dashboard/ai' ? { body: { available: true, model: 'openai/gpt-4o-mini' } } : undefined)

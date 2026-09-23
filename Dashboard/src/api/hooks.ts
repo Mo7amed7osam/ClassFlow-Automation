@@ -12,6 +12,8 @@ import type {
   MyLmsAccount,
   MyLmsAccounts,
   MyZoomAccount,
+  NotifySettings,
+  NotifyTest,
   AttachOptions,
   AttachResult,
   CancelResult,
@@ -439,6 +441,34 @@ export const useRunStage = () => {
     mutationFn: ({ planId, stage }: { planId: string; stage: string }) =>
       api<StageRun>(`/api/v1/admin/run-plan/${planId}/run`, send('POST', { stage })),
     onSuccess: () => { for (const key of ['run-plan', 'sessions', 'overview', 'activity']) client.invalidateQueries({ queryKey: [key] }) },
+  })
+}
+
+/** Whether a class that needs somebody is said out loud, and where. Never the webhook itself. */
+export function useNotifySettings(enabled = true) {
+  return useQuery({
+    queryKey: ['notifications'],
+    queryFn: () => api<NotifySettings>('/api/v1/dashboard/notifications'),
+    refetchInterval: REFRESH.groups,
+    enabled,
+  })
+}
+
+export function useSaveNotifySettings() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { enabled?: boolean; url?: string; label?: string }) =>
+      api<NotifySettings>('/api/v1/dashboard/notifications', send('PUT', body)),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['notifications'] }),
+  })
+}
+
+/** Sends one now and waits for the answer, so the page can say whether it arrived. */
+export function useTestNotification() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: () => api<NotifyTest>('/api/v1/dashboard/notifications/test', send('POST')),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['notifications'] }),
   })
 }
 

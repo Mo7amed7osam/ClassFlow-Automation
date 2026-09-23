@@ -360,6 +360,30 @@ may read one; only the admin may write one (`GET`/`PUT /api/v1/settings/{key}`):
 A worker reads both when it takes a class, so a switch changed now applies to the next class rather
 than the one already running.
 
+### Saying what needs somebody
+
+A class run by a worker has nobody watching it, so the server says out loud what a page would
+otherwise have to be opened to notice. It posts to an n8n webhook and n8n sends the e-mail — the
+same webhook and the same shape the Windows app posts (`ClassNotifier.cs`), so one workflow serves
+both:
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/v1/dashboard/notifications` | whether notices are on, and whether a webhook is set — never the address |
+| `PUT /api/v1/dashboard/notifications` | `{enabled?, url?, label?}`; an `https://` address only, `""` removes it |
+| `POST /api/v1/dashboard/notifications/test` | sends one now and waits, so the page says whether it arrived |
+
+Admin only. The address is kept like a password: written once, never sent back to a browser, never
+in an answer or a log, and not readable through `/api/v1/settings/{key}`.
+
+What is said: `step.failed` (a step that will not be tried again), `class.warning` (a step that
+finished leaving something behind — a meeting nobody could close), `class.blocked` (a class whose
+time came and which could not be started at all: no Zoom link, no account for the group, no LMS
+sign-in), and `test`. A blocked class is said once rather than once a minute.
+
+Nothing about a class depends on any of it: a webhook that is down, slow, wrong or absent is tried
+three times, then written off with a line in the log.
+
 A class's meeting link therefore comes from that coordinator's own Zoom account for the group, and
 signing in on a new PC — a cloud one — brings the accounts and the classes with it.
 

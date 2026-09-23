@@ -21,7 +21,7 @@ recording API are unchanged.
 | Zoom accounts, LMS sign-ins | Their own, and (on Run classes) which of a coordinator's are used for that coordinator's classes | Their own: the accounts their classes are hosted and written up with |
 | Opens by itself | Their own timetable | Their own timetable |
 | Who is co-host | Edit the session types and their instructors | Read them |
-| Settings | The switches every machine reads, whether attendance matching can ask an AI, the recordings sheet, and a token for a machine to join with | The switches, read only |
+| Settings | The switches every machine reads, where notices go (the n8n webhook, and a Send a test), whether attendance matching can ask an AI, the recordings sheet, and a token for a machine to join with | The switches, read only |
 | What machines did | Every machine, every group | Their own groups |
 
 A coordinator asking for anything outside their groups gets the same `404` as for something that
@@ -45,7 +45,7 @@ request.
 | LMS sign-ins | The name classes are written up under on the LMS, and which one is in use. The password is sealed on the server and handed only to the machine running the class. |
 | Opens by itself | The classes that open at their time on a machine of yours, in the same shape the Windows app keeps them: name, group, time, the days (or a single date), the Zoom account, what it opens with, and whether it is on. A machine with none of its own takes these. |
 | Who is co-host | Who is made co-host when a class of each kind starts: the session type, the words or groups that recognise it, its instructor, and anybody else who may be co-host. The machines and the Windows app read the same list. |
-| Settings | The switches every machine reads before it takes a class - make the instructor co-host, end a class when it is over - plus the recordings sheet and a single-use token for a machine of yours to join with. A class already running keeps the settings it started with. |
+| Settings | The switches every machine reads before it takes a class - make the instructor co-host, end a class when it is over - where notices go when a class needs somebody (an n8n webhook, kept like a password, with Send a test), whether attendance matching can ask an AI, the recordings sheet, and a single-use token for a machine of yours to join with. A class already running keeps the settings it started with. |
 
 **Groups** come from the recordings: the first time n8n syncs a recording for a new group, the
 group is registered by itself. The admin can also add one ahead of time, give it a label, or archive

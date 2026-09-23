@@ -32,6 +32,7 @@ from .devices import authenticate_device
 from .dispatch import Dispatcher, assignment_message
 from .jobs import Decision, agent_accepted, agent_finished, agent_rejected, agent_started
 from .models import Device, Job
+from .notifications import class_warning, job_failed
 from .observability import emit
 from .security import bearer_token
 from .validation import clean_capabilities
@@ -163,6 +164,17 @@ class AgentSession:
                     now=now,
                     settings=self.settings,
                 )
+                # Somebody is told what a page would otherwise have to be opened to notice: a step
+                # that will not be tried again, and a step that finished leaving something behind
+                # (a meeting nobody could close). Sent beside this, never in its way.
+                if outcome in ("failed", "succeeded"):
+                    finished = await session.get(Job, job_id)
+                    if finished is not None and outcome == "failed":
+                        job_failed(self.state, finished)
+                    elif finished is not None and isinstance(finished.result, dict):
+                        warning = finished.result.get("warning")
+                        if isinstance(warning, str) and warning.strip():
+                            class_warning(self.state, finished, warning.strip())
 
         if outcome == "ignored":
             emit("agent.job_event_ignored", deviceId=str(self.device_id), jobId=str(job_id), messageType=kind)

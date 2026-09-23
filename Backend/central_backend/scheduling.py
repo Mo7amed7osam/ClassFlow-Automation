@@ -38,6 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .jobs import create_job
+from .notifications import class_blocked
 from .models import ClassPlan, Job, LmsAccount, RunDelegation, User, ZoomAccount
 from .observability import emit
 from .validation import PayloadError, validate_payload
@@ -130,10 +131,15 @@ class Scheduler:
         sessionmaker: async_sessionmaker[AsyncSession],
         clock,  # noqa: ANN001 - the app's Clock, as the sweeper takes it
         interval_seconds: int = 30,
+        notifier=None,  # noqa: ANN001 - the app's Notifier; None says nothing to anybody
     ) -> None:
         self._sessionmaker = sessionmaker
         self._clock = clock
         self._interval = interval_seconds
+        self.notifier = notifier
+        # Which classes have already been said to need somebody, so a pass every minute is not a
+        # notice every minute.
+        self._told: set[str] = set()
 
     async def schedule_once(self) -> dict[str, int]:
         """One pass. Returns what it did, for the log and for a test to read."""
@@ -181,10 +187,13 @@ class Scheduler:
 
                     payload = await self._payload(session, plan)
                     if payload is None:
+                        self._say_blocked(plan, stage.job_type,
+                                          "no LMS sign-in is chosen for this coordinator")
                         continue
                     if (why := self._can_run(stage, payload)) is not None:
                         emit("schedule.cannot_run", level=logging.WARNING, group=plan.group_name,
                              date=plan.session_date.isoformat(), jobType=stage.job_type, reason=why)
+                        self._say_blocked(plan, stage.job_type, why)
                         continue
 
                     # Through the same validator an API caller goes through, so the scheduler
@@ -218,6 +227,16 @@ class Scheduler:
         meeting = (await session.execute(
             select(Job.status).where(Job.idempotency_key == idempotency_key(plan.id, STAGES[0])))).scalar_one_or_none()
         return meeting is not None and meeting not in ("failed", "cancelled")
+
+    def _say_blocked(self, plan: ClassPlan, job_type: str, why: str) -> None:
+        """Tells somebody, once. A pass happens every minute; a class that cannot open is one piece
+        of news, not sixty an hour. Kept in memory, so a restart may repeat it once - which is the
+        right way round: a notice too many beats a class nobody hears about."""
+        key = f"{plan.id}:{job_type}"
+        if key in self._told:
+            return
+        self._told.add(key)
+        class_blocked(self.notifier, plan, job_type, why)
 
     async def _payload(self, session: AsyncSession, plan: ClassPlan) -> dict | None:
         return await class_payload(session, plan)
