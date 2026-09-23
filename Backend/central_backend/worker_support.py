@@ -3,6 +3,7 @@
     POST /api/v1/agent/companion-enrollment    a single-use enrolment token for this device's LMS lane
     GET  /api/v1/agent/jobs/{id}/attendance    who was present at the class a held LMS job writes up
     GET  /api/v1/agent/session-roles           who teaches each kind of session, to make them co-host
+    GET  /api/v1/agent/policy                  the switches for co-host and for ending a class
 
 Both are answered only to a device, with its own device token, and both are narrow on purpose.
 
@@ -171,3 +172,29 @@ async def session_roles(request: Request) -> Any:
     value = row.value if row else None
     profiles = value.get("profiles") if isinstance(value, dict) else value if isinstance(value, list) else None
     return _no_store({"profiles": profiles or [], "updatedAt": row.updated_at if row else None})
+
+
+# What a worker does when nobody has said otherwise: the Windows app's own defaults, so a fresh
+# server behaves like the app it grew out of.
+POLICY_DEFAULTS = {"autoCoHost": True, "autoEnd": True}
+
+
+@router.get("/api/v1/agent/policy")
+async def policy(request: Request) -> Any:
+    """The switches a worker reads before it holds a class.
+
+    On Windows a person has these beside the meeting: make the instructor co-host, and end the class
+    when the rule says it is over. A worker has no window, so the dashboard holds them instead and
+    every worker reads the same answer. Anything the setting does not name keeps its default, so a
+    half-written setting cannot turn a class's behaviour off by omission.
+    """
+    async with request.app.state.sessionmaker() as session:
+        await _device(session, request)
+        row = await session.get(AppSetting, "cloudPolicy")
+    value = row.value if isinstance(row.value if row else None, dict) else {}
+    answer = dict(POLICY_DEFAULTS)
+    for key in POLICY_DEFAULTS:
+        if isinstance(value.get(key), bool):
+            answer[key] = value[key]
+    answer["updatedAt"] = row.updated_at if row else None
+    return _no_store(answer)

@@ -14,6 +14,8 @@ public enum EndedHow
     NotHost,
     /// <summary>The rule said it was over and pressing End did not work.</summary>
     EndFailed,
+    /// <summary>Ending classes automatically is off in the dashboard, so it was left running.</summary>
+    LeftOpen,
 }
 
 public sealed record MeetingEndOutcome(EndedHow How, string Reason)

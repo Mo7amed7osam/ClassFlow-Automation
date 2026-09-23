@@ -342,3 +342,142 @@ export interface SessionsPage {
   }
   groups: string[]
 }
+
+// ============================================ your own accounts, your timetable, and the switches
+// (see Backend/central_backend/user_data.py, activity.py and worker_support.py)
+
+/** One of your own LMS sign-ins. The password is never sent back - only whether one is kept. */
+export interface MyLmsAccount {
+  id: string
+  label: string
+  email: string
+  role: Role
+  /** the one your classes go up under */
+  active: boolean
+  updatedAt?: string | null
+}
+
+export interface MyLmsAccounts {
+  accounts: MyLmsAccount[]
+  /** false when the server has no encryption key: passwords cannot be kept at all then. */
+  canKeepPasswords: boolean
+}
+
+/** One of your own Zoom accounts, as you keep it. `hasPassword` is how a server signs in as you. */
+export interface MyZoomAccount extends ZoomAccountRef {
+  hasPassword: boolean
+  updatedAt?: string | null
+}
+
+/** What PUT /api/v1/me/zoom-accounts takes: the whole set, since what you keep is what is kept. */
+export interface ZoomAccountInput {
+  accountId: string
+  label: string
+  zoomEmail: string | null
+  group: string | null
+  meetingUrl: string | null
+  preferredEngine: PreferredEngine | null
+  active: boolean
+  /** left out to keep the saved password, "" to remove it, anything else to replace it */
+  password?: string
+}
+
+/**
+ * One class that opens by itself. The server keeps these as the Windows app writes them and never
+ * reads inside one, so this mirrors the app's own shape (MeetingSchedule) rather than inventing a
+ * second one: a class edited here is the same class on a PC that syncs.
+ */
+/** What a class opens with, in the app's own spelling (the dashboard's own is lower case). */
+export type ScheduleEngine = 'Web' | 'Desktop'
+
+export interface ScheduleRow {
+  id: string
+  name: string
+  meetingUrl: string
+  accountId: string
+  /** "19:00:00" as the app writes it */
+  time: string
+  /** the days as the app's flags name them: "Monday, Wednesday", or "None" for a one-off */
+  days: string
+  enabled: boolean
+  /** a single class on one date, instead of a weekly one */
+  occurrenceDate?: string | null
+  groupName?: string | null
+  /** The app's own enum names, as it writes them: "Web" or "Desktop". */
+  preferredEngine?: ScheduleEngine | null
+  /** whose class it is when one machine runs several people's; null for your own */
+  coordinator?: string | null
+  coordinatorId?: string | null
+  lastTriggeredDate?: string | null
+}
+
+export interface SchedulesAnswer {
+  schedules: ScheduleRow[]
+  count: number
+  /** the PC that last sent them */
+  deviceName: string | null
+  updatedAt: string | null
+}
+
+/** One thing a machine did, from GET /api/v1/dashboard/activity. */
+export interface ActivityItem {
+  id: number
+  device: string | null
+  deviceId: string
+  at: string
+  kind: string
+  outcome: 'done' | 'failed' | 'skipped'
+  group: string | null
+  date: string | null
+  summary: string
+  detail: Record<string, unknown> | null
+}
+
+export type SessionRoleName = 'Instructor' | 'CoHost'
+
+/** One configured person for a session type: who teaches it, or who may be made co-host in it. */
+export interface RolePerson {
+  name: string
+  role: SessionRoleName
+  /** Zoom display names already seen for them */
+  aliases?: string[]
+}
+
+/** Who is made co-host when a session of one kind starts (the Windows app's session roles). */
+export interface SessionRoleProfile {
+  sessionType: string
+  /** words matched against the class's name to recognise this kind of session */
+  keywords: string[]
+  /** groups or accounts that always mean this kind, whatever the name says */
+  accounts: string[]
+  people: RolePerson[]
+}
+
+/** The switches every worker reads: GET/PUT /api/v1/settings/cloudPolicy. */
+export interface CloudPolicy {
+  autoCoHost: boolean
+  autoEnd: boolean
+}
+
+/** Where the recordings sheet is read from, for the machine that syncs it. */
+export interface RecordingsSheet {
+  spreadsheetId?: string
+  sheetName?: string
+  [key: string]: unknown
+}
+
+/** GET /api/v1/settings/{key}: the value, or null when nothing has been saved yet. */
+export interface Setting<T> {
+  key: string
+  value: T | null
+  updatedAt: string | null
+}
+
+/** 202 from POST /api/v1/admin/run-plan/{id}/run. */
+export type StageRun = JobSummary & { created: boolean }
+
+/** 200 from POST /api/v1/me/devices/enroll: the token a machine spends at once to join. */
+export interface Enrollment {
+  enrollmentToken: string
+  expiresInSeconds: number
+}

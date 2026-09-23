@@ -7,31 +7,57 @@ interface NavItem {
   to: string
   label: string
   end: boolean
+  /** Which part of the work it belongs to, drawn as a heading in the menu. */
+  section: Section
   badge?: number
 }
 
-/** What each role finds in the menu. The backend enforces the same split on every request. */
+/** The four parts of the work, in the order the menu shows them. */
+export const SECTIONS = ['Today', 'Records', 'Setup', 'System'] as const
+export type Section = (typeof SECTIONS)[number]
+
+/**
+ * What each role finds in the menu. The backend enforces the same split on every request.
+ *
+ * Everything the app does is here, in the parts it groups them in: what is happening now, the
+ * records of what happened, the accounts and lists that make a class runnable, and the machines and
+ * switches underneath. A coordinator sees their own of each; only the admin sees other people's
+ * classes, the machines and the shared switches.
+ */
 export function navFor(role: Role | undefined, pending = 0): NavItem[] {
+  const today: NavItem[] = [
+    { to: '/', label: 'Overview', end: true, section: 'Today' },
+    { to: '/sessions', label: 'Sessions', end: false, section: 'Today' },
+    { to: '/activity', label: 'What machines did', end: false, section: 'Today' },
+  ]
+  const setup: NavItem[] = [
+    { to: '/zoom-accounts', label: 'Zoom accounts', end: false, section: 'Setup' },
+    { to: '/lms-accounts', label: 'LMS sign-ins', end: false, section: 'Setup' },
+    { to: '/schedules', label: 'Opens by itself', end: false, section: 'Setup' },
+    { to: '/session-roles', label: 'Who is co-host', end: false, section: 'Setup' },
+  ]
   if (role === 'admin') {
     return [
-      { to: '/', label: 'Overview', end: true },
-      { to: '/sessions', label: 'Sessions', end: false },
-      { to: '/recordings', label: 'Recordings', end: false },
-      { to: '/attendance', label: 'Attendance', end: false },
-      { to: '/students', label: 'Students', end: false },
-      { to: '/groups', label: 'Groups', end: false },
-      { to: '/users', label: 'Users', end: false, badge: pending || undefined },
-      { to: '/runs', label: 'Run classes', end: false },
-      { to: '/agents', label: 'Agents', end: false },
+      ...today,
+      { to: '/runs', label: 'Run classes', end: false, section: 'Today' },
+      { to: '/attendance', label: 'Attendance', end: false, section: 'Records' },
+      { to: '/recordings', label: 'Recordings', end: false, section: 'Records' },
+      { to: '/students', label: 'Students', end: false, section: 'Records' },
+      { to: '/groups', label: 'Groups', end: false, section: 'Records' },
+      { to: '/users', label: 'Users', end: false, section: 'Records', badge: pending || undefined },
+      ...setup,
+      { to: '/agents', label: 'Agents', end: false, section: 'System' },
+      { to: '/settings', label: 'Settings', end: false, section: 'System' },
     ]
   }
   return [
-    { to: '/', label: 'Overview', end: true },
-    { to: '/sessions', label: 'Sessions', end: false },
-    { to: '/recordings', label: 'Recordings', end: false },
-    { to: '/attendance', label: 'Attendance', end: false },
-    { to: '/students', label: 'Students', end: false },
-    { to: '/groups', label: 'My groups', end: false },
+    ...today,
+    { to: '/attendance', label: 'Attendance', end: false, section: 'Records' },
+    { to: '/recordings', label: 'Recordings', end: false, section: 'Records' },
+    { to: '/students', label: 'Students', end: false, section: 'Records' },
+    { to: '/groups', label: 'My groups', end: false, section: 'Records' },
+    ...setup,
+    { to: '/settings', label: 'Settings', end: false, section: 'System' },
   ]
 }
 
@@ -58,22 +84,31 @@ export function Layout() {
             <p className="text-xs text-slate-400">{isAdmin ? 'Admin' : 'Coordinator'}</p>
           </div>
         </div>
-        <nav className="mt-2 flex flex-col gap-0.5 px-3" aria-label="Main">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                `rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/60 hover:text-white'}`
-              }
-            >
-              <span className="flex items-center justify-between gap-2">
-                {item.label}
-                {item.badge ? <span className="rounded-full bg-amber-500 px-1.5 text-xs font-semibold text-slate-900" aria-label={`${item.badge} waiting`}>{item.badge}</span> : null}
-              </span>
-            </NavLink>
-          ))}
+        <nav className="mt-1 flex flex-col overflow-y-auto px-3 pb-4" aria-label="Main">
+          {SECTIONS.map((section) => {
+            const items = NAV.filter((item) => item.section === section)
+            if (items.length === 0) return null
+            return (
+              <div key={section} className="mb-1">
+                <p className="px-3 pb-1 pt-2.5 text-[0.65rem] font-semibold uppercase tracking-wider text-slate-500">{section}</p>
+                {items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    className={({ isActive }) =>
+                      `block rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/60 hover:text-white'}`
+                    }
+                  >
+                    <span className="flex items-center justify-between gap-2">
+                      {item.label}
+                      {item.badge ? <span className="rounded-full bg-amber-500 px-1.5 text-xs font-semibold text-slate-900" aria-label={`${item.badge} waiting`}>{item.badge}</span> : null}
+                    </span>
+                  </NavLink>
+                ))}
+              </div>
+            )
+          })}
         </nav>
         <p className="mt-auto px-5 py-4 text-xs text-slate-500">Operations · V3</p>
       </aside>

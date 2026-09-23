@@ -1,10 +1,16 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { api, query, UnauthorizedError } from './client'
 import type {
+  ActivityItem,
   AdminGroup,
   Agent,
   ClassPlan,
+  CloudPolicy,
   Delegation,
+  Enrollment,
+  MyLmsAccount,
+  MyLmsAccounts,
+  MyZoomAccount,
   AttachOptions,
   AttachResult,
   CancelResult,
@@ -13,13 +19,20 @@ import type {
   JobSummary,
   Me,
   Overview,
+  Role,
   Recording,
   RecordingChanges,
   RecordingDetails,
   RecordingPage,
   RecordingQuery,
   RunPlan,
+  ScheduleRow,
+  SchedulesAnswer,
+  SessionRoleProfile,
   SessionsPage,
+  Setting,
+  StageRun,
+  ZoomAccountInput,
   User,
   UserList,
   UserStatus,
@@ -311,3 +324,125 @@ export const useUpdateClassPlan = () =>
     note?: string | null
     applyToGroup?: boolean
   }) => api<ClassPlan & { alsoInGroup: number }>(`/api/v1/admin/run-plan/${id}`, send('PATCH', body)))
+
+// ==================================================== your own accounts, timetable, and the switches
+
+/** Your LMS sign-ins. Nothing here is a password: the server only says whether it kept one. */
+export function useMyLmsAccounts() {
+  return useQuery({
+    queryKey: ['my-lms-accounts'],
+    queryFn: () => api<MyLmsAccounts>('/api/v1/me/lms-accounts'),
+    refetchInterval: REFRESH.groups,
+  })
+}
+
+function useMyMutation<Vars, Result>(keys: string[], request: (vars: Vars) => Promise<Result>) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: request,
+    onSuccess: () => { for (const key of keys) client.invalidateQueries({ queryKey: [key] }) },
+  })
+}
+
+/** Saves one LMS sign-in. The same email saves over the one that is there rather than adding a second. */
+export const useSaveLmsAccount = () =>
+  useMyMutation(['my-lms-accounts', 'delegations'], (body: { label: string; email: string; role: Role; password: string; active: boolean }) =>
+    api<MyLmsAccount>('/api/v1/me/lms-accounts', send('POST', body)),
+  )
+
+/** Which sign-in your classes go up under. */
+export const useUseLmsAccount = () =>
+  useMyMutation(['my-lms-accounts', 'delegations'], (id: string) =>
+    api<MyLmsAccount>(`/api/v1/me/lms-accounts/${id}/use`, send('POST')),
+  )
+
+export const useDeleteLmsAccount = () =>
+  useMyMutation(['my-lms-accounts', 'delegations'], (id: string) =>
+    api<{ status: string }>(`/api/v1/me/lms-accounts/${id}`, send('DELETE')),
+  )
+
+/** The Zoom accounts you host with, and whether a password is kept for each. */
+export function useMyZoomAccounts() {
+  return useQuery({
+    queryKey: ['my-zoom-accounts'],
+    queryFn: () => api<{ accounts: MyZoomAccount[] }>('/api/v1/me/zoom-accounts'),
+    refetchInterval: REFRESH.groups,
+  })
+}
+
+/**
+ * Saves the whole set of Zoom accounts, which is what the endpoint takes: an account left out of
+ * the list is removed. Every page that sends this therefore sends the list it is showing, not one
+ * account on its own.
+ */
+export const useSaveZoomAccounts = () =>
+  useMyMutation(['my-zoom-accounts', 'delegations', 'run-plan'], (accounts: ZoomAccountInput[]) =>
+    api<{ accounts: MyZoomAccount[] }>('/api/v1/me/zoom-accounts', send('PUT', { accounts })),
+  )
+
+/** The classes that open by themselves, as your machines keep them. */
+export function useSchedules() {
+  return useQuery({
+    queryKey: ['my-schedules'],
+    queryFn: () => api<SchedulesAnswer>('/api/v1/me/schedules'),
+    refetchInterval: REFRESH.groups,
+  })
+}
+
+/** Saves the whole timetable, like the Zoom accounts: what is sent is what is kept. */
+export const useSaveSchedules = () =>
+  useMyMutation(['my-schedules'], ({ schedules, deviceName }: { schedules: ScheduleRow[]; deviceName?: string | null }) =>
+    api<{ count: number; updatedAt: string }>('/api/v1/me/schedules', send('PUT', { schedules, deviceName: deviceName ?? null })),
+  )
+
+/** What the machines have done, newest first. A coordinator sees their own groups only. */
+export function useActivity(params: { group?: string; limit?: number } = {}) {
+  return useQuery({
+    queryKey: ['activity', params.group ?? '', params.limit ?? 100],
+    queryFn: () => api<{ items: ActivityItem[] }>(`/api/v1/dashboard/activity${query({ group: params.group, limit: params.limit })}`),
+    refetchInterval: REFRESH.overview,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** One shared setting. Any signed-in person may read one; only the admin may save one. */
+export function useSetting<T>(key: string, enabled = true) {
+  return useQuery({
+    queryKey: ['setting', key],
+    queryFn: () => api<Setting<T>>(`/api/v1/settings/${key}`),
+    refetchInterval: REFRESH.groups,
+    enabled,
+  })
+}
+
+export function useSaveSetting<T>(key: string) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (value: T) => api<Setting<T>>(`/api/v1/settings/${key}`, send('PUT', { value })),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['setting', key] }),
+  })
+}
+
+/** The co-host profiles, which live in the same place for every machine. */
+export const useSessionRoles = () => useSetting<{ profiles: SessionRoleProfile[] }>('sessionRoles')
+export const useSaveSessionRoles = () => useSaveSetting<{ profiles: SessionRoleProfile[] }>('sessionRoles')
+
+/** The switches the workers read before holding a class. */
+export const useCloudPolicy = () => useSetting<CloudPolicy>('cloudPolicy')
+export const useSaveCloudPolicy = () => useSaveSetting<CloudPolicy>('cloudPolicy')
+
+/** Runs one stage of one class now instead of at its time. */
+export const useRunStage = () => {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ planId, stage }: { planId: string; stage: string }) =>
+      api<StageRun>(`/api/v1/admin/run-plan/${planId}/run`, send('POST', { stage })),
+    onSuccess: () => { for (const key of ['run-plan', 'sessions', 'overview', 'activity']) client.invalidateQueries({ queryKey: [key] }) },
+  })
+}
+
+/** A token for a machine of yours to join with. It is single-use and short-lived. */
+export const useEnrollDevice = () =>
+  useMutation({
+    mutationFn: (name: string) => api<Enrollment>('/api/v1/me/devices/enroll', send('POST', name ? { name } : undefined)),
+  })

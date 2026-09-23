@@ -93,3 +93,44 @@ public sealed class ClassTitle(string? title) : ISessionNameSource
 {
     public string? Describe(string accountId, DateTimeOffset startTime) => title;
 }
+
+/// <summary>
+/// The switches the Windows app keeps beside a meeting - making the instructor co-host, and ending a
+/// class once the rule says it is over - which the dashboard holds for the workers. Read once at the
+/// start of each class; a server that cannot be reached leaves a class behaving as the app does.
+/// </summary>
+public sealed class ServerPolicy(HttpClient http, Func<string?> deviceToken, Action<string>? log = null)
+{
+    private readonly Action<string> _log = log ?? (_ => { });
+
+    public bool AutoCoHost { get; private set; } = true;
+    public bool AutoEnd { get; private set; } = true;
+
+    private sealed record Answer(bool? AutoCoHost, bool? AutoEnd);
+
+    public async Task RefreshAsync(CancellationToken cancellationToken)
+    {
+        if (deviceToken() is not { Length: > 0 } token) return;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "api/v1/agent/policy");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var response = await http.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                _log($"[policy] the server did not give the switches: {(int)response.StatusCode}");
+                return;
+            }
+            var answer = await response.Content.ReadFromJsonAsync<Answer>(cancellationToken: cancellationToken);
+            if (answer is null) return;
+            AutoCoHost = answer.AutoCoHost ?? true;
+            AutoEnd = answer.AutoEnd ?? true;
+            _log($"[policy] co-host {(AutoCoHost ? "on" : "off")}, ending a class {(AutoEnd ? "on" : "off")}");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception problem)
+        {
+            _log($"[policy] could not read the switches: {problem.GetType().Name}: {problem.Message}");
+        }
+    }
+}

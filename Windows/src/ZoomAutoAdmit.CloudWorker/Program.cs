@@ -152,9 +152,10 @@ static Guid? Running(CentralAgentService? agent) => Guid.TryParse(agent?.Running
 var zoomAccounts = new ServerZoomAccounts(http, tokens.Read, () => Running(meetingAgent), Log);
 var snapshots = new ServerAttendanceSnapshots(http, tokens.Read, Log);
 var sessionRoles = new ServerSessionRoles(http, tokens.Read, Log);
+var cloudPolicy = new ServerPolicy(http, tokens.Read, Log);
 var meetingHandlers = new List<IJobHandler>
 {
-    new ClassRunStage(zoomAccounts, settings.Headless, Log, attendance: snapshots, roles: sessionRoles),
+    new ClassRunStage(zoomAccounts, settings.Headless, Log, attendance: snapshots, roles: sessionRoles, policy: cloudPolicy),
     new ZoomReportStage(zoomAccounts, Log),
     new ZoomRecordingStage(zoomAccounts, Log),
 };

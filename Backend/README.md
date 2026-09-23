@@ -337,6 +337,7 @@ Admin only; every write also needs `X-Dashboard-Request: 1`, and answers are nev
 | `GET /api/v1/admin/run-plan?from=&to=&coordinator=&status=` | the classes to run. `coordinator` may be given more than once; `onlyDelegated=false` also shows a coordinator who has been turned off |
 | `POST /api/v1/admin/run-plan/import` | `{coordinatorId, classes:[{group, date, startTime?, title?, meetingUrl?, zoomAccount?, preferredEngine?}]}` — what that coordinator's own LMS session list showed, read by the app signed in as them. At most 500 rows |
 | `PATCH /api/v1/admin/run-plan/{planId}` | `{meetingUrl?, zoomAccount?, preferredEngine?, status?, note?, applyToGroup?}` |
+| `POST /api/v1/admin/run-plan/{planId}/run` | `{stage}` — one stage of that class, due now instead of at its time: the same payload the scheduler would have made, through the same validation. One key per minute, so a second press does not queue it twice; a stage that cannot run yet is refused with the reason (409) rather than queued to fail. Written to `admin_audit_log` as `run_plan.stage_run` |
 
 Nothing is typed in twice, and nothing is typed in again on another PC. Every copy of the app keeps
 what its PC has against the signed-in person's account:
@@ -347,6 +348,17 @@ what its PC has against the signed-in person's account:
 | `POST /api/v1/me/zoom-accounts/{id}/secret` | that Zoom sign-in, for their own app to sign a browser profile in |
 | `GET`/`PUT /api/v1/me/schedules` | the classes their own PC opens by itself, as the app writes them. The server keeps them and gives them back; it never reads what is in one |
 | `POST /api/v1/me/lms-accounts` … | their LMS sign-in, the password AES-GCM encrypted |
+
+Two settings are shared by everybody, so every machine behaves the same way. Any signed-in person
+may read one; only the admin may write one (`GET`/`PUT /api/v1/settings/{key}`):
+
+| Setting | What it holds | Who reads it |
+|---|---|---|
+| `sessionRoles` | `{profiles: [...]}` — who teaches each kind of session and may be made co-host, in the Windows app's own shape. The app sends its profiles up whenever the admin saves them there | `GET /api/v1/agent/session-roles` (a device token), so a worker makes the same person co-host |
+| `cloudPolicy` | `{autoCoHost, autoEnd}` — the switches a person holds beside a meeting in the app, for machines that have no window | `GET /api/v1/agent/policy` (a device token). Anything the setting does not name keeps its default (both on), so a half-written setting cannot turn a class's behaviour off by omission |
+
+A worker reads both when it takes a class, so a switch changed now applies to the next class rather
+than the one already running.
 
 A class's meeting link therefore comes from that coordinator's own Zoom account for the group, and
 signing in on a new PC — a cloud one — brings the accounts and the classes with it.

@@ -37,7 +37,8 @@ public sealed class ClassRunStage(
     Action<string>? log = null,
     Func<DateTimeOffset>? now = null,
     IAttendanceSnapshots? attendance = null,
-    ServerSessionRoles? roles = null) : ClassStageHandler(log, now)
+    ServerSessionRoles? roles = null,
+    ServerPolicy? policy = null) : ClassStageHandler(log, now)
 {
     /// <summary>The class's length when it names none: the three hours the Windows rule waits for.</summary>
     public static readonly TimeSpan DefaultLength = AutoEndRule.EndAfter;
@@ -168,6 +169,12 @@ public sealed class ClassRunStage(
             new MeetingAccount(stage.Group, stage.Group, reference, SessionEngineType.Web),
             SessionEngineType.Web,
             options.WebProfile);
+        // The dashboard's switches for this class: making the instructor co-host, and ending the
+        // class when it is over. Read once, here, so one class never changes behaviour halfway.
+        if (policy is not null) await policy.RefreshAsync(cancellationToken);
+        bool autoCoHost = policy?.AutoCoHost ?? true;
+        bool autoEnd = policy?.AutoEnd ?? true;
+
         var events = new MeetingLifecycleEvents();
         var joined = new WebJoinedList(() => engine.ActiveMeetingPage);
 
@@ -178,7 +185,7 @@ public sealed class ClassRunStage(
             await roles.RefreshAsync(cancellationToken);
             bridge = new SessionRoleBridge(events, _ => joined, new ClassTitle(stage.Title), roles,
                 new WebCoHostAssigner(() => engine.ActiveMeetingPage), Log,
-                presenters: NoPresenterSource.Instance, autoCoHostOn: () => true);
+                presenters: NoPresenterSource.Instance, autoCoHostOn: () => autoCoHost);
         }
         await events.PublishAsync(context, MeetingLifecycleEventKind.Active);
 
@@ -217,7 +224,10 @@ public sealed class ClassRunStage(
             using var scope = MeetingAdmissionScope.Begin(sessionId, events, context);
             await engine.MonitorAsync(options, holding.Token);
         }, CancellationToken.None);
-        var watch = ending.WatchAsync(holding.Token);
+        // Ending classes automatically turned off in the dashboard: the class is still held and still
+        // admitted, and it is left running for a person to close.
+        var watch = autoEnd ? ending.WatchAsync(holding.Token) : HeldOpenAsync(holding.Token);
+        if (!autoEnd) Log("ending classes automatically is off in the dashboard; this one is left for a person to close");
 
         MeetingEndOutcome? outcome = null;
         string? admittingStopped = null;
@@ -241,7 +251,13 @@ public sealed class ClassRunStage(
         bool draining = cancellationToken.IsCancellationRequested;
         try
         {
-            if (outcome is null && !draining)
+            if (outcome is null && !draining && !autoEnd)
+            {
+                try { await LastReadAsync(CancellationToken.None); } catch (Exception) { }
+                outcome = new(EndedHow.LeftOpen,
+                    "Ending classes automatically is off in the dashboard, so the meeting was left running.");
+            }
+            else if (outcome is null && !draining)
             {
                 // The latest the class is held to, or the admitting stopped on its own. Either way the
                 // lane's slot has to come back, so the class is ended - once the last read is taken.
@@ -292,6 +308,7 @@ public sealed class ClassRunStage(
         {
             EndedHow.ByRule => "held the meeting and ended it when the class was over",
             EndedHow.Elsewhere => "held the meeting until it was closed",
+            EndedHow.LeftOpen => "held the meeting and left it running",
             _ => "held the meeting but could not close it",
         };
         answer["message"] = $"{stage.Group}: {outcome.Reason}";
@@ -302,6 +319,13 @@ public sealed class ClassRunStage(
         else if (admittingStopped is not null || outcome.Reason.StartsWith("Ended because it was still going", StringComparison.Ordinal))
             answer["warning"] = outcome.Reason;
         return JobOutcome.Success(answer);
+    }
+
+    /// <summary>Held until the class is over by somebody else's hand, or the worker is stopped.</summary>
+    private static async Task<MeetingEndOutcome> HeldOpenAsync(CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        throw new OperationCanceledException(cancellationToken);
     }
 
     private static async Task<MeetingRead> ReadNamesAsync(WebJoinedList joined, CancellationToken cancellationToken)

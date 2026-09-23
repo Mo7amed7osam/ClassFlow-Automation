@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
-import { useDelegations, useRunPlan, useSetDelegation, useUpdateClassPlan } from '../api/hooks'
+import { useDelegations, useRunPlan, useRunStage, useSetDelegation, useUpdateClassPlan } from '../api/hooks'
 import type { ClassPlan, Delegation, PreferredEngine, ZoomAccountRef } from '../api/types'
 import { PageHeader } from '../components/Layout'
 import { useToast } from '../components/Toast'
 import { reason } from '../components/UserModals'
 import { button, Card, EmptyState, ErrorBanner, input, LoadingRows, Pill, td, th } from '../components/ui'
 
-const COLUMNS = ['Class', 'Coordinator', 'Zoom link', 'Opens with', '']
+const COLUMNS = ['Class', 'Coordinator', 'Zoom link', 'Opens with', 'Run now', '']
 
 const ENGINES: { value: PreferredEngine | 'auto'; label: string }[] = [
   { value: 'auto', label: 'Auto' },
@@ -234,6 +234,66 @@ export function RunsPage() {
 }
 
 /** One class: when it is, whose it is, the link it opens and what it opens with. */
+/**
+ * The stages of a class somebody may start without waiting for its time: the meeting first, then the
+ * LMS steps in the order they belong in. The names are the job types the scheduler makes, so a stage
+ * started here is the same job that would have been made on its own.
+ */
+export const STAGES: { value: string; label: string }[] = [
+  { value: 'class.run', label: 'Open the meeting' },
+  { value: 'lms.run_session', label: 'Press Run Session' },
+  { value: 'lms.attendance', label: 'Write up the attendance' },
+  { value: 'lms.late_joiners', label: 'Move the late joiners' },
+  { value: 'lms.complete', label: 'Mark it complete' },
+  { value: 'zoom.report', label: "Read Zoom's report" },
+  { value: 'zoom.recording', label: 'Find the recording' },
+]
+
+/** Starts one stage of one class now. What it cannot do, it says: no link, no Zoom account, no sign-in. */
+function RunNow({ item }: { item: ClassPlan }) {
+  const run = useRunStage()
+  const toast = useToast()
+  const [stage, setStage] = useState(STAGES[0].value)
+  const label = STAGES.find((choice) => choice.value === stage)?.label ?? stage
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <select
+        className={input}
+        value={stage}
+        aria-label={`What to run now for ${item.group} on ${item.date}`}
+        onChange={(event) => setStage(event.target.value)}
+      >
+        {STAGES.map((choice) => (
+          <option key={choice.value} value={choice.value}>
+            {choice.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        className={button.smallPrimary}
+        disabled={run.isPending}
+        aria-label={`Run ${label} for ${item.group} on ${item.date} now`}
+        onClick={() =>
+          run.mutate(
+            { planId: item.id, stage },
+            {
+              onSuccess: (answer) =>
+                answer.created
+                  ? toast.success(`${label}: queued`, 'The next free machine takes it.')
+                  : toast.success(`${label}: already queued`, 'It was started a moment ago.'),
+              onError: (error) => toast.error(`Could not run ${label.toLowerCase()}`, reason(error)),
+            },
+          )
+        }
+      >
+        {run.isPending ? 'Starting…' : 'Run now'}
+      </button>
+    </div>
+  )
+}
+
 function ClassRow({ item, who }: { item: ClassPlan; who: string }) {
   const update = useUpdateClassPlan()
   const toast = useToast()
@@ -313,6 +373,9 @@ function ClassRow({ item, who }: { item: ClassPlan; who: string }) {
             </option>
           ))}
         </select>
+      </td>
+      <td className={td}>
+        <RunNow item={item} />
       </td>
       <td className={td}>
         <button

@@ -2,18 +2,24 @@ import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router'
 import { useMe } from './api/hooks'
 import { Layout } from './components/Layout'
 import { AccountPage } from './pages/AccountPage'
+import { ActivityPage } from './pages/ActivityPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { AttendancePage } from './pages/AttendancePage'
 import { AttendanceSessionPage } from './pages/AttendanceSessionPage'
 import { GroupsPage } from './pages/GroupsPage'
+import { LmsAccountsPage } from './pages/LmsAccountsPage'
 import { LoginPage } from './pages/LoginPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { SessionsPage } from './pages/SessionsPage'
 import { RecordingsPage } from './pages/RecordingsPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { RunsPage } from './pages/RunsPage'
+import { SchedulesPage } from './pages/SchedulesPage'
+import { SessionRolesPage } from './pages/SessionRolesPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { StudentsPage } from './pages/StudentsPage'
 import { UsersPage } from './pages/UsersPage'
+import { ZoomAccountsPage } from './pages/ZoomAccountsPage'
 
 /** Any signed-in user: the admin or a coordinator. */
 function RequireSignIn() {
@@ -45,6 +51,12 @@ export function App() {
         <Route path="attendance/:id" element={<AttendanceSessionPage />} />
         <Route path="students" element={<StudentsPage />} />
         <Route path="groups" element={<GroupsPage />} />
+        <Route path="activity" element={<ActivityPage />} />
+        <Route path="zoom-accounts" element={<ZoomAccountsPage />} />
+        <Route path="lms-accounts" element={<LmsAccountsPage />} />
+        <Route path="schedules" element={<SchedulesPage />} />
+        <Route path="session-roles" element={<SessionRolesPage />} />
+        <Route path="settings" element={<SettingsPage />} />
         <Route path="account" element={<AccountPage />} />
         <Route element={<RequireAdmin />}>
           <Route path="agents" element={<AgentsPage />} />

@@ -51,9 +51,9 @@ const adminGroups = (call: Call) =>
 
 describe('menus by role', () => {
   it('gives the admin users and agents, a coordinator only their groups', () => {
-    expect(navFor('admin', 2).map((i) => i.label)).toEqual(['Overview', 'Sessions', 'Recordings', 'Attendance', 'Students', 'Groups', 'Users', 'Run classes', 'Agents'])
+    expect(navFor('admin', 2).map((i) => i.label)).toEqual(['Overview', 'Sessions', 'What machines did', 'Run classes', 'Attendance', 'Recordings', 'Students', 'Groups', 'Users', 'Zoom accounts', 'LMS sign-ins', 'Opens by itself', 'Who is co-host', 'Agents', 'Settings'])
     expect(navFor('admin', 2).find((i) => i.label === 'Users')?.badge).toBe(2)
-    expect(navFor('coordinator').map((i) => i.label)).toEqual(['Overview', 'Sessions', 'Recordings', 'Attendance', 'Students', 'My groups'])
+    expect(navFor('coordinator').map((i) => i.label)).toEqual(['Overview', 'Sessions', 'What machines did', 'Attendance', 'Recordings', 'Students', 'My groups', 'Zoom accounts', 'LMS sign-ins', 'Opens by itself', 'Who is co-host', 'Settings'])
   })
 
   it('shows a coordinator their own overview, without agents or jobs', async () => {

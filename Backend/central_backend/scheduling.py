@@ -220,66 +220,11 @@ class Scheduler:
         return meeting is not None and meeting not in ("failed", "cancelled")
 
     async def _payload(self, session: AsyncSession, plan: ClassPlan) -> dict | None:
-        """The stage payload for this class, or None when the class cannot say whose it is.
-
-        A class with no LMS account named would run under whichever account the machine last used,
-        and write one coordinator's class up under another's name. There is no sensible default, so
-        the class is left alone and said about.
-        """
-        delegation = await session.get(RunDelegation, plan.coordinator_id)
-        account_id = delegation.lms_account_id if delegation else None
-        if account_id is None:
-            emit("schedule.no_account", level=logging.WARNING, group=plan.group_name,
-                 date=plan.session_date.isoformat(),
-                 reason="the coordinator is turned on but no LMS account is chosen for them")
-            return None
-
-        account = await session.get(LmsAccount, account_id)
-        if account is None or account.user_id != plan.coordinator_id:
-            emit("schedule.no_account", level=logging.WARNING, group=plan.group_name,
-                 date=plan.session_date.isoformat(),
-                 reason="the chosen LMS account is not that coordinator's, or is gone")
-            return None
-
-        payload: dict = {
-            "classPlanId": str(plan.id),
-            "group": plan.group_name,
-            "date": plan.session_date.isoformat(),
-            "coordinatorId": str(plan.coordinator_id),
-            "lmsAccountId": str(account.id),
-            "dryRun": False,
-        }
-        # The Zoom account the meeting is opened by: the coordinator's account that hosts this
-        # group, by the same rule the run plan shows - the one kept for the group, then the one
-        # named after it, then their only account. Never another group's: a meeting opened by the
-        # wrong account is the wrong room, and the students are in it before anyone notices. A
-        # group none of their accounts hosts gets no Zoom stages, and the page says why.
-        from .delegated_runs import _group_zoom, _zoom_accounts
-
-        theirs = (await _zoom_accounts(session, [plan.coordinator_id])).get(plan.coordinator_id, [])
-        if (zoom := _group_zoom(theirs, plan.group_name)) is not None:
-            payload["zoomAccountId"] = str(zoom.id)
-        if plan.start_time:
-            payload["startTime"] = plan.start_time
-        if plan.title:
-            payload["title"] = plan.title
-        if plan.meeting_url:
-            payload["meetingUrl"] = plan.meeting_url
-        return payload
+        return await class_payload(session, plan)
 
     @staticmethod
     def _can_run(stage: Stage, payload: dict) -> str | None:
-        """Why this stage cannot be created from this class, or None.
-
-        The server refuses the same payloads the validator would, but earlier and with the class
-        named: a job that is going to be rejected is better not made, and "this class has no Zoom
-        link yet" is something a person can act on.
-        """
-        if stage.job_type == "class.run" and "meetingUrl" not in payload:
-            return "no Zoom link on the class"
-        if stage.job_type.startswith(("class.", "zoom.")) and "zoomAccountId" not in payload:
-            return "none of the coordinator's Zoom accounts hosts this group"
-        return None
+        return why_not(stage, payload)
 
     async def run(self, stop: asyncio.Event) -> None:
         """Until asked to stop. A failed pass is logged and the next one still happens."""
@@ -296,3 +241,70 @@ class Scheduler:
                 await asyncio.wait_for(stop.wait(), timeout=self._interval)
             except TimeoutError:
                 pass
+
+
+# Building a class's payload and saying why a stage cannot run are module-level, because a person
+# pressing "run this now" on the dashboard must get the payload the scheduler would have made
+# rather than a second copy of the same rules.
+
+
+async def class_payload(session: AsyncSession, plan: ClassPlan) -> dict | None:
+    """The stage payload for this class, or None when the class cannot say whose it is.
+
+    A class with no LMS account named would run under whichever account the machine last used,
+    and write one coordinator's class up under another's name. There is no sensible default, so
+    the class is left alone and said about.
+    """
+    delegation = await session.get(RunDelegation, plan.coordinator_id)
+    account_id = delegation.lms_account_id if delegation else None
+    if account_id is None:
+        emit("schedule.no_account", level=logging.WARNING, group=plan.group_name,
+             date=plan.session_date.isoformat(),
+             reason="the coordinator is turned on but no LMS account is chosen for them")
+        return None
+
+    account = await session.get(LmsAccount, account_id)
+    if account is None or account.user_id != plan.coordinator_id:
+        emit("schedule.no_account", level=logging.WARNING, group=plan.group_name,
+             date=plan.session_date.isoformat(),
+             reason="the chosen LMS account is not that coordinator's, or is gone")
+        return None
+
+    payload: dict = {
+        "classPlanId": str(plan.id),
+        "group": plan.group_name,
+        "date": plan.session_date.isoformat(),
+        "coordinatorId": str(plan.coordinator_id),
+        "lmsAccountId": str(account.id),
+        "dryRun": False,
+    }
+    # The Zoom account the meeting is opened by: the coordinator's account that hosts this
+    # group, by the same rule the run plan shows - the one kept for the group, then the one
+    # named after it, then their only account. Never another group's: a meeting opened by the
+    # wrong account is the wrong room, and the students are in it before anyone notices. A
+    # group none of their accounts hosts gets no Zoom stages, and the page says why.
+    from .delegated_runs import _group_zoom, _zoom_accounts
+
+    theirs = (await _zoom_accounts(session, [plan.coordinator_id])).get(plan.coordinator_id, [])
+    if (zoom := _group_zoom(theirs, plan.group_name)) is not None:
+        payload["zoomAccountId"] = str(zoom.id)
+    if plan.start_time:
+        payload["startTime"] = plan.start_time
+    if plan.title:
+        payload["title"] = plan.title
+    if plan.meeting_url:
+        payload["meetingUrl"] = plan.meeting_url
+    return payload
+
+def why_not(stage: Stage, payload: dict) -> str | None:
+    """Why this stage cannot be created from this class, or None.
+
+    The server refuses the same payloads the validator would, but earlier and with the class
+    named: a job that is going to be rejected is better not made, and "this class has no Zoom
+    link yet" is something a person can act on.
+    """
+    if stage.job_type == "class.run" and "meetingUrl" not in payload:
+        return "no Zoom link on the class"
+    if stage.job_type.startswith(("class.", "zoom.")) and "zoomAccountId" not in payload:
+        return "none of the coordinator's Zoom accounts hosts this group"
+    return None

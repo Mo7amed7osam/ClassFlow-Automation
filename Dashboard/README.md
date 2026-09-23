@@ -15,9 +15,14 @@ recording API are unchanged.
 | Recordings | Edit, attach to the LMS, move to any group | Edit and attach within their groups; move a recording only between their own groups |
 | Agents page | Yes | No (the backend answers 403) |
 | Users page | Approve/reject registrations, create coordinators, assign groups, disable/enable, set a new password | No |
-| Run classes page | Turn a coordinator on so the admin's PC opens and finishes their classes under their own Zoom and LMS accounts (both picked from what that coordinator's own app saved); fill in a link only where they have no Zoom account for the group; choose what a class opens with, or skip it | No |
+| Run classes page | Turn a coordinator on so the admin's PC opens and finishes their classes under their own Zoom and LMS accounts (both picked from what that coordinator's own app saved); fill in a link only where they have no Zoom account for the group; choose what a class opens with, skip it, or run one of its stages now | No |
 | Groups page | All groups, their coordinators; add, label, archive | "My groups" |
 | Attendance, Students | Every group's sessions and rosters | Their groups' sessions and rosters, with the same tools |
+| Zoom accounts, LMS sign-ins | Their own, and (on Run classes) which of a coordinator's are used for that coordinator's classes | Their own: the accounts their classes are hosted and written up with |
+| Opens by itself | Their own timetable | Their own timetable |
+| Who is co-host | Edit the session types and their instructors | Read them |
+| Settings | The switches every machine reads, the recordings sheet, and a token for a machine to join with | The switches, read only |
+| What machines did | Every machine, every group | Their own groups |
 
 A coordinator asking for anything outside their groups gets the same `404` as for something that
 does not exist. The rule lives in one place on the backend (`access.py`), and every dashboard
@@ -35,6 +40,12 @@ request.
 | Attendance | Class meetings whose attendance was taken (by the Windows agent, or created by hand): group, date, Live/Ended/Finalized, present / needs review / absent. Filters: group, date, status. |
 | Attendance › a session | Present / needs review / absent / unmatched counts, then three tabs: **Students** (status, Zoom name, confidence and why, joined, left, minutes in the meeting), **Review** (only the doubtful ones, with Confirm / Not them, and the Zoom names nobody has with the best student to give each to), **Zoom names** (every name seen; mark one "Not a student"). Buttons: Match again, Match with AI (when the server has it), Add names (paste), Export CSV, Finalize / Reopen. Refreshes every 15 s while live. |
 | Students | A group's roster: add, edit, remove (past attendance stays), import (paste from Excel/LMS or a CSV, previewed first), and each student's remembered Zoom names (forget one). |
+| What machines did | What every machine wrote down as it worked, newest first: the meeting, who was made co-host, the attendance, each LMS step, and how a class ended - with the class, the machine and whether it went through. Filter by group; the last 100, 250 or 500. |
+| Zoom accounts | The accounts classes are hosted with: the account, the group it hosts, its meeting link, what it opens with, and its Zoom password (written here, never shown again - a server signs in with it). The whole set is saved at once, so removing one here removes it everywhere. |
+| LMS sign-ins | The name classes are written up under on the LMS, and which one is in use. The password is sealed on the server and handed only to the machine running the class. |
+| Opens by itself | The classes that open at their time on a machine of yours, in the same shape the Windows app keeps them: name, group, time, the days (or a single date), the Zoom account, what it opens with, and whether it is on. A machine with none of its own takes these. |
+| Who is co-host | Who is made co-host when a class of each kind starts: the session type, the words or groups that recognise it, its instructor, and anybody else who may be co-host. The machines and the Windows app read the same list. |
+| Settings | The switches every machine reads before it takes a class - make the instructor co-host, end a class when it is over - plus the recordings sheet and a single-use token for a machine of yours to join with. A class already running keeps the settings it started with. |
 
 **Groups** come from the recordings: the first time n8n syncs a recording for a new group, the
 group is registered by itself. The admin can also add one ahead of time, give it a label, or archive

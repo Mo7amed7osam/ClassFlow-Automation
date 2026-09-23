@@ -14,6 +14,7 @@ same time each go up under the right name.
     GET    /api/v1/admin/run-plan?from=&to=&coordinator=  the classes to run, one line each
     POST   /api/v1/admin/run-plan/import                 what the LMS listed for one coordinator
     PATCH  /api/v1/admin/run-plan/{plan_id}              its link, its Zoom account, what it opens with
+    POST   /api/v1/admin/run-plan/{plan_id}/run          run one stage of a class now, without waiting
 
 Admin only; every write also needs X-Dashboard-Request: 1, and answers are never cached.
 
@@ -47,7 +48,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .admin import audit, groups_by_user
 from .api import ApiError, _json
 from .auth import CurrentUser, current_user, require_admin, require_dashboard_header
-from .dashboard import parse_id
+from .dashboard import job_summary, parse_id
+from .jobs import create_job
 from .models import ClassPlan, LmsAccount, RunDelegation, User, ZoomAccount
 from .observability import emit
 from .user_data import _box, zoom_view
@@ -686,3 +688,67 @@ async def update_plan(
         view = _plan_view(plan)
     view["alsoInGroup"] = spread
     return _no_store(view)
+
+
+# ------------------------------------------------------------------- running a stage without waiting
+
+
+class RunStageBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    """Which stage to run: one of the job types the scheduler makes for a class."""
+    stage: str = Field(min_length=1, max_length=40)
+
+
+@router.post("/api/v1/admin/run-plan/{plan_id}/run", dependencies=writes)
+async def run_stage_now(
+    plan_id: str, body: RunStageBody, request: Request, admin: CurrentUser = Depends(current_user)
+) -> JSONResponse:
+    """Makes one stage of one class due now, instead of waiting for its time.
+
+    The class's meeting did not open, the LMS step failed for a reason that has since been fixed, or
+    a class was added late: this is how it is run without changing its time. The job is the one the
+    scheduler would have made - same payload, same validation - so nothing about the class becomes
+    special by being started here. The whole minute shares one key, so an impatient second press
+    does not queue the same stage twice, and the stage's own idempotency still applies afterwards.
+
+    A stage that cannot run yet is refused with the reason (no Zoom link on the class, no Zoom
+    account for the group, no LMS account chosen for the coordinator) rather than queued to fail.
+    """
+    from .scheduling import STAGES, class_payload, why_not
+    from .validation import PayloadError, validate_payload
+
+    stage = next((item for item in STAGES if item.job_type == body.stage), None)
+    if stage is None:
+        raise ApiError(400, "Invalid request",
+                       f"Unknown stage. One of: {', '.join(item.job_type for item in STAGES)}.")
+    now = request.app.state.clock()
+    async with request.app.state.sessionmaker() as session, session.begin():
+        plan = await session.get(ClassPlan, parse_id(plan_id))
+        if plan is None:
+            raise ApiError(404, "Not found")
+        payload = await class_payload(session, plan)
+        if payload is None:
+            raise ApiError(409, "Cannot run",
+                           "This class has no LMS account: turn its coordinator on and choose one for them.")
+        if (why := why_not(stage, payload)) is not None:
+            raise ApiError(409, "Cannot run", f"{stage.what.capitalize()}: {why}.")
+        try:
+            payload = validate_payload(stage.job_type, payload)
+        except PayloadError as problem:
+            raise ApiError(409, "Cannot run", str(problem)) from problem
+        job, created = await create_job(
+            session,
+            job_type=stage.job_type,
+            payload=payload,
+            idempotency_key=f"manual:{plan.id}:{stage.job_type}:{now:%Y-%m-%dT%H:%M}",
+            now=now,
+            max_attempts=3,
+        )
+        audit(session, admin, "run_plan.stage_run",
+              {"plan": str(plan.id), "group": plan.group_name, "date": plan.session_date.isoformat(),
+               "stage": stage.job_type, "job": str(job.id), "created": created}, now)
+        view = job_summary(job)
+    emit("run_plan.stage_run", username=admin.username, group=plan.group_name,
+         date=plan.session_date.isoformat(), jobType=stage.job_type, created=created)
+    view["created"] = created
+    return _no_store(view, 202 if created else 200)

@@ -51,7 +51,9 @@ SECRETS_KEY_VARIABLE = "CENTRAL_SECRETS_KEY"
 # sessionRoles: who teaches each kind of session and may be made co-host - the Windows app's
 # session-roles profiles, sent up when they are saved there, so a cloud worker makes the same
 # person co-host. The profiles only; the history of which Zoom name was whom stays per machine.
-SETTING_KEYS = {"recordingsSheet", "sessionRoles"}
+# cloudPolicy: the switches the Windows app has beside a meeting - making the instructor co-host,
+# and ending a class when it is over - for the workers, which have no window to hold a switch.
+SETTING_KEYS = {"recordingsSheet", "sessionRoles", "cloudPolicy"}
 MAX_SETTING_BYTES = 16 * 1024
 
 router = APIRouter()
