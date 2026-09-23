@@ -32,6 +32,14 @@ public sealed class ZoomBrowserLauncher : IZoomBrowserLauncher
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            // A profile another browser still holds is the commonest way a class fails to open:
+            // Chromium refuses the directory, every retry asks for the same one, and the class
+            // never opens (2026-09-22, S7 at 18:45, eight tries in a row). A lock left behind by a
+            // browser that is gone is cleared; one a living browser holds moves this launch to the
+            // account's next profile copy, which is seeded from it and signed in just the same.
+            var profile = ZoomProfileLock.Free(plan.Profile, out string? moved);
+            if (moved != null) ConsoleLogger.Warn($"[WEB_PROFILE] {moved}");
+            plan = plan with { Profile = profile };
             context = await playwright.Chromium.LaunchPersistentContextAsync(
                 plan.Profile.DirectoryPath,
                 new BrowserTypeLaunchPersistentContextOptions

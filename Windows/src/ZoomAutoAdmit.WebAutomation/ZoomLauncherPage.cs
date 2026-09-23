@@ -41,6 +41,35 @@ public static class ZoomLauncherPage
     private static readonly Regex PreviewJoin = new(@"^\s*join\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
+    /// What Zoom offers when a join did not go through: "Retry", "Try again", "Rejoin", "Reconnect".
+    /// A person presses it; so does this. Nothing else is pressed - "Leave", "End" and the rest are
+    /// decisions, not retries.
+    /// </summary>
+    private static readonly Regex TryAgain = new(
+        @"^\s*(retry|try\s+again|rejoin|re-?connect|join\s+again)\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>Presses Zoom's own "Retry" when a join failed. True when there was one to press.</summary>
+    public static async Task<bool> TryPressRetryAsync(IBrowserContext context)
+    {
+        foreach (var page in context.Pages.Where(p => !p.IsClosed && IsZoom(p.Url)).ToArray())
+            foreach (var frame in page.Frames)
+            {
+                try
+                {
+                    foreach (var button in await frame.GetByRole(AriaRole.Button, new() { NameRegex = TryAgain }).AllAsync())
+                    {
+                        if (!await button.IsVisibleAsync() || !await button.IsEnabledAsync()) continue;
+                        await button.EvaluateAsync<object?>("element => element.click()");
+                        ConsoleLogger.Info($"WEB_RETRY: pressed \"{(await button.InnerTextAsync()).Trim()}\".");
+                        return true;
+                    }
+                }
+                catch (PlaywrightException) { }
+            }
+        return false;
+    }
+
+    /// <summary>
     /// The web client's preview before joining (camera, mic, name, "Join"): pressed once the name is
     /// filled, so a signed-in profile goes straight into its meeting.
     /// </summary>

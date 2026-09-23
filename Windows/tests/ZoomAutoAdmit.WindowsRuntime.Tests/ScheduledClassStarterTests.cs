@@ -5,6 +5,7 @@ using Xunit;
 
 namespace ZoomAutoAdmit.WindowsRuntime.Tests;
 
+[Collection("ScheduledClassStarter")]
 public sealed class ScheduledClassStarterTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "ZoomAutoAdmitStarterTests", Guid.NewGuid().ToString("N"));
@@ -78,6 +79,58 @@ public sealed class ScheduledClassStarterTests : IDisposable
 
         Assert.NotNull(await new ScheduledClassStarter(runner, store, _ => { }).StartAsync(schedule, day, DateTimeOffset.Now));
         Assert.Single(runner.Meetings);
+    }
+
+    [Fact]
+    public async Task TwoEntriesForTheSameClassOpenItOnce()
+    {
+        // The same group at the same time, written twice (its own entry and a coordinator's).
+        var store = Store();
+        var first = Class(DateTime.Now.AddMinutes(10));
+        var second = first with { Id = Guid.NewGuid(), Name = "S7 class (Mohab)" };
+        await store.UpsertAsync(first);
+        await store.UpsertAsync(second);
+        var runner = new FlakyRunner();
+        var day = first.OccurrenceDate!.Value;
+
+        Assert.NotNull(await new ScheduledClassStarter(runner, store, _ => { }).StartAsync(first, day, DateTimeOffset.Now));
+        Assert.Null(await new ScheduledClassStarter(runner, store, _ => { }).StartAsync(second, day, DateTimeOffset.Now));
+
+        Assert.Single(runner.Meetings);
+        Assert.All(await store.ListAsync(), s => Assert.Equal(day, s.LastTriggeredDate));   // neither is owed any more
+    }
+
+    [Fact]
+    public async Task AnEntryForTheSameClassWaitsWhileAnotherIsOpeningIt()
+    {
+        var store = Store();
+        var first = Class(DateTime.Now.AddMinutes(10));
+        var second = first with { Id = Guid.NewGuid() };
+        await store.UpsertAsync(second);
+        var runner = new FlakyRunner();
+        var day = first.OccurrenceDate!.Value;
+
+        using (ScheduledClassStarter.TryClaimClass("cai5_ais4_s7", day, first.Time))   // the other entry is opening it
+            Assert.Null(await new ScheduledClassStarter(runner, store, _ => { }).StartAsync(second, day, DateTimeOffset.Now));
+
+        Assert.Empty(runner.Meetings);
+    }
+
+    [Fact]
+    public async Task AnotherGroupAtTheSameTimeStillOpens()
+    {
+        var store = Store();
+        var s7 = Class(DateTime.Now.AddMinutes(10));
+        var s8 = s7 with { Id = Guid.NewGuid(), GroupName = "CAI5_AIS4_S8", AccountId = "CAI5_AIS4_S8" };
+        await store.UpsertAsync(s7);
+        await store.UpsertAsync(s8);
+        var runner = new FlakyRunner();
+        var day = s7.OccurrenceDate!.Value;
+
+        await new ScheduledClassStarter(runner, store, _ => { }).StartAsync(s7, day, DateTimeOffset.Now);
+        await new ScheduledClassStarter(runner, store, _ => { }).StartAsync(s8, day, DateTimeOffset.Now);
+
+        Assert.Equal(2, runner.Meetings.Count);
     }
 
     [Fact]
