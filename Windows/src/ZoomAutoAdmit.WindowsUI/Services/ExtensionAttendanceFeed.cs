@@ -97,7 +97,58 @@ public sealed class ExtensionAttendanceFeed(string? root = null, IGroupRosterSer
     // ------------------------------------------------------------------ the page's results
 
     public sealed record ClassResult(string Group, DateTime Start, List<string> Present, List<string> Review, List<string> Absent,
-        bool Finalized, DateTimeOffset UpdatedAt);
+        bool Finalized, DateTimeOffset UpdatedAt)
+    {
+        /// <summary>
+        /// The students the match is not sure about, with the Zoom name each might be and how sure
+        /// it is - so a person can say yes or no instead of the class quietly going up without them.
+        /// </summary>
+        public List<ReviewName> Attention { get; init; } = [];
+    }
+
+    /// <summary>One student the match wants a person's word on: who, seen as what, and how sure.</summary>
+    public sealed record ReviewName(string Student, string SeenAs, int Percent, string Why);
+
+    /// <summary>
+    /// A person's answer about one uncertain student: present after all, or not them. The class's
+    /// saved result is rewritten, so the next upload carries the answer - nothing is sent from here.
+    /// </summary>
+    public static ClassResult? AnswerAttention(string group, DateOnly date, TimeOnly start, string student, bool present)
+    {
+        lock (ResultsGate)
+        {
+            var all = LoadResults();
+            var found = all.FirstOrDefault(pair => pair.Key.EndsWith("|app", StringComparison.Ordinal)
+                                                   && pair.Value.Group.Equals(group, StringComparison.OrdinalIgnoreCase)
+                                                   && DateOnly.FromDateTime(pair.Value.Start) == date
+                                                   && ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduleTiming.IsSameClass(
+                                                       start.ToTimeSpan(), TimeOnly.FromDateTime(pair.Value.Start).ToTimeSpan()));
+            if (found.Value == null) return null;
+
+            var was = found.Value;
+            var present2 = new List<string>(was.Present);
+            if (present && !present2.Contains(student, StringComparer.OrdinalIgnoreCase)) present2.Add(student);
+            if (!present) present2.RemoveAll(name => name.Equals(student, StringComparison.OrdinalIgnoreCase));
+            var absent = new List<string>(was.Absent);
+            if (!present && !absent.Contains(student, StringComparer.OrdinalIgnoreCase)) absent.Add(student);
+            if (present) absent.RemoveAll(name => name.Equals(student, StringComparison.OrdinalIgnoreCase));
+
+            var answered = was with
+            {
+                Present = present2,
+                Absent = absent,
+                Review = [.. was.Review.Where(name => !name.Equals(student, StringComparison.OrdinalIgnoreCase))],
+                UpdatedAt = DateTimeOffset.Now,
+                Attention = [.. was.Attention.Where(item => !item.Student.Equals(student, StringComparison.OrdinalIgnoreCase))],
+            };
+            all[found.Key] = answered;
+            Directory.CreateDirectory(Path.GetDirectoryName(ResultsPath)!);
+            string temporary = ResultsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(all, ResultsJson));
+            File.Move(temporary, ResultsPath, overwrite: true);
+            return answered;
+        }
+    }
 
     public static string ResultsPath { get; set; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZoomAutoAdmit", "Lms", "extension-results.json");
@@ -136,9 +187,13 @@ public sealed class ExtensionAttendanceFeed(string? root = null, IGroupRosterSer
     /// What the app itself matched for a class (AppAttendanceMatcher: the name rules, then the AI),
     /// kept beside the page's results under its own key so neither overwrites the other.
     /// </summary>
-    public static void SaveAppResults(string group, DateTime start, IReadOnlyList<string> present, IReadOnlyList<string> review, IReadOnlyList<string> absent)
+    public static void SaveAppResults(string group, DateTime start, IReadOnlyList<string> present, IReadOnlyList<string> review,
+        IReadOnlyList<string> absent, IReadOnlyList<ReviewName>? attention = null)
     {
-        var result = new ClassResult(group, start, [.. present], [.. review], [.. absent], false, DateTimeOffset.Now);
+        var result = new ClassResult(group, start, [.. present], [.. review], [.. absent], false, DateTimeOffset.Now)
+        {
+            Attention = [.. attention ?? []],
+        };
         lock (ResultsGate)
         {
             var all = LoadResults();

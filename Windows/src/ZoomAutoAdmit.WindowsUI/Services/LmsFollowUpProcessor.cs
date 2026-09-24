@@ -67,6 +67,23 @@ public sealed class LmsFollowUpProcessor
     /// <summary>How long one LMS step may run before it is counted as failed and tried again.</summary>
     public static readonly TimeSpan StepTimeout = TimeSpan.FromMinutes(12);
 
+    /// <summary>
+    /// The names as they go to the LMS: one entry per student, whatever spelling each list used.
+    /// Two lists put together - the Attendance page, the app's own match, Zoom's report - can hold
+    /// the same person twice, and a class of 23 that reports 25 present is one nobody trusts again.
+    /// </summary>
+    private static IReadOnlyCollection<string> OnePerName(IEnumerable<string> names)
+    {
+        var kept = new List<string>();
+        foreach (string name in names)
+        {
+            string clean = ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReportReader.SameName(name);
+            if (clean.Length == 0 || kept.Contains(clean, StringComparer.OrdinalIgnoreCase)) continue;
+            kept.Add(clean);
+        }
+        return kept;
+    }
+
     private async Task<IReadOnlyCollection<string>> ZoomReportNamesAsync(LmsFollowUp item, CancellationToken token)
     {
         if (item.Step != LmsFollowUpStep.ZoomReportAttendance || _isLive(item.Group)) return [];
@@ -193,8 +210,9 @@ public sealed class LmsFollowUpProcessor
             bool pageFresh = page != null && (page.Finalized || DateTimeOffset.Now - page.UpdatedAt < TimeSpan.FromHours(2)) && page.Present.Count > 0;
             if (pageFresh && page!.Finalized)
             {
-                ConsoleLogger.Info($"[LMS] {item.Describe}: from the finalized Attendance page - {page.Present.Count} present.");
-                return page.Present;
+                var finalized = OnePerName(page.Present);
+                ConsoleLogger.Info($"[LMS] {item.Describe}: from the finalized Attendance page - {finalized.Count} present.");
+                return finalized;
             }
             var app = ExtensionAttendanceFeed.ResultsNear(item.Group, item.SessionDate, item.SessionStart, window, app: true);
             // The late-joiner correction, once the meeting has ended: Zoom's own participants report
@@ -204,16 +222,14 @@ public sealed class LmsFollowUpProcessor
             // match (a late joiner, a renamed person, Zoom's own report) are in it, and the answers
             // given before cost nothing to use again.
             app = await matcher.MatchClassAsync(item.Group, item.SessionDate.ToDateTime(item.SessionStart), token, reportNames) ?? app;
-            var present = new List<string>(pageFresh ? page!.Present : []);
-            foreach (var name in app?.Present ?? [])
-                if (!present.Contains(name, StringComparer.OrdinalIgnoreCase)) present.Add(name);
+            var present = OnePerName([.. pageFresh ? page!.Present : [], .. app?.Present ?? []]);
             if (present.Count > 0)
             {
                 ConsoleLogger.Info($"[LMS] {item.Describe}: {present.Count} present ({(pageFresh ? $"{page!.Present.Count} from the Attendance page, " : "")}" +
                                    $"{app?.Present.Count ?? 0} from the app's own match); {app?.Review.Count ?? 0} still to review.");
                 return present;
             }
-            return await FindPresentNamesAsync(item, historyReader, rosterStore, matchingService, token);
+            return OnePerName(await FindPresentNamesAsync(item, historyReader, rosterStore, matchingService, token));
         });
         // Each class signs in as its own group's coordinator, so two people's steps can run one
         // after the other (or at the same time, on their own browser profiles) and each lands

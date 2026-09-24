@@ -154,7 +154,18 @@ public sealed class AppAttendanceMatcher(
         var present = Of(AttendanceMatchStatus.Present);
         var review = Of(AttendanceMatchStatus.NeedsReview);
         var absent = Of(AttendanceMatchStatus.NotObserved);
-        ExtensionAttendanceFeed.SaveAppResults(group, classStart, present, review, absent);
+        // Who the uncertain ones might be, kept with them: the class card asks about each by name
+        // ("Youssef Ayoub - seen as 'Yousef A', 72%") instead of only counting them.
+        var attention = result.Students
+            .Where(s => s.Status == AttendanceMatchStatus.NeedsReview)
+            .OrderBy(s => s.Order)
+            .Select(s => new ExtensionAttendanceFeed.ReviewName(
+                s.StudentName,
+                s.ObservedNames.FirstOrDefault() ?? "",
+                s.Confidence,
+                s.MatchSource.ToString()))
+            .ToArray();
+        ExtensionAttendanceFeed.SaveAppResults(group, classStart, present, review, absent, attention);
         ConsoleLogger.Info($"[ATTENDANCE] {group} {classStart:HH:mm}: matched {names.Length} Zoom names{(settings != null ? " with the AI" : " by the name rules")} - " +
                            $"{present.Length} present, {review.Length} to review, {absent.Length} not seen.");
         return ExtensionAttendanceFeed.AppResultsFor(group, DateOnly.FromDateTime(classStart), TimeOnly.FromDateTime(classStart));

@@ -9,8 +9,8 @@ public sealed class ZoomParticipantsReportTests
     private static readonly string[] Header =
         ["Name (Original Name)", "User Email", "Join Time", "Leave Time", "Duration (Minutes)", "Guest", "Recording Disclaimer Response", "In Waiting Room"];
 
-    private static string[] Row(string name, int minutes, bool waiting = false) =>
-        [name, "", "09/16/2026 08:54:33 AM", "09/16/2026 11:48:46 AM", minutes.ToString(), "Yes", "OK", waiting ? "Yes" : "No"];
+    private static string[] Row(string name, int minutes, bool waiting = false, string joined = "08:54:33 AM") =>
+        [name, "", $"09/16/2026 {joined}", "09/16/2026 11:48:46 AM", minutes.ToString(), "Yes", "OK", waiting ? "Yes" : "No"];
 
     [Fact]
     public void EachPersonIsOnceWithEveryJoinAddedUpAndTheWaitingRoomLeftOut()
@@ -28,6 +28,54 @@ public sealed class ZoomParticipantsReportTests
         Assert.Equal(175, people.Single(p => p.Name.StartsWith("Ahmed", StringComparison.OrdinalIgnoreCase)).Minutes);
         Assert.Equal(1, people.Single(p => p.Name == "Ziad Waleed").Minutes);
         Assert.DoesNotContain(people, p => p.Name == "Mohanad Yasser");      // only ever waited
+    }
+
+    [Fact]
+    public void EveryPageOfTheDialogIsInTheClassAndAPageReadTwiceAddsNobody()
+    {
+        // Zoom shows a long class ten rows at a time, and the reader reads each page and scrolls it
+        // - so the same page comes back more than once and must not count anybody twice.
+        string[][] first = [Row("Ahmed Mohamed", 100), Row("Ziad Waleed", 90)];
+        string[][] second = [Row("Mohanad Yasser", 80, joined: "09:10:00 AM"), Row("Nada Sherif", 70, joined: "09:11:00 AM")];
+
+        var rows = new List<string[]>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        Assert.Equal(2, ZoomParticipantsReportReader.Keep(first, rows, seen));
+        Assert.Equal(0, ZoomParticipantsReportReader.Keep(first, rows, seen));       // the page read again
+        Assert.Equal(2, ZoomParticipantsReportReader.Keep(second, rows, seen));
+        Assert.Equal(0, ZoomParticipantsReportReader.Keep(second, rows, seen));
+
+        var people = ZoomParticipantsReportReader.Summarize(Header, rows);
+        Assert.Equal(4, people.Count);
+        Assert.Equal(people.Select(person => person.Name), people.Select(person => person.Name).Distinct(StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(100, people.Single(person => person.Name == "Ahmed Mohamed").Minutes);   // not 200
+        Assert.Equal(80, people.Single(person => person.Name == "Mohanad Yasser").Minutes);
+    }
+
+    [Fact]
+    public void AJoinFromAnotherPageIsTheSamePersonAgain()
+    {
+        // The same person on two pages: one run left them at 09:00, the next at 10:00.
+        var rows = new List<string[]>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        ZoomParticipantsReportReader.Keep([Row("Ziad Waleed", 40)], rows, seen);
+        ZoomParticipantsReportReader.Keep([Row("Ziad Waleed", 55, joined: "10:00:00 AM")], rows, seen);
+
+        var people = ZoomParticipantsReportReader.Summarize(Header, rows);
+        Assert.Equal(95, Assert.Single(people).Minutes);
+    }
+
+    [Theory]
+    [InlineData("Ahmed‏ Mohamed")]          // the mark a phone keyboard leaves in an Arabic name
+    [InlineData("‪Ahmed Mohamed‬")]
+    [InlineData("  Ahmed   Mohamed  ")]
+    public void AnInvisibleMarkOrZoomsSpacingDoesNotMakeASecondPerson(string spelling)
+    {
+        var people = ZoomParticipantsReportReader.Summarize(Header,
+            [Row("Ahmed Mohamed", 100), Row(spelling, 20, joined: "10:00:00 AM")]);
+
+        Assert.Equal("Ahmed Mohamed", Assert.Single(people).Name);
+        Assert.Equal(120, people[0].Minutes);
     }
 
     [Theory]
