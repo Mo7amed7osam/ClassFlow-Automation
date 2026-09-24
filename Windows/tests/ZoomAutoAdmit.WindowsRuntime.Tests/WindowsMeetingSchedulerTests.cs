@@ -190,7 +190,15 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
 
     // ------------------------------------------------------------------ a meeting that closed
 
-    /// <summary>A class of today that already opened, at its time, with nothing live for it.</summary>
+    /// <summary>
+    /// The moment these tests look at the day from: half past seven in the evening, so a class
+    /// half an hour earlier is on the same day whatever time the tests actually run (they failed
+    /// when run at twenty past midnight).
+    /// </summary>
+    private static DateTimeOffset HalfSeven =>
+        new(new DateTime(2026, 9, 23, 19, 30, 0), TimeZoneInfo.Local.GetUtcOffset(new DateTime(2026, 9, 23, 19, 30, 0)));
+
+    /// <summary>A class of that day that already opened, at its time, with nothing live for it.</summary>
     private async Task<(WindowsMeetingScheduleStore Store, MeetingSchedule Schedule, DateOnly Today)> ClassThatOpened(DateTimeOffset now)
     {
         var store = Store();
@@ -209,7 +217,7 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
     [Fact]
     public async Task AMeetingThatClosedDuringItsClassIsOpenedAgain()
     {
-        var now = DateTimeOffset.Now;
+        var now = HalfSeven;
         var (store, schedule, _) = await ClassThatOpened(now);
         var runner = new FakeScheduledMeetingRunner();
         await using var scheduler = new WindowsMeetingScheduler(store, runner, Endings());
@@ -224,7 +232,7 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
     [Fact]
     public async Task AMeetingThatIsStillLiveIsLeftAlone()
     {
-        var now = DateTimeOffset.Now;
+        var now = HalfSeven;
         var (store, _, _) = await ClassThatOpened(now);
         var runner = new FakeScheduledMeetingRunner();
         LiveMeetings.Beat(Guid.NewGuid(), "CAI5_IND1_G1", "Web", now);
@@ -237,7 +245,7 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
     [Fact]
     public async Task AClassSomebodyEndedIsNotOpenedAgain()
     {
-        var now = DateTimeOffset.Now;
+        var now = HalfSeven;
         var (store, schedule, today) = await ClassThatOpened(now);
         var endings = Endings();
         // Ended from a phone, or by the program once the class was over: the class is over.
@@ -256,7 +264,7 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
     [Fact]
     public async Task AMeetingThatKeepsClosingIsOpenedAgainOnlySoOften()
     {
-        var now = DateTimeOffset.Now;
+        var now = HalfSeven;
         var (store, _, _) = await ClassThatOpened(now);
         var runner = new FakeScheduledMeetingRunner();
         await using var scheduler = new WindowsMeetingScheduler(store, runner, Endings());
@@ -271,7 +279,7 @@ public sealed class WindowsMeetingSchedulerTests : IDisposable
     [Fact]
     public async Task AClassWhoseHoursAreOverIsNotOpenedAgain()
     {
-        var now = DateTimeOffset.Now;
+        var now = HalfSeven;
         var (store, _, _) = await ClassThatOpened(now);
         var runner = new FakeScheduledMeetingRunner();
         await using var scheduler = new WindowsMeetingScheduler(store, runner, Endings());

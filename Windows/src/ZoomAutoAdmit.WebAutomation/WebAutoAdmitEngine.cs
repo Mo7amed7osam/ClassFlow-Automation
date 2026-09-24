@@ -40,6 +40,19 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
     /// <summary>How long a visible browser waits for a person to complete the Zoom sign-in.</summary>
     private static readonly TimeSpan ManualSignInTimeout = TimeSpan.FromMinutes(10);
 
+    /// <summary>How often Zoom's own Retry is pressed while the meeting is not there.</summary>
+    public static TimeSpan RejoinEvery { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>How long a meeting may stay away before somebody is told about it.</summary>
+    public static TimeSpan SayItIsStuckAfter { get; set; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>
+    /// A class whose meeting dropped and has not come back: the browser profile, and what happened.
+    /// The app turns it into a notice on the desktop and an e-mail - nobody is being admitted and
+    /// no attendance is being counted while it lasts, and pressing Retry may not be enough.
+    /// </summary>
+    public static event Action<string, string>? MeetingStuck;
+
     public async Task<int> RunAsync(CliOptions options, CancellationToken cancellationToken = default)
     {
         int timeoutSeconds = options.TimeoutExplicitlySet ? options.TimeoutSeconds : 0;
@@ -178,6 +191,11 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
         bool meetingSeen = false;
         var nextPanelCheck = DateTimeOffset.UtcNow;
         var nextLauncherCheck = DateTimeOffset.UtcNow;
+        // Pressing Zoom's own Retry while a meeting is away, and how long it has been away.
+        var nextRejoinPress = DateTimeOffset.UtcNow;
+        DateTimeOffset? stuckSince = null;
+        bool stuckReported = false;
+        int rejoinPresses = 0;
         while (!linked.IsCancellationRequested)
         {
             try
@@ -204,6 +222,37 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
                 {
                     ConsoleLogger.Info("WEB_MEETING_ENDED: Zoom says the meeting has ended; it is not joined again.");
                     return;
+                }
+                // Zoom's "Joining Meeting Timeout" panel sits over the meeting when the connection
+                // drops, and the participants list goes with it - so nobody is admitted and no
+                // attendance is counted until somebody presses Retry (2026-09-24: G2 from 18:54,
+                // three hours of it). Retry is pressed here, over and over, until the meeting is
+                // back; a class that stays away is reported rather than left to be noticed.
+                if (surface == null || await ZoomLauncherPage.IsJoinFailedShownAsync(session.Context))
+                {
+                    if (DateTimeOffset.UtcNow >= nextRejoinPress)
+                    {
+                        nextRejoinPress = DateTimeOffset.UtcNow + RejoinEvery;
+                        if (await ZoomLauncherPage.TryPressRetryAsync(session.Context)) rejoinPresses++;
+                    }
+                    stuckSince ??= DateTimeOffset.UtcNow;
+                    if (!stuckReported && DateTimeOffset.UtcNow - stuckSince >= SayItIsStuckAfter)
+                    {
+                        stuckReported = true;
+                        string why = $"Zoom dropped the meeting and has not come back for " +
+                                     $"{SayItIsStuckAfter.TotalMinutes:0} minutes ({rejoinPresses} Retry press(es) so far). " +
+                                     "Nobody is being admitted and attendance is not being counted.";
+                        ConsoleLogger.Warn($"WEB_REJOIN: {why}");
+                        try { MeetingStuck?.Invoke(options.WebProfile ?? string.Empty, why); } catch { }
+                    }
+                }
+                else if (stuckSince is { } wentAway)
+                {
+                    ConsoleLogger.Success($"WEB_REJOIN: the meeting is back after {(DateTimeOffset.UtcNow - wentAway).TotalSeconds:0} s" +
+                                          $"{(rejoinPresses > 0 ? $" and {rejoinPresses} Retry press(es)" : "")}.");
+                    stuckSince = null;
+                    stuckReported = false;
+                    rejoinPresses = 0;
                 }
                 if (surface != null) meetingSeen = true;
                 if (surface == null)
@@ -314,7 +363,7 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
 
     public ValueTask DisposeAsync() => new(StopAsync());
 
-    private static readonly Regex OpenParticipants = new(@"^open the manage participants list pane|^participants(,|\s*\(\d+\))?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex OpenParticipants = new(@"^(open|show)?\s*(the\s+)?(manage\s+)?participants?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex CloseParticipants = new(@"^close the manage participants list pane|^close participants", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
@@ -331,13 +380,21 @@ public sealed class WebAutoAdmitEngine : IAutoAdmitEngine, IAsyncDisposable
             // With nobody moving a mouse the toolbar hides itself, and its Participants button is
             // then invisible - the panel would silently never reopen (seen live, 2026-09-16).
             await ZoomWebToolbar.WakeAsync(surface.Page);
+            // Zoom renames this button between versions ("Participants (16)", "open the manage
+            // participants list pane", "Participants, 16"), and a name that did not match left the
+            // panel closed for the rest of the class: attendance and admission both read it
+            // (2026-09-24, G2 at 18:48). The name is matched loosely and what was pressed is logged,
+            // so a rename shows up as a line rather than as silence.
             foreach (var open in await surface.Frame.GetByRole(AriaRole.Button, new() { NameRegex = OpenParticipants }).AllAsync())
             {
                 if (!await open.IsVisibleAsync()) continue;
+                string name = (await open.GetAttributeAsync("aria-label")) ?? (await open.InnerTextAsync()).Trim();
+                if (CloseParticipants.IsMatch(name)) continue;
                 await open.EvaluateAsync<object?>("element => element.click()");
-                ConsoleLogger.Info("WEB_PARTICIPANTS_PANEL: opened it again.");
+                ConsoleLogger.Info($"WEB_PARTICIPANTS_PANEL: opened it again (\"{name}\").");
                 return;
             }
+            ConsoleLogger.Info("WEB_PARTICIPANTS_PANEL: it is closed and no button to open it was found.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { }
     }

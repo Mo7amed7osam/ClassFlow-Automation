@@ -43,6 +43,22 @@ export interface ActionInfo {
 }
 
 export const ACTIONS: Record<Action, ActionInfo> = {
+  zoomAgain: {
+    action: 'zoomAgain', label: 'Start the meeting again', changesLms: false,
+    explain: 'Stop what this PC is running for this class and open its meeting afresh - for when the meeting dropped but the app still shows it as running.',
+  },
+  yesThem: {
+    action: 'yesThem', label: 'Yes, that is them', changesLms: false,
+    explain: 'Count this student as present in this class. It goes to the LMS with the next upload, not now.',
+  },
+  notThem: {
+    action: 'notThem', label: 'No, not them', changesLms: false,
+    explain: 'Leave this student out of this class. It goes to the LMS with the next upload, not now.',
+  },
+  zoom: {
+    action: 'zoom', label: 'Open Zoom now', changesLms: false,
+    explain: 'Open this class’s Zoom meeting on this PC now, with its own account and link. A class whose meeting is already running here is left alone.',
+  },
   run: { action: 'run', label: 'Run Session', explain: 'Press "Run Session" for this class on the LMS.', changesLms: true },
   attendance: { action: 'attendance', label: 'Take attendance', explain: 'Fill in Take Session Attendance with who the Attendance page shows as present. If the sheet is already there, it is checked against this class instead.', changesLms: true },
   correct: { action: 'correct', label: 'Correct late joiners', explain: 'Move whoever joined late from Not-joined to Joined on the LMS attendance, from what this PC saw of the meeting.', changesLms: true },
@@ -66,6 +82,8 @@ export function primaryAction(row: Row, now: Date): Action | null {
   if (isPastDay(row, now)) return isDone(row, 'drive') || row.linkKind === 'other' ? null : isDone(row, 'record') ? 'sheet' : 'recording'
   const hours = (now.getTime() - start.getTime()) / 3_600_000
   if (hours < -0.25) return null
+  // Its meeting did not open, or is no longer running: that comes before anything on the LMS.
+  if (stepOf(row, 'zoom')?.state === 'failed' || (hours >= 0 && hours < 3 && row.live === false && !isDone(row, 'complete'))) return 'zoom'
   if (!isDone(row, 'run') && row.lmsStatus !== 'running' && row.lmsStatus !== 'finished') return 'run'
   if (hours >= 0.25 && hasMaterial(row) && ['due', 'retry'].includes(stepOf(row, 'material')?.state ?? '')) return 'material'
   if (hours >= 1.5 && !isDone(row, 'attendance')) return 'attendance'
@@ -86,7 +104,9 @@ export function availableActions(row: Row, now: Date): Action[] {
   if (row.material?.assignmentTitle && row.material.deadline && !row.material.noAssignment) material.push('assignment')
   if (!started) return material
   if (isPastDay(row, now)) return ['report', 'recording', 'sheet', 'zoomRecording', 'link', ...material]
-  return ['run', 'attendance', 'correct', 'report', 'complete', 'recording', 'zoomRecording', 'sheet', 'link', ...material]
+  // Opening it by hand, or - when this PC still shows it running - starting it afresh.
+  const zoom: Action[] = row.live ? ['zoomAgain'] : ['zoom']
+  return [...zoom, 'run', 'attendance', 'correct', 'report', 'complete', 'recording', 'zoomRecording', 'sheet', 'link', ...material]
 }
 
 /** Before today: the class is over and Completed. */

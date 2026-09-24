@@ -240,4 +240,25 @@ describe('running other coordinators’ classes', () => {
     expect(calls.every((call) => !call.url.includes('/secret'))).toBe(true)
     expect(document.body.textContent).toContain('mona@example.com')
   })
+
+  it('a class whose group the app cannot match has its Zoom account chosen by hand', async () => {
+    // A class on the coordinator's own LMS is run even when nobody gave them that group here, so
+    // the account that opens it is picked on the class itself.
+    const calls = fakeBackend(
+      signedInAs(adminMe),
+      delegations([person({ enabled: true, zoomAccounts: [zoomAccount('CAI5_AIS4_S7'), zoomAccount('CAI5_AIS4_S9')] })]),
+      runPlan([lesson({ group: 'CAI5_AIS4_S9', zoomAccount: null })]),
+      accepted,
+    )
+    renderPage(<RunsPage />)
+
+    const choice = await screen.findByLabelText('Zoom account that opens CAI5_AIS4_S9 on 2026-09-22')
+    await userEvent.selectOptions(choice, 'CAI5_AIS4_S9')
+
+    await waitFor(() => {
+      const patch = calls.find((call) => call.method === 'PATCH')
+      expect(patch).toBeDefined()
+      expect(JSON.parse(patch!.body!)).toMatchObject({ zoomAccount: 'CAI5_AIS4_S9', applyToGroup: true })
+    })
+  })
 })

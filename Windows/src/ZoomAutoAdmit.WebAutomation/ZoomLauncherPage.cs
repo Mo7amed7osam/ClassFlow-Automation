@@ -48,6 +48,36 @@ public static class ZoomLauncherPage
     private static readonly Regex TryAgain = new(
         @"^\s*(retry|try\s+again|rejoin|re-?connect|join\s+again)\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <summary>
+    /// Zoom's own "the meeting could not be joined" panel: "Joining Meeting Timeout or Browser
+    /// restriction", "Your network connection has timed out". It sits over the meeting, so the
+    /// participants list is gone with it and nothing can be admitted or counted until it is away.
+    /// </summary>
+    private static readonly Regex JoinFailedText = new(
+        @"joining meeting timeout|connection has timed out|unable to (join|connect)|connection (failed|lost)|reconnecting",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>Whether a page's own words are Zoom saying the meeting could not be joined.</summary>
+    internal static bool LooksLikeJoinFailed(string? pageText) =>
+        pageText is { Length: > 0 } text && JoinFailedText.IsMatch(text);
+
+    /// <summary>Whether Zoom is showing that panel right now.</summary>
+    public static async Task<bool> IsJoinFailedShownAsync(IBrowserContext context)
+    {
+        foreach (var page in context.Pages.Where(p => !p.IsClosed && IsZoom(p.Url)).ToArray())
+            foreach (var frame in page.Frames)
+            {
+                try
+                {
+                    string text = await frame.Locator("body").InnerTextAsync(new() { Timeout = 2000 });
+                    if (LooksLikeJoinFailed(text)) return true;
+                }
+                catch (PlaywrightException) { }
+                catch (TimeoutException) { }
+            }
+        return false;
+    }
+
     /// <summary>Presses Zoom's own "Retry" when a join failed. True when there was one to press.</summary>
     public static async Task<bool> TryPressRetryAsync(IBrowserContext context)
     {

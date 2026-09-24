@@ -118,6 +118,29 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 ? "it is in the database too, encrypted"
                 : "the database already has this PC's accounts; the password goes up on the next pass";
         };
+        // Opening a class from its card goes the same way as the Start Meeting page: one account,
+        // one link, one engine choice.
+        LmsSessions.OpenMeeting ??= async (account, url, engine, token) =>
+        {
+            var started = await _service.StartMeetingAsync(account, url,
+                engine switch
+                {
+                    ZoomAutoAdmit.Core.Sessions.SessionEngineType.Desktop => EnginePreference.Desktop,
+                    ZoomAutoAdmit.Core.Sessions.SessionEngineType.Web => EnginePreference.Web,
+                    _ => EnginePreference.Auto,
+                }, token);
+            return $"{account}: the meeting was opened with {started.EngineType}.";
+        };
+        // Starting a class again means letting go of what is running for it first: a meeting can be
+        // gone from Zoom while this PC still believes it is hosting it.
+        LmsSessions.StopMeetingsOf ??= async (group, token) =>
+        {
+            var running = await _service.GetActiveSessionsAsync(token);
+            int stopped = 0;
+            foreach (var session in running.Where(s => s.AccountId.Equals(group, StringComparison.OrdinalIgnoreCase)))
+                if (await _service.StopMeetingAsync(session.SessionId, token)) stopped++;
+            return stopped;
+        };
         Schedules = new SchedulesViewModel(service, scope: Scope);
         Logs = new LogsViewModel();
         SessionRoles = new SessionRolesViewModel(scope: Scope)

@@ -64,6 +64,16 @@ public static class LiveMeetings
         try { File.Delete(Path.Combine(Folder, sessionId.ToString("N") + ".json")); } catch { }
     }
 
+    /// <summary>
+    /// Forgets every meeting of a group, for when it is being opened afresh: what this PC believed
+    /// it was running is not what Zoom has, and the new meeting writes its own mark at once.
+    /// </summary>
+    public static void ClearGroup(string group)
+    {
+        foreach (var entry in List(DateTimeOffset.Now))
+            if (entry.Group.Equals(group, StringComparison.OrdinalIgnoreCase)) Finish(entry.SessionId);
+    }
+
     /// <summary>Every meeting whose file is fresh.</summary>
     public static IReadOnlyList<Entry> List(DateTimeOffset? now = null)
     {

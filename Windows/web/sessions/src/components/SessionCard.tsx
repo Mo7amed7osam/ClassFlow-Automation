@@ -6,6 +6,9 @@ import { Icon } from './Icon'
 const STEP_ICON: Record<StepKey, string> = { zoom: 'video', run: 'play', attendance: 'people', correct: 'late', report: 'report', complete: 'flag', ended: 'stop', record: 'film', drive: 'drive', material: 'sheet', assignment: 'calendar' }
 const STATE_ICON: Record<Step['state'], string> = { done: 'check', lms: 'check', partial: 'half', due: 'clock', waiting: 'hourglass', retry: 'retry', failed: 'x', future: 'dot', none: 'dot' }
 const STEP_ACTIONS: Partial<Record<StepKey, Action[]>> = {
+  // Pressing Zoom asks about the meeting itself: whether it is still running here, and opening it
+  // again when it is not.
+  zoom: ['zoom', 'zoomAgain'],
   run: ['run'], attendance: ['attendance'], correct: ['correct'], report: ['report'], complete: ['complete'], record: ['recording', 'zoomRecording', 'link'], drive: ['recording', 'sheet', 'link'],
   material: ['material'], assignment: ['assignment'],
 }
@@ -15,7 +18,8 @@ interface Props {
   row: Row
   now: Date
   working: Set<string>
-  onAction: (row: Row, action: Action) => void
+  /** The third argument names what the action is about: a pasted link, or the student being answered for. */
+  onAction: (row: Row, action: Action, about?: string) => void
   onOpen: (url: string) => void
   /** Open the class's material box: what goes up, a folder or file to pick, Upload or Cancel. */
   onMaterial: (row: Row) => void
@@ -96,6 +100,31 @@ export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, o
                   <div className="popover" role="dialog" aria-label={step.label}>
                     <strong><Icon name={STEP_ICON[step.key]} size={14} /> {step.label}</strong>
                     <p>{step.detail || step.text}</p>
+                    {step.key === 'attendance' && (row.attention?.length ?? 0) > 0 && (
+                      <ul className="attention">
+                        {/* Whoever the match is unsure of: the student, the Zoom name they might be,
+                            and how sure it was. One answer each, and the next upload carries them. */}
+                        {row.attention!.map((person) => (
+                          <li key={person.student}>
+                            <span className="who" title={`Seen in Zoom as "${person.seenAs}"`}>
+                              {person.student}
+                              <em>{person.seenAs ? `seen as \u201c${person.seenAs}\u201d` : 'nobody like them in Zoom'}{person.percent > 0 ? ` \u00b7 ${person.percent}%` : ''}</em>
+                            </span>
+                            <button type="button" className="btn small" disabled={working.has(workingKey(row, 'yesThem'))}
+                              onClick={() => { setOpenStep(null); onAction(row, 'yesThem', person.student) }}>Yes</button>
+                            <button type="button" className="btn small ghost" disabled={working.has(workingKey(row, 'notThem'))}
+                              onClick={() => { setOpenStep(null); onAction(row, 'notThem', person.student) }}>No</button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {step.key === 'zoom' && (
+                      <p className={row.live ? 'meeting-live' : 'meeting-gone'}>
+                        {row.live
+                          ? 'The meeting is running on this PC now.'
+                          : 'No meeting of this class is running on this PC.'}
+                      </p>
+                    )}
                     <div className="popover-actions">
                       {(STEP_ACTIONS[step.key] ?? []).filter((a) => actions.includes(a)).map((a) => (
                         <button key={a} type="button" className="btn small" disabled={working.has(workingKey(row, a))}

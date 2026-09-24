@@ -496,10 +496,10 @@ public sealed class DelegatedRunsTests : IDisposable
     }
 
     [Fact]
-    public async Task AClassOfAGroupTheyWereNotGivenIsSaidRatherThanDroppedInSilence()
+    public async Task AClassOnTheirOwnLmsIsRunEvenWhenNobodyAssignedThemThatGroupHere()
     {
-        // 2026-09-23: a class sat on Hosam's LMS and was nowhere in the app. The read kept only the
-        // groups the dashboard knows he has, and said nothing at all about the rest.
+        // 2026-09-23: a class sat on Hosam's LMS and was nowhere in the app, because the read kept
+        // only the groups the dashboard knows he has. A class on his own LMS is his.
         var api = new FakeCentral();
         api.Delegations.Add(Person("u-hosam", "Hosam", Email("hosam"), ["CAI5_IND1_G1"], "CAI5_IND1_G1"));
 
@@ -511,12 +511,14 @@ public sealed class DelegatedRunsTests : IDisposable
                 new("CAI5_IND1_G2", Today.AddDays(2), new TimeOnly(19, 0), "Week 10 - Session 1", "pending", null, "", "", "unknown", null, []),
             ])).SyncAsync(readTimetables: true);
 
-        // Only the group he was given is run...
-        Assert.Equal(1, Assert.Single(api.Imported).Rows);
-        // ...and the ones left out are named, with how many, so somebody can assign the group.
+        // All three go up as his plan, whatever this PC's group list says...
+        Assert.Equal(3, Assert.Single(api.Imported).Rows);
+        // ...the group nobody gave him is named, so its Zoom account can be chosen...
         string said = Assert.Single(report.Problems.Where(p => p.Contains("CAI5_IND1_G2")));
         Assert.Contains("(2)", said);
-        Assert.Contains("not assigned to them", said);
+        Assert.Contains("run too", said);
+        // ...and its classes still go up on the LMS under his own sign-in.
+        Assert.Equal("Hosam", _classes.Whose("CAI5_IND1_G2"));
     }
 
     // ------------------------------------------------------------------ the fake app

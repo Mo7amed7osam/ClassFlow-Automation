@@ -222,7 +222,12 @@ export function RunsPage() {
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {classes.map((item) => (
-                  <ClassRow key={item.id} item={item} who={names.get(item.coordinatorId) ?? ''} />
+                  <ClassRow
+                    key={item.id}
+                    item={item}
+                    who={names.get(item.coordinatorId) ?? ''}
+                    accounts={people.find((person) => person.coordinatorId === item.coordinatorId)?.zoomAccounts ?? []}
+                  />
                 ))}
               </tbody>
             </table>
@@ -294,7 +299,7 @@ function RunNow({ item }: { item: ClassPlan }) {
   )
 }
 
-function ClassRow({ item, who }: { item: ClassPlan; who: string }) {
+function ClassRow({ item, who, accounts }: { item: ClassPlan; who: string; accounts: ZoomAccountRef[] }) {
   const update = useUpdateClassPlan()
   const toast = useToast()
   const [link, setLink] = useState(item.meetingUrl ?? '')
@@ -329,7 +334,34 @@ function ClassRow({ item, who }: { item: ClassPlan; who: string }) {
       </td>
       <td className={td}>
         <p className="text-slate-700">{who}</p>
-        {item.zoomAccount && <p className="text-xs text-slate-500">{item.zoomAccount}</p>}
+        {/* Which of their Zoom accounts opens this class. The app takes the one that hosts the
+            group; a group it cannot match - one only their LMS knows about - is chosen here. */}
+        {accounts.length > 0 ? (
+          <select
+            className={`${input} mt-1 w-44 text-xs`}
+            value={item.zoomAccount ?? ''}
+            aria-label={`Zoom account that opens ${item.group} on ${item.date}`}
+            onChange={(event) =>
+              update.mutate(
+                { id: item.id, zoomAccount: event.target.value || null, applyToGroup: true },
+                {
+                  onSuccess: () => toast.success('Saved', `${item.group} opens with ${event.target.value || 'no account'}.`),
+                  onError: (error) => toast.error('Could not choose that account', reason(error)),
+                },
+              )
+            }
+          >
+            <option value="">Choose an account…</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.accountId}>
+                {account.accountId}
+                {account.meetingUrl ? '' : ' — no link yet'}
+              </option>
+            ))}
+          </select>
+        ) : (
+          item.zoomAccount && <p className="text-xs text-slate-500">{item.zoomAccount}</p>
+        )}
       </td>
       <td className={td}>
         <div className="flex flex-wrap items-center gap-1.5">

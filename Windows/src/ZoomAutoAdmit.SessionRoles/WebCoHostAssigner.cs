@@ -14,13 +14,18 @@ namespace ZoomAutoAdmit.SessionRoles;
 public sealed class WebCoHostAssigner(Func<IPage?> page, TimeSpan? menuWait = null, TimeSpan? verifyWait = null) : ICoHostAssigner
 {
     private static readonly Regex JoinedListName = new(@"^participants? list\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex OpenParticipants = new(@"^open the manage participants list pane|^participants(,|\s*\(\d+\))?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex OpenParticipants = new(@"^(open|show)?\s*(the\s+)?(manage\s+)?participants?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex RowMore = new(@"^more\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex MakeCoHost = new(@"^\s*make\s+co-?host\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex CoHostRole = new(@"\(\s*co-?host\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private const string RowSelector = "[role='application'], [role='listitem'], [role='row'], [role='option'], [role='treeitem']";
 
+    /// <summary>How many times the participant's own menu is opened before giving up on it.</summary>
+    public const int MenuTries = 3;
+
     private readonly TimeSpan _menuWait = menuWait ?? TimeSpan.FromMilliseconds(900);
+    /// <summary>How long the opened menu is watched for "Make Co-Host" to appear in it.</summary>
+    private readonly TimeSpan _menuOpenFor = menuWait is { } given ? given + given : TimeSpan.FromSeconds(3);
     private readonly TimeSpan _verifyWait = verifyWait ?? TimeSpan.FromSeconds(3);
 
     public CoHostOutcome Assign(string observedDisplayName, CancellationToken token = default)
@@ -50,24 +55,41 @@ public sealed class WebCoHostAssigner(Func<IPage?> page, TimeSpan? menuWait = nu
         if (row == null) return new(false, $"\"{name}\" is not in the participants list right now.");
         if (CoHostRole.IsMatch(await LabelAsync(row))) return new(true, $"{name} is already a co-host.", AlreadyCoHost: true);
 
-        await row.HoverAsync(new() { Force = true, Timeout = 5000 });
-        await Task.Delay(TimeSpan.FromMilliseconds(400), token);
-        ILocator? more = null;
-        foreach (var button in await row.Locator("button,[role=button]").AllAsync())
+        // The menu is opened, waited for and - if it came up empty or closed again under the
+        // pointer - opened once more. Pressing "More" and looking exactly once found no
+        // "Make Co-Host" and gave up on somebody who was right there (2026-09-24, G2).
+        ILocator? item = null;
+        for (int attempt = 0; attempt < MenuTries && item == null; attempt++)
         {
-            string label = (await button.GetAttributeAsync("aria-label")) ?? (await button.InnerTextAsync()).Trim();
-            if (RowMore.IsMatch(label)) { more = button; break; }
+            token.ThrowIfCancellationRequested();
+            if (attempt > 0) await CloseMenuAsync(current);
+            await row.HoverAsync(new() { Force = true, Timeout = 5000 });
+            await Task.Delay(TimeSpan.FromMilliseconds(400), token);
+            ILocator? more = null;
+            foreach (var button in await row.Locator("button,[role=button]").AllAsync())
+            {
+                string label = (await button.GetAttributeAsync("aria-label")) ?? (await button.InnerTextAsync()).Trim();
+                if (RowMore.IsMatch(label)) { more = button; break; }
+            }
+            if (more == null)
+            {
+                if (attempt + 1 < MenuTries) continue;
+                return new(false, "That participant's More button did not appear on the web page.");
+            }
+            await more.ClickAsync(new() { Force = true, Timeout = 5000 });
+            // Zoom fills the menu after it opens, so it is watched rather than glanced at once.
+            var until = DateTime.UtcNow + _menuOpenFor;
+            do
+            {
+                item = await FindVisibleAsync(current, AriaRole.Menuitem, MakeCoHost);
+                if (item != null) break;
+                await Task.Delay(TimeSpan.FromMilliseconds(200), token);
+            } while (DateTime.UtcNow < until);
         }
-        if (more == null) return new(false, "That participant's More button did not appear on the web page.");
-        token.ThrowIfCancellationRequested();
-        await more.ClickAsync(new() { Force = true, Timeout = 5000 });
-        await Task.Delay(_menuWait, token);
-
-        var item = await FindVisibleAsync(current, AriaRole.Menuitem, MakeCoHost);
         if (item == null)
         {
             await CloseMenuAsync(current);
-            return new(false, "\"Make Co-Host\" was not in that participant's menu.");
+            return new(false, $"\"Make Co-Host\" did not appear in that participant's menu after {MenuTries} tries.");
         }
         await item.ClickAsync(new() { Force = true, Timeout = 5000 });
         await Task.Delay(_menuWait, token);

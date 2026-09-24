@@ -20,6 +20,25 @@ public sealed class LiveMeetingsTests : IDisposable
         LiveMeetings.ForgetFinished();
     }
 
+    [Fact]
+    public void AGroupCanBeForgottenWhenItsClassIsOpenedAfresh()
+    {
+        // "Start the meeting again": this PC thought it was hosting a class Zoom had already
+        // dropped, so it refused to open it (2026-09-24, G2 at 18:04).
+        var dropped = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        LiveMeetings.Beat(dropped, "CAI5_IND1_G2", "Web", DateTimeOffset.Now);
+        LiveMeetings.Beat(other, "CAI5_AIS4_S8", "Desktop", DateTimeOffset.Now);
+
+        LiveMeetings.ClearGroup("cai5_ind1_g2");
+
+        Assert.False(LiveMeetings.IsLive("CAI5_IND1_G2"));
+        Assert.True(LiveMeetings.IsLive("CAI5_AIS4_S8"));
+        // And the beat of the meeting that was let go cannot bring it back.
+        LiveMeetings.Beat(dropped, "CAI5_IND1_G2", "Web", DateTimeOffset.Now);
+        Assert.False(LiveMeetings.IsLive("CAI5_IND1_G2"));
+    }
+
     public void Dispose()
     {
         LiveMeetings.Folder = _was;

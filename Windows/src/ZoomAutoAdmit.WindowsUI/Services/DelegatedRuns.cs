@@ -61,6 +61,8 @@ public sealed class DelegatedRuns
     private readonly ClassLmsAccounts _classes;
     private readonly IZoomProfileCredentialStore _zoomCredentials;
     private readonly ReadTimetable _readTimetable;
+    /// <summary>The groups each coordinator's own LMS listed, including ones nobody assigned them here.</summary>
+    private readonly Dictionary<string, string[]> _seenOnTheirLms = new(StringComparer.OrdinalIgnoreCase);
     private readonly Action<string> _log;
     private readonly Func<DateOnly> _today;
     private readonly Dictionary<string, DateTimeOffset> _lastRead = new(StringComparer.OrdinalIgnoreCase);
@@ -136,8 +138,13 @@ public sealed class DelegatedRuns
                 var entry = _directory.Upsert(
                     string.IsNullOrWhiteSpace(secret.Label) ? delegation.DisplayName : secret.Label,
                     secret.Email, secret.Password, secret.Role, makeActive: false);
+                // Every group of theirs the app knows of - given here, or seen on their own LMS -
+                // so each class goes up under their sign-in and not this PC's.
                 _classes.SetGroups(delegation.CoordinatorId, delegation.DisplayName, entry.Id,
-                    delegation.GroupList.Where(g => !g.Archived).Select(g => g.Name), delegation.ZoomAccount);
+                    delegation.GroupList.Where(g => !g.Archived).Select(g => g.Name)
+                        .Concat(_seenOnTheirLms.TryGetValue(delegation.CoordinatorId, out var seen) ? seen : [])
+                        .Distinct(StringComparer.OrdinalIgnoreCase),
+                    delegation.ZoomAccount);
                 await KeepTheirZoomSignInAsync(delegation, problems, token);
                 ready.Add((delegation, entry));
             }
@@ -219,22 +226,27 @@ public sealed class DelegatedRuns
                 // group the dashboard does not know they have - which is how a class on Hosam's
                 // LMS was nowhere in the app (2026-09-23).
                 var listed = await _readTimetable(new LmsCredentialStore(entry.Target, entry.Profile), from, to, [], token);
+                // A class on their own LMS is theirs, whatever this PC's group list says, so it is
+                // run: the dashboard's groups are how the app names things, not who owns a class.
+                // A group nobody assigned them simply has no Zoom account of its own yet, and says
+                // so until somebody chooses one (2026-09-23: a class of Hosam's was on his LMS and
+                // nowhere here).
                 var theirs = groups.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var notTheirs = listed
+                var alsoListed = listed
                     .Where(session => session.Date != null && !theirs.Contains(session.Group))
                     .GroupBy(session => session.Group, StringComparer.OrdinalIgnoreCase)
                     .Select(byGroup => $"{byGroup.Key} ({byGroup.Count()})")
                     .ToArray();
-                if (notTheirs.Length > 0)
+                if (alsoListed.Length > 0)
                 {
-                    string missing = $"{delegation.DisplayName}: their LMS also lists {string.Join(", ", notTheirs)} - " +
-                                     "those groups are not assigned to them here, so their classes are not run. " +
-                                     "Assign the group on Coordinators & groups to include it.";
-                    lock (said) problems.Add(missing);
-                    _log(missing);
+                    string extra = $"{delegation.DisplayName}: their LMS also lists {string.Join(", ", alsoListed)}, " +
+                                   "which is not among the groups they were given here. Those classes are run too; " +
+                                   "choose the Zoom account that opens them on the Run classes page.";
+                    lock (said) problems.Add(extra);
+                    _log(extra);
                 }
                 var rows = listed
-                    .Where(session => session.Date != null && theirs.Contains(session.Group)
+                    .Where(session => session.Date != null
                                       && !session.ListStatus.Equals("cancelled", StringComparison.OrdinalIgnoreCase))
                     .Select(session => (object)new
                     {
@@ -249,6 +261,13 @@ public sealed class DelegatedRuns
                     lock (said) problems.Add($"{delegation.DisplayName}: their LMS listed no session between {from:d MMM} and {to:d MMM}.");
                     return;
                 }
+                var seenNow = listed.Where(session => session.Date != null).Select(session => session.Group)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                lock (said) _seenOnTheirLms[delegation.CoordinatorId] = seenNow;
+                // Written down now, not on the next pass: a class of a group only their LMS knows
+                // about still goes up under their own sign-in the first time it runs.
+                _classes.SetGroups(delegation.CoordinatorId, delegation.DisplayName, entry.Id,
+                    theirs.Concat(seenNow).Distinct(StringComparer.OrdinalIgnoreCase), delegation.ZoomAccount);
                 await _api.ImportRunPlanAsync(delegation.CoordinatorId, rows, token);
                 _lastRead[delegation.CoordinatorId] = DateTimeOffset.Now;
                 _log($"{delegation.DisplayName}: {rows.Length} class(es) read from their LMS.");

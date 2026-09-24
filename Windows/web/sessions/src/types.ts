@@ -31,6 +31,10 @@ export interface Row {
   lmsAccount?: string
   /** Whose class it is, when this PC runs it for somebody else. */
   coordinator?: string
+  /** Its meeting is running on this PC right now. */
+  live?: boolean
+  /** Students the match is unsure about, waiting for a yes or a no. */
+  attention?: { student: string; seenAs: string; percent: number }[]
   recordLink?: string | null
   steps: Step[]
   details: string
@@ -103,7 +107,7 @@ export interface State {
 }
 
 /** A step the page can ask the app to do now, on the real LMS. */
-export type Action = 'run' | 'attendance' | 'correct' | 'report' | 'complete' | 'zoomRecording' | 'sheet' | 'recording' | 'link' | 'material' | 'assignment'
+export type Action = 'zoom' | 'zoomAgain' | 'yesThem' | 'notThem' | 'yesThem' | 'notThem' | 'run' | 'attendance' | 'correct' | 'report' | 'complete' | 'zoomRecording' | 'sheet' | 'recording' | 'link' | 'material' | 'assignment'
 
 export interface Result {
   ok: boolean

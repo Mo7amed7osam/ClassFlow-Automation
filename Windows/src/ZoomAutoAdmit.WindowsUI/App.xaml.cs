@@ -91,6 +91,14 @@ public partial class App : Application
             // The same notices, sent on as well as shown: a webhook (n8n) turns them into an e-mail,
             // so nobody has to be at this PC to learn that a class needs them.
             Services.ClassNotifier.Current ??= new Services.ClassNotifier();
+            // Zoom dropped a meeting and Retry is not bringing it back: said on the desktop and
+            // sent on, because nobody is being admitted and no attendance is being counted.
+            ZoomAutoAdmit.WebAutomation.WebAutoAdmitEngine.MeetingStuck += (profile, why) =>
+            {
+                Dispatcher.BeginInvoke(() => { try { Views.DesktopToast.Show("A class lost its meeting", $"{profile}: {why}", "#F05252"); } catch { } });
+                Services.ClassNotifier.Current?.Send(new Services.ClassNotice(
+                    "meeting-dropped", $"{profile}: the meeting dropped and has not come back", why) { Group = profile });
+            };
             ZoomAutoAdmit.WindowsRuntime.Scheduling.ScheduledClassStarter.GaveUp += (schedule, why) =>
                 Services.ClassNotifier.Current?.Send(new Services.ClassNotice(
                     "class-did-not-open", $"{schedule.Name} did not open", why)
