@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { ApiError } from '../api/client'
 import {
   useAiStatus, useCloudPolicy, useEnrollDevice, useMe, useNotifySettings, useSaveCloudPolicy,
-  useSaveNotifySettings, useSaveSetting, useSetting, useTestNotification,
+  useSaveNotifySettings, useSaveSetting, useSetting, useTestNotification, useConnectGoogleSheets,
+  useGoogleSheetsStatus, useSyncGoogleSheets,
 } from '../api/hooks'
 import type { CloudPolicy, RecordingsSheet } from '../api/types'
 import { PageHeader } from '../components/Layout'
@@ -53,10 +54,14 @@ export function SettingsPage() {
   const notify = useNotifySettings(isAdmin)
   const saveNotify = useSaveNotifySettings()
   const testNotify = useTestNotification()
+  const google = useGoogleSheetsStatus(isAdmin)
+  const connectGoogle = useConnectGoogleSheets()
+  const syncGoogle = useSyncGoogleSheets()
   const toast = useToast()
 
   const current = { ...POLICY_DEFAULTS, ...(policy.data?.value ?? {}) }
   const [sheetId, setSheetId] = useState<string | null>(null)
+  const [googleSheetId, setGoogleSheetId] = useState('')
   const [webhook, setWebhook] = useState('')
   const [machine, setMachine] = useState('')
   const [token, setToken] = useState<string | null>(null)
@@ -67,7 +72,7 @@ export function SettingsPage() {
     })
   }
 
-  const failed = [savePolicy.error, saveSheet.error, enroll.error, saveNotify.error, testNotify.error].find(Boolean)
+  const failed = [savePolicy.error, saveSheet.error, enroll.error, saveNotify.error, testNotify.error, google.error, connectGoogle.error, syncGoogle.error].find(Boolean)
   const message = failed instanceof ApiError && typeof failed.details === 'string' ? failed.details : failed?.message
   const savedSheetId = typeof sheet.data?.value?.spreadsheetId === 'string' ? sheet.data.value.spreadsheetId : ''
 
@@ -135,6 +140,51 @@ export function SettingsPage() {
                   </button>
                 </div>
               )}
+            </div>
+          </Card>
+        )}
+
+        {isAdmin && (
+          <Card
+            title="Google Sheets recording sync"
+            action={google.data?.configured ? <Pill tone="green">Connected</Pill> : <Pill tone="amber">Not connected</Pill>}
+          >
+            <div className="flex flex-col gap-4 px-5 py-4">
+              <p className="text-sm text-slate-600">
+                ClassFlow reads your recording sheet at 08:00 Cairo time. It never edits the sheet. New Drive links are
+                stored once, then prepared for the matching LMS session.
+              </p>
+              {google.data?.configured ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                  <span>{google.data.googleEmail ?? 'Google account connected'}</span>
+                  <span>·</span>
+                  <span>{google.data.states.pending ?? 0} waiting</span>
+                  {(google.data.states.conflict ?? 0) > 0 && <><span>·</span><span className="text-amber-700">{google.data.states.conflict} need review</span></>}
+                </div>
+              ) : (
+                <Field label="Spreadsheet ID" hint="Copy the long ID from the Google Sheet address. Only LMS-code tabs are read.">
+                  <input className={`${input} w-full`} value={googleSheetId} onChange={(event) => setGoogleSheetId(event.target.value)} />
+                </Field>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                {!google.data?.configured && (
+                  <button type="button" className={button.primary} disabled={connectGoogle.isPending || !googleSheetId.trim()} onClick={() => connectGoogle.mutate(googleSheetId.trim(), {
+                    onSuccess: (answer) => { window.location.assign(answer.authorizationUrl) },
+                  })}>
+                    {connectGoogle.isPending && <Spinner label="Opening Google" />}
+                    {connectGoogle.isPending ? 'Opening Google…' : 'Connect Google Sheet'}
+                  </button>
+                )}
+                {google.data?.configured && (
+                  <button type="button" className={button.secondary} disabled={syncGoogle.isPending} onClick={() => syncGoogle.mutate(undefined, {
+                    onSuccess: (result) => toast.success('Sheet checked.', `${result.pending} recording${result.pending === 1 ? '' : 's'} ready; ${result.conflict} need review.`),
+                  })}>
+                    {syncGoogle.isPending && <Spinner label="Checking the sheet" />}
+                    {syncGoogle.isPending ? 'Checking…' : 'Check now'}
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-slate-500">No n8n, no webhook, and no status columns are added to Google Sheets.</p>
             </div>
           </Card>
         )}

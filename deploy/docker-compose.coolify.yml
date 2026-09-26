@@ -53,6 +53,11 @@ services:
       CENTRAL_AI_API_KEY: ${CENTRAL_AI_API_KEY:-}
       CENTRAL_AI_MODEL: ${CENTRAL_AI_MODEL:-openai/gpt-4o-mini}
       CENTRAL_AI_BASE_URL: ${CENTRAL_AI_BASE_URL:-https://openrouter.ai/api/v1}
+      # First-party, read-only Google Sheets recording sync. The values live only in Coolify's
+      # secret environment; OAuth refresh tokens are encrypted with CENTRAL_SECRETS_KEY in PostgreSQL.
+      CENTRAL_GOOGLE_OAUTH_CLIENT_ID: ${CENTRAL_GOOGLE_OAUTH_CLIENT_ID:-}
+      CENTRAL_GOOGLE_OAUTH_CLIENT_SECRET: ${CENTRAL_GOOGLE_OAUTH_CLIENT_SECRET:-}
+      CENTRAL_GOOGLE_OAUTH_REDIRECT_URI: ${CENTRAL_GOOGLE_OAUTH_REDIRECT_URI:-}
       TZ: ${TZ:-Africa/Cairo}
       # Coolify reads this to route the domain and to get a certificate.
       SERVICE_FQDN_BACKEND: ${SERVICE_FQDN_BACKEND:-}

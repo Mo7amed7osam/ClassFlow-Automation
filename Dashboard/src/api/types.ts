@@ -477,6 +477,26 @@ export interface RecordingsSheet {
   [key: string]: unknown
 }
 
+/** The server-owned, read-only Google Sheet connection used for recording links. */
+export interface GoogleSheetsStatus {
+  configured: boolean
+  spreadsheetId: string | null
+  googleEmail: string | null
+  connectedAt: string | null
+  states: Record<string, number>
+}
+
+export interface GoogleAuthorization {
+  authorizationUrl: string
+}
+
+export interface GoogleSheetSyncResult {
+  seen: number
+  pending: number
+  conflict: number
+  skipped: number
+}
+
 /** GET /api/v1/settings/{key}: the value, or null when nothing has been saved yet. */
 export interface Setting<T> {
   key: string

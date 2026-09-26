@@ -48,6 +48,8 @@ from .attendance import router as attendance_router
 from .attendance_ai import AttendanceAi, ChatCompletionsAi
 from .notifications import Notifier
 from .notifications import router as notifications_router
+from .google_sheets import GoogleSheetsSynchronizer
+from .google_sheets import router as google_sheets_router
 from .observability import configure_logging, emit
 from .recordings import router as recordings_router
 from .user_data import SecretBox
@@ -153,6 +155,13 @@ def create_app(
         stop = asyncio.Event()
         task = asyncio.create_task(sweeper.run(stop)) if run_background else None
         schedule_task = asyncio.create_task(scheduler.run(stop)) if run_background else None
+        # Google Sheets is read by this service at 08:00 Cairo. It has its own persistent ledger,
+        # so no external workflow engine and no write back to the spreadsheet are involved.
+        google_task = None
+        if run_background and app.state.secret_box is not None:
+            google_sync = GoogleSheetsSynchronizer(sessionmaker, app.state.secret_box, clock)
+            app.state.google_sheets_sync = google_sync
+            google_task = asyncio.create_task(google_sync.run_daily(stop))
         emit("backend.started", version=__version__, environment=settings.environment)
         await _check_accounts(sessionmaker)
         try:
@@ -163,6 +172,8 @@ def create_app(
                 await task
             if schedule_task is not None:
                 await schedule_task
+            if google_task is not None:
+                await google_task
             for device_id in list(registry.connected_device_ids()):
                 await registry.close(device_id, 1012, "server restarting")
             await engine.dispose()
@@ -208,6 +219,7 @@ def create_app(
     app.include_router(dashboard_router)
     app.include_router(dashboard_operations_router)
     app.include_router(notifications_router)
+    app.include_router(google_sheets_router)
     app.include_router(delegated_runs_router)
     app.include_router(sessions_router)
     app.include_router(worker_support_router)

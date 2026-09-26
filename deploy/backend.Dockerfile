@@ -54,4 +54,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # restarts forever on "Attribute 'app' not found". --ws-max-size bounds what an agent may send on
 # the socket. Backend/README.md is where both come from.
 # --forwarded-allow-ips must name the proxy; COOLIFY_DEPLOYMENT.md says how to find it.
+USER root
+COPY deploy/backend-entrypoint.sh /usr/local/bin/backend-entrypoint.sh
+RUN chmod 755 /usr/local/bin/backend-entrypoint.sh
+USER central
+ENTRYPOINT ["/usr/local/bin/backend-entrypoint.sh"]
 CMD ["sh", "-c", "exec uvicorn central_backend.main:create_app --factory --host 0.0.0.0 --port 8000 --ws-max-size 65536 --proxy-headers --forwarded-allow-ips=\"${CENTRAL_FORWARDED_ALLOW_IPS:-127.0.0.1}\""]

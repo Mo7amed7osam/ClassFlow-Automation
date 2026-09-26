@@ -30,6 +30,9 @@ import type {
   RecordingQuery,
   RunPlan,
   ScheduleRow,
+  GoogleAuthorization,
+  GoogleSheetsStatus,
+  GoogleSheetSyncResult,
   SchedulesAnswer,
   SessionRoleProfile,
   SessionsPage,
@@ -443,6 +446,29 @@ export const useSaveSessionRoles = () => useSaveSetting<{ profiles: SessionRoleP
 /** The switches the workers read before holding a class. */
 export const useCloudPolicy = () => useSetting<CloudPolicy>('cloudPolicy')
 export const useSaveCloudPolicy = () => useSaveSetting<CloudPolicy>('cloudPolicy')
+
+export function useGoogleSheetsStatus(enabled = true) {
+  return useQuery({
+    queryKey: ['google-sheets'],
+    queryFn: () => api<GoogleSheetsStatus>('/api/v1/google-sheets'),
+    refetchInterval: REFRESH.groups,
+    enabled,
+  })
+}
+
+export function useConnectGoogleSheets() {
+  return useMutation({
+    mutationFn: (spreadsheetId: string) => api<GoogleAuthorization>('/api/v1/google-sheets/connect', send('POST', { spreadsheetId })),
+  })
+}
+
+export function useSyncGoogleSheets() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: () => api<GoogleSheetSyncResult>('/api/v1/google-sheets/sync', send('POST')),
+    onSuccess: () => { client.invalidateQueries({ queryKey: ['google-sheets'] }); client.invalidateQueries({ queryKey: ['recordings'] }) },
+  })
+}
 
 /** Runs one stage of one class now instead of at its time. */
 export const useRunStage = () => {

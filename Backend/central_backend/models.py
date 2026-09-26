@@ -575,6 +575,55 @@ class AppSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class GoogleSheetsConnection(Base):
+    """The one Google OAuth connection used by the cloud recording synchronizer.
+
+    The refresh token is AES-GCM encrypted before it reaches this table.  The spreadsheet itself
+    is deliberately not secret, but keeping it alongside the connection makes a deployed worker
+    independent of a particular administrator's browser or computer.
+    """
+
+    __tablename__ = "google_sheets_connections"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    spreadsheet_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    refresh_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    google_email: Mapped[str | None] = mapped_column(String(320))
+    connected_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class GoogleSheetsSyncRecord(Base):
+    """A durable, per-row result for the read-only recordings sheet.
+
+    `row_key` includes the tab and the Drive URL.  Thus a scheduled run can safely be repeated
+    after a restart, while a changed Drive link for the same class remains visible for review
+    instead of silently replacing an already attached recording.
+    """
+
+    __tablename__ = "google_sheets_sync_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    connection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("google_sheets_connections.id", ondelete="CASCADE"), nullable=False)
+    row_key: Mapped[str] = mapped_column(String(300), nullable=False)
+    group_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    drive_link: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
+    detail: Mapped[str | None] = mapped_column(String(500))
+    recording_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("recordings.id", ondelete="SET NULL"))
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'processing', 'attached', 'conflict', 'failed')", name="ck_google_sheet_sync_status"),
+        Index("uq_google_sheet_sync_row", "connection_id", "row_key", unique=True),
+        Index("ix_google_sheet_sync_class", "group_name", "session_date"),
+    )
+
+
 ACTIVITY_OUTCOMES = ("done", "failed", "skipped")
 
 
@@ -617,6 +666,8 @@ __all__ = [
     "UserSchedule",
     "ZoomAccount",
     "AppSetting",
+    "GoogleSheetsConnection",
+    "GoogleSheetsSyncRecord",
     "DeviceActivity",
     "LmsAccount",
     "ATTENDANCE_RECORD_STATUSES",
