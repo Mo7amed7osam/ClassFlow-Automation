@@ -36,11 +36,11 @@ export function LifecycleTimeline({ stages, onRetryStage, retryingKey }: Lifecyc
   const preflightDone = zoomStage?.state === 'done' || zoomStage?.state === 'running' || zoomStage?.state === 'due'
 
   return (
-    <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+    <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
+      <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
         <div>
           <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Automation Lifecycle Pipeline</h3>
-          <p className="text-xs text-slate-500">Autonomous execution progression from pre-flight to recording archival</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Autonomous execution progression from pre-flight to recording archival</p>
         </div>
         <span className="text-xs font-semibold text-slate-400">8 Orchestrated Steps</span>
       </div>
@@ -64,18 +64,18 @@ export function LifecycleTimeline({ stages, onRetryStage, retryingKey }: Lifecyc
               const isWaiting = stage?.state === 'waiting'
 
               const statusColor = isDone
-                ? 'bg-emerald-600 text-white ring-4 ring-emerald-50 dark:ring-emerald-950/60'
+                ? 'bg-emerald-600 text-white ring-4 ring-emerald-500/20 dark:ring-emerald-500/20'
                 : isRunning
-                ? 'bg-sky-500 text-white ring-4 ring-sky-100 dark:ring-sky-950/60 animate-pulse'
+                ? 'bg-sky-500 text-white ring-4 ring-sky-500/20 dark:ring-sky-500/20 animate-pulse'
                 : isFailed
-                ? 'bg-rose-600 text-white ring-4 ring-rose-100 dark:ring-rose-950/60'
+                ? 'bg-rose-600 text-white ring-4 ring-rose-500/20 dark:ring-rose-500/20'
                 : isBlocked
-                ? 'bg-amber-500 text-white ring-4 ring-amber-100 dark:ring-amber-950/60'
+                ? 'bg-amber-500 text-white ring-4 ring-amber-500/20 dark:ring-amber-500/20'
                 : isDue
-                ? 'bg-amber-400 text-white ring-4 ring-amber-50 dark:ring-amber-950/60'
+                ? 'bg-amber-400 text-white ring-4 ring-amber-500/20 dark:ring-amber-500/20'
                 : isWaiting
-                ? 'bg-slate-400 text-white ring-4 ring-slate-100 dark:ring-slate-800'
-                : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                ? 'bg-slate-400 text-white ring-4 ring-slate-500/20 dark:ring-slate-700/40'
+                : 'bg-slate-200 text-slate-600 dark:bg-[#161d2f] dark:text-slate-400'
 
               return (
                 <div key={step.key} className="relative flex md:flex-col items-start md:items-center gap-3 md:gap-2 group">

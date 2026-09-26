@@ -51,13 +51,13 @@ export function RegisterPage() {
   }
 
   const shell = (children: ReactNode) => (
-    <div className="grid min-h-full place-items-center bg-slate-100 px-4 py-8">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-7 shadow-sm">
+    <div className="grid min-h-full place-items-center bg-slate-100 dark:bg-[#090d16] px-4 py-8">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200/80 bg-white p-7 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
         <div className="mb-6 flex items-center gap-2.5">
-          <span className="grid size-9 place-items-center rounded-lg bg-teal-600 font-bold text-white">Z</span>
+          <span className="grid size-9 place-items-center rounded-xl bg-indigo-600 font-bold text-white shadow-xs">C</span>
           <div>
-            <h1 className="text-base font-semibold text-slate-900">Request an account</h1>
-            <p className="text-xs text-slate-500">For coordinators · the admin approves each request</p>
+            <h1 className="text-base font-bold text-slate-900 dark:text-slate-100">Request an account</h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400">For coordinators · the admin approves each request</p>
           </div>
         </div>
         {children}
@@ -68,11 +68,11 @@ export function RegisterPage() {
   if (register.isSuccess) {
     return shell(
       <div role="status">
-        <p className="rounded-lg bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+        <p className="rounded-xl bg-emerald-50 dark:bg-emerald-950/40 px-3 py-3 text-sm text-emerald-800 dark:text-emerald-200">
           Your request for <span className="font-semibold">{register.data.username}</span> was sent. The admin needs to approve it
           and give you your groups; after that you can sign in.
         </p>
-        <Link to="/login" className="mt-5 inline-flex h-10 w-full items-center justify-center rounded-lg bg-teal-700 text-sm font-semibold text-white hover:bg-teal-800">
+        <Link to="/login" className="mt-5 inline-flex h-10 w-full items-center justify-center rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 active:bg-indigo-700 transition-colors">
           Back to sign in
         </Link>
       </div>,
@@ -82,12 +82,12 @@ export function RegisterPage() {
   const message = registerMessage(register.error)
   const field = (id: string, label: string, error: string | undefined, control: ReactNode, hint?: string) => (
     <div className="mb-4">
-      <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor={id}>{label}</label>
+      <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300" htmlFor={id}>{label}</label>
       {control}
       {submitted && error ? (
-        <p id={`${id}-error`} className="mt-1 text-xs text-rose-700">{error}</p>
+        <p id={`${id}-error`} className="mt-1 text-xs text-rose-700 dark:text-rose-400">{error}</p>
       ) : hint ? (
-        <p className="mt-1 text-xs text-slate-500">{hint}</p>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{hint}</p>
       ) : null}
     </div>
   )
@@ -106,13 +106,13 @@ export function RegisterPage() {
       {field('reg-confirm', 'Password again', problems.confirm,
         <input id="reg-confirm" type="password" className={`${input} w-full`} autoComplete="new-password" maxLength={200} value={confirm} onChange={(e) => setConfirm(e.target.value)} {...invalid('confirm')} />)}
 
-      {message && <p role="alert" className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{message}</p>}
+      {message && <p role="alert" className="mb-4 rounded-lg bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">{message}</p>}
 
-      <button type="submit" disabled={register.isPending} className="h-10 w-full rounded-lg bg-teal-700 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
+      <button type="submit" disabled={register.isPending} className="h-10 w-full rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-60 transition-colors">
         {register.isPending ? 'Sending…' : 'Send request'}
       </button>
-      <p className="mt-5 text-center text-sm text-slate-500">
-        Already have an account? <Link to="/login" className="font-medium text-teal-700 hover:underline">Sign in</Link>
+      <p className="mt-5 text-center text-sm text-slate-500 dark:text-slate-400">
+        Already have an account? <Link to="/login" className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Sign in</Link>
       </p>
     </form>,
   )

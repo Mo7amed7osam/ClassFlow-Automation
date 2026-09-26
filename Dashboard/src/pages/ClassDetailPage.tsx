@@ -109,7 +109,7 @@ export function ClassDetailPage() {
       </div>
 
       {/* Header Banner */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+      <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
@@ -153,7 +153,7 @@ export function ClassDetailPage() {
               type="button"
               onClick={() => refetch()}
               disabled={isFetching}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-[#161d2f] dark:text-slate-200 dark:hover:bg-[#1e273e] disabled:opacity-50 transition-colors"
             >
               <IconRefresh className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} />
               Refresh
@@ -164,7 +164,7 @@ export function ClassDetailPage() {
                 href={classItem.meetingUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 shadow-xs"
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-[#161d2f] dark:text-slate-200 dark:hover:bg-[#1e273e] shadow-xs transition-colors"
               >
                 Open Zoom Meeting
                 <IconExternalLink className="size-3.5 text-slate-400" />
@@ -175,7 +175,7 @@ export function ClassDetailPage() {
               type="button"
               onClick={() => handleRunStage('run')}
               disabled={retryingStage === 'run'}
-              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-indigo-700 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 transition-colors"
             >
               <IconPlay className="size-3.5" />
               Trigger Next Step
@@ -292,22 +292,22 @@ export function ClassDetailPage() {
             <Card title="Automated Stage Breakdown">
               <div className="space-y-2">
                 {classItem.stages.map((st) => (
-                  <div key={st.key} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/60 p-2.5 dark:border-slate-800 dark:bg-slate-800/40">
+                  <div key={st.key} className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-slate-50/50 p-2.5 dark:border-slate-800/80 dark:bg-[#0c111d]">
                     <div>
                       <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">{st.label}</p>
-                      <p className="text-[11px] text-slate-500">{st.caption} {st.detail ? `· ${st.detail}` : ''}</p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">{st.caption} {st.detail ? `· ${st.detail}` : ''}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${
                         st.state === 'done'
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                          ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/20 dark:bg-emerald-500/15 dark:text-emerald-400'
                           : st.state === 'running'
-                          ? 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300'
+                          ? 'bg-sky-500/10 text-sky-600 ring-1 ring-sky-500/20 dark:bg-sky-500/15 dark:text-sky-400'
                           : st.state === 'failed'
-                          ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                          ? 'bg-rose-500/10 text-rose-600 ring-1 ring-rose-500/20 dark:bg-rose-500/15 dark:text-rose-400'
                           : st.state === 'blocked'
-                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                          : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                          ? 'bg-amber-500/10 text-amber-600 ring-1 ring-amber-500/20 dark:bg-amber-500/15 dark:text-amber-400'
+                          : 'bg-slate-500/10 text-slate-600 dark:bg-[#161d2f] dark:text-slate-400'
                       }`}>
                         {st.state}
                       </span>
@@ -315,7 +315,7 @@ export function ClassDetailPage() {
                         <button
                           type="button"
                           onClick={() => handleRunStage(st.key)}
-                          className="rounded bg-rose-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-rose-700"
+                          className="rounded bg-rose-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-rose-700 transition-colors"
                         >
                           Retry
                         </button>
@@ -380,7 +380,7 @@ export function ClassDetailPage() {
             <p className="text-slate-600 dark:text-slate-300">
               ClassFlow signs into the portal autonomously using encrypted credentials, triggers Run Session, posts attendance snapshots, executes late joiner corrections, and completes the session.
             </p>
-            <div className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 dark:border-slate-800/80 dark:bg-[#0c111d]">
               <h4 className="font-semibold text-slate-900 dark:text-slate-100">Portal Actions Executed</h4>
               <ul className="mt-2 space-y-2">
                 <li className="flex items-center gap-2">
@@ -409,11 +409,11 @@ export function ClassDetailPage() {
         <Card title="Class Recording Pipeline">
           <div className="space-y-4 text-xs">
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+              <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 dark:border-slate-800/80 dark:bg-[#0c111d]">
                 <h4 className="font-semibold text-slate-900 dark:text-slate-100">Zoom Cloud Recording</h4>
-                <p className="mt-1 text-slate-500">Captured automatically upon meeting termination.</p>
+                <p className="mt-1 text-slate-500 dark:text-slate-400">Captured automatically upon meeting termination.</p>
                 {recording?.zoomLink ? (
-                  <a href={recording.zoomLink} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block font-semibold text-indigo-600 hover:underline">
+                  <a href={recording.zoomLink} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
                     View Zoom Recording Link →
                   </a>
                 ) : (
@@ -421,11 +421,11 @@ export function ClassDetailPage() {
                 )}
               </div>
 
-              <div className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+              <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 dark:border-slate-800/80 dark:bg-[#0c111d]">
                 <h4 className="font-semibold text-slate-900 dark:text-slate-100">Google Drive Permanent Link</h4>
-                <p className="mt-1 text-slate-500">Synchronized via automated Google Sheets reader.</p>
+                <p className="mt-1 text-slate-500 dark:text-slate-400">Synchronized via automated Google Sheets reader.</p>
                 {recording?.driveLink ? (
-                  <a href={recording.driveLink} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block font-semibold text-emerald-600 hover:underline">
+                  <a href={recording.driveLink} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block font-semibold text-emerald-600 hover:underline dark:text-emerald-400">
                     View Google Drive Link →
                   </a>
                 ) : (

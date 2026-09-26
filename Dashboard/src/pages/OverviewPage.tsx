@@ -55,7 +55,7 @@ function RunningNow() {
   return (
     <Card
       title="Today, right now"
-      action={<Link to="/sessions" className="text-sm font-medium text-teal-700 hover:underline dark:text-teal-400">Every class →</Link>}
+      action={<Link to="/sessions" className="text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Every class →</Link>}
     >
       {sessions.error ? <ErrorBanner error={sessions.error} /> : live.length === 0 ? (
         <EmptyState>
@@ -64,7 +64,7 @@ function RunningNow() {
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[34rem]">
-            <thead className="border-b border-slate-100 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-800/60">
+            <thead className="border-b border-slate-100 bg-slate-50/60 dark:border-slate-800/80 dark:bg-[#0c111d]">
               <tr>
                 <th className={th}>Class</th>
                 <th className={th}>Starts</th>
@@ -76,15 +76,15 @@ function RunningNow() {
               {live.map((item) => {
                 const now = doingNow(item)
                 return (
-                  <tr key={item.classPlanId} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40">
+                  <tr key={item.classPlanId} className="hover:bg-slate-50/60 dark:hover:bg-[#161d2f]/40 transition-colors">
                     <td className={td}>
-                      <Link to={`/classes/${item.classPlanId}`} className="font-medium text-slate-900 hover:text-indigo-600 dark:text-slate-100 dark:hover:text-indigo-400">
+                      <Link to={`/classes/${item.classPlanId}`} className="font-semibold text-slate-900 hover:text-indigo-600 dark:text-slate-100 dark:hover:text-indigo-400">
                         {item.group}
                       </Link>
-                      {item.title && <p className="text-xs text-slate-500">{item.title}</p>}
+                      {item.title && <p className="text-xs text-slate-500 dark:text-slate-400">{item.title}</p>}
                     </td>
-                    <td className={`${td} tabular-nums text-slate-700 dark:text-slate-300`}>{item.startTime ?? '—'}</td>
-                    <td className={`${td} text-slate-700 dark:text-slate-300`}>{now.label}</td>
+                    <td className={`${td} tabular-nums font-mono text-slate-700 dark:text-slate-300`}>{item.startTime ?? '—'}</td>
+                    <td className={`${td} text-slate-700 dark:text-slate-300 font-medium`}>{now.label}</td>
                     <td className={td}>
                       <Pill tone={now.tone}>
                         {item.headline === 'running' ? 'Running' : item.headline === 'blocked' ? 'Blocked' : 'Needs somebody'}
@@ -149,8 +149,8 @@ export function OverviewPage() {
               onClick={() => setHealthModalOpen(true)}
               className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-xs border ${
                 isHealthy
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300'
-                  : 'bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-300 animate-pulse'
+                  ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20 dark:bg-emerald-500/10 dark:border-emerald-500/30 dark:text-emerald-400 hover:bg-emerald-500/20'
+                  : 'bg-rose-500/10 text-rose-700 border-rose-500/20 dark:bg-rose-500/10 dark:border-rose-500/30 dark:text-rose-400 hover:bg-rose-500/20 animate-pulse'
               }`}
             >
               <span className={`size-2 rounded-full ${isHealthy ? 'bg-emerald-500' : 'bg-rose-500'}`} />
@@ -164,27 +164,27 @@ export function OverviewPage() {
       {overview.error && <ErrorBanner error={overview.error} />}
 
       {/* ========================================================================= */}
-      {/* 1. TOP OPERATIONAL KPI CARDS (Answering the 9 questions within 5s) */}
+      {/* 1. TOP OPERATIONAL KPI CARDS */}
       {/* ========================================================================= */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         {/* System Health */}
         <div
           onClick={() => setHealthModalOpen(true)}
-          className={`cursor-pointer rounded-2xl p-4 transition-all shadow-xs border ${
+          className={`cursor-pointer rounded-2xl p-4 transition-all shadow-xs border ring-1 ${
             isHealthy
-              ? 'bg-white border-slate-200/90 dark:bg-slate-900 dark:border-slate-800 hover:border-emerald-300'
-              : 'bg-rose-50/50 border-rose-300 dark:bg-rose-950/20 dark:border-rose-800 hover:border-rose-400'
+              ? 'bg-white border-slate-200/80 dark:bg-[#111726] dark:border-slate-800/80 ring-slate-900/5 dark:ring-white/[0.03] hover:border-emerald-500/50'
+              : 'bg-rose-50/50 border-rose-300 dark:bg-rose-950/20 dark:border-rose-900/50 ring-rose-500/10 hover:border-rose-400'
           }`}
         >
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-bold uppercase tracking-wider">Health</span>
+          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Health</span>
             {isHealthy ? (
-              <IconCheckCircle className="size-4 text-emerald-500" />
+              <IconCheckCircle className="size-4 text-emerald-500 dark:text-emerald-400" />
             ) : (
-              <IconAlertTriangle className="size-4 text-rose-500" />
+              <IconAlertTriangle className="size-4 text-rose-500 dark:text-rose-400" />
             )}
           </div>
-          <p className="mt-2 text-xl font-black text-slate-900 dark:text-slate-100">
+          <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
             {isHealthy ? 'Nominal' : 'Warning'}
           </p>
           <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 truncate">
@@ -193,12 +193,12 @@ export function OverviewPage() {
         </div>
 
         {/* Classes Today */}
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-bold uppercase tracking-wider">Today</span>
-            <IconCalendar className="size-4 text-indigo-500" />
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
+          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Today</span>
+            <IconCalendar className="size-4 text-indigo-500 dark:text-indigo-400" />
           </div>
-          <p className="mt-2 text-xl font-black text-slate-900 dark:text-slate-100">
+          <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
             {classesTodayCount}
           </p>
           <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
@@ -207,14 +207,14 @@ export function OverviewPage() {
         </div>
 
         {/* Running Now */}
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-bold uppercase tracking-wider">Running</span>
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
+          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Running</span>
             <span className="relative flex size-2.5">
-              <span className={`inline-flex size-full rounded-full ${runningClasses.length > 0 ? 'bg-emerald-500 animate-ping' : 'bg-slate-300'}`} />
+              <span className={`inline-flex size-full rounded-full ${runningClasses.length > 0 ? 'bg-emerald-500 animate-ping' : 'bg-slate-300 dark:bg-slate-700'}`} />
             </span>
           </div>
-          <p className="mt-2 text-xl font-black text-slate-900 dark:text-slate-100">
+          <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
             {runningClasses.length}
           </p>
           <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
@@ -224,17 +224,17 @@ export function OverviewPage() {
 
         {/* Needs Attention */}
         <div
-          className={`rounded-2xl p-4 shadow-xs border transition-all ${
+          className={`rounded-2xl p-4 shadow-xs border ring-1 transition-all ${
             attentionClasses.length > 0
-              ? 'bg-rose-50/70 border-rose-300 dark:bg-rose-950/30 dark:border-rose-800'
-              : 'bg-white border-slate-200/90 dark:bg-slate-900 dark:border-slate-800'
+              ? 'bg-rose-50/70 border-rose-300 dark:bg-rose-950/30 dark:border-rose-900/50 ring-rose-500/10'
+              : 'bg-white border-slate-200/80 dark:bg-[#111726] dark:border-slate-800/80 ring-slate-900/5 dark:ring-white/[0.03]'
           }`}
         >
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-bold uppercase tracking-wider">Attention</span>
-            <IconAlertTriangle className={`size-4 ${attentionClasses.length > 0 ? 'text-rose-600' : 'text-slate-400'}`} />
+          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Attention</span>
+            <IconAlertTriangle className={`size-4 ${attentionClasses.length > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400 dark:text-slate-500'}`} />
           </div>
-          <p className={`mt-2 text-xl font-black ${attentionClasses.length > 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-900 dark:text-slate-100'}`}>
+          <p className={`mt-2 text-xl font-bold tracking-tight ${attentionClasses.length > 0 ? 'text-rose-700 dark:text-rose-400' : 'text-slate-900 dark:text-slate-100'}`}>
             {attentionClasses.length}
           </p>
           <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
@@ -243,12 +243,12 @@ export function OverviewPage() {
         </div>
 
         {/* Attendance Pending */}
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-bold uppercase tracking-wider">Attendance</span>
-            <IconAttendance className="size-4 text-amber-500" />
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
+          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Attendance</span>
+            <IconAttendance className="size-4 text-amber-500 dark:text-amber-400" />
           </div>
-          <p className="mt-2 text-xl font-black text-slate-900 dark:text-slate-100">
+          <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
             {attendancePendingCount}
           </p>
           <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
@@ -257,12 +257,12 @@ export function OverviewPage() {
         </div>
 
         {/* Recordings Pending */}
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-bold uppercase tracking-wider">Recordings</span>
-            <IconFilm className="size-4 text-sky-500" />
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
+          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Recordings</span>
+            <IconFilm className="size-4 text-sky-500 dark:text-sky-400" />
           </div>
-          <p className="mt-2 text-xl font-black text-slate-900 dark:text-slate-100">
+          <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
             {recordingsPending}
           </p>
           <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
@@ -317,7 +317,7 @@ export function OverviewPage() {
       </div>
 
       {!isAdmin && me?.groups?.length === 0 && (
-        <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+        <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
           You have no groups yet, so there is nothing to show. The admin assigns groups to each coordinator.
         </p>
       )}
@@ -349,28 +349,32 @@ export function OverviewPage() {
       </Card>
 
       {/* ========================================================================= */}
-      {/* 5. CONNECTION HEALTH & RECENT ACTIVITY DUAL GRID */}
+      {/* 3. CONNECTION HEALTH & RECENT ACTIVITY DUAL GRID */}
       {/* ========================================================================= */}
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left: Google / LMS / Zoom Health Cards */}
         <div className="space-y-4">
-          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
             Integration Health
           </h2>
 
           <div className="space-y-3">
             {/* Google Sheets Status */}
-            <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className={`size-2.5 rounded-full ${google.data?.configured ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <span className={`size-2 rounded-full ${google.data?.configured ? 'bg-emerald-500' : 'bg-amber-500'}`} />
                   <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">Google Sheets</h3>
                 </div>
-                <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full dark:bg-emerald-950/60 dark:text-emerald-400">
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                  google.data?.configured
+                    ? 'text-emerald-600 bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20'
+                    : 'text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20'
+                }`}>
                   {google.data?.configured ? 'Connected' : 'Setup needed'}
                 </span>
               </div>
-              <p className="mt-2 text-xs text-slate-500">
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                 {google.data?.configured
                   ? `Syncs daily at 08:00 Cairo (${google.data.spreadsheetId?.slice(0, 8)}…)`
                   : 'Configure OAuth to enable automatic recording sync.'}
@@ -384,17 +388,17 @@ export function OverviewPage() {
             </div>
 
             {/* LMS Connection Status */}
-            <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="size-2.5 rounded-full bg-emerald-500" />
+                  <span className="size-2 rounded-full bg-emerald-500" />
                   <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">LMS Portal</h3>
                 </div>
-                <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full dark:bg-emerald-950/60 dark:text-emerald-400">
+                <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full dark:bg-emerald-500/10 dark:border-emerald-500/20 dark:text-emerald-400">
                   Active
                 </span>
               </div>
-              <p className="mt-2 text-xs text-slate-500">
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                 Encrypted AES-GCM credentials stored for automated session runs and attendance.
               </p>
               <div className="mt-3 flex justify-between items-center text-xs">
@@ -406,17 +410,17 @@ export function OverviewPage() {
             </div>
 
             {/* Zoom Web Profiles */}
-            <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="size-2.5 rounded-full bg-emerald-500" />
+                  <span className="size-2 rounded-full bg-emerald-500" />
                   <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">Zoom Web Profiles</h3>
                 </div>
-                <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full dark:bg-emerald-950/60 dark:text-emerald-400">
+                <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full dark:bg-emerald-500/10 dark:border-emerald-500/20 dark:text-emerald-400">
                   G1 / G2 Ready
                 </span>
               </div>
-              <p className="mt-2 text-xs text-slate-500">
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                 Persistent browser automation holding meetings and admitting students.
               </p>
               <div className="mt-3 flex justify-between items-center text-xs">
@@ -432,7 +436,7 @@ export function OverviewPage() {
         {/* Right 2 cols: Recent Operational Activity Timeline */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
               Recent Activity Feed
             </h2>
             <Link to="/activity" className="text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
@@ -440,11 +444,11 @@ export function OverviewPage() {
             </Link>
           </div>
 
-          <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
             {!activity.data || activity.data.items.length === 0 ? (
               <EmptyState>No operational events recorded yet.</EmptyState>
             ) : (
-              <div className="relative divide-y divide-slate-100 dark:divide-slate-800">
+              <div className="relative divide-y divide-slate-100 dark:divide-slate-800/70">
                 {activity.data.items.map((event) => {
                   const readable = formatHumanActivity(event.kind, event.summary, event.detail, event.outcome)
                   const isDone = event.outcome === 'done'
@@ -454,11 +458,11 @@ export function OverviewPage() {
                     <div key={event.id} className="py-3.5 first:pt-0 last:pb-0 flex items-start gap-3">
                       <span className="mt-1 shrink-0">
                         {isDone ? (
-                          <span className="inline-flex size-2 rounded-full bg-emerald-500" />
+                          <span className="inline-flex size-2 rounded-full bg-emerald-500 dark:bg-emerald-400 shadow-2xs" />
                         ) : isFail ? (
-                          <span className="inline-flex size-2 rounded-full bg-rose-500" />
+                          <span className="inline-flex size-2 rounded-full bg-rose-500 dark:bg-rose-400 shadow-2xs" />
                         ) : (
-                          <span className="inline-flex size-2 rounded-full bg-amber-500" />
+                          <span className="inline-flex size-2 rounded-full bg-amber-500 dark:bg-amber-400 shadow-2xs" />
                         )}
                       </span>
 
@@ -471,7 +475,7 @@ export function OverviewPage() {
                             <TimeAgo iso={event.at} />
                           </span>
                         </div>
-                        <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
+                        <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
                           {event.group && (
                             <span className="font-semibold text-slate-700 dark:text-slate-300">
                               {event.group}

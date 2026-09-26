@@ -67,12 +67,12 @@ interface OverlayProps {
 
 function Header({ id, title, description, onClose, busy }: { id: string; title: ReactNode; description?: ReactNode; onClose: () => void; busy: boolean }) {
   return (
-    <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+    <header className="flex items-start justify-between gap-4 border-b border-slate-100 dark:border-slate-800/80 px-5 py-4">
       <div>
-        <h2 id={id} className="text-base font-semibold text-slate-900">{title}</h2>
-        {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
+        <h2 id={id} className="text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
+        {description && <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{description}</p>}
       </div>
-      <button type="button" onClick={onClose} disabled={busy} aria-label="Close" className="-m-1 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40">
+      <button type="button" onClick={onClose} disabled={busy} aria-label="Close" className="-m-1 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 disabled:opacity-40">
         <svg viewBox="0 0 20 20" className="size-5" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
       </button>
     </header>
@@ -87,13 +87,13 @@ export function Modal({ open, title, description, onClose, children, footer, bus
   if (!open) return null
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 backdrop-blur-xs sm:items-center sm:p-4"
       onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}
     >
-      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={id} className="flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:max-w-lg sm:rounded-2xl">
+      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={id} className="flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl dark:bg-[#111726] dark:border dark:border-slate-800/80 ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
         <Header id={id} title={title} description={description} onClose={onClose} busy={busy} />
-        <div className="overflow-y-auto px-5 py-4">{children}</div>
-        {footer && <footer className="flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3">{footer}</footer>}
+        <div className="overflow-y-auto px-5 py-4 text-slate-800 dark:text-slate-200">{children}</div>
+        {footer && <footer className="flex flex-wrap justify-end gap-2 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-[#0c111d] px-5 py-3">{footer}</footer>}
       </div>
     </div>,
     document.body,
@@ -107,11 +107,11 @@ export function Drawer({ open, title, description, onClose, children, footer, bu
   useOverlay(open, onClose, busy, panel)
   if (!open) return null
   return createPortal(
-    <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/30" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={id} className="flex h-full w-full flex-col bg-white shadow-2xl sm:max-w-md">
+    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/60 backdrop-blur-xs" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={id} className="flex h-full w-full flex-col bg-white shadow-2xl sm:max-w-md dark:bg-[#111726] dark:border-l dark:border-slate-800/80">
         <Header id={id} title={title} description={description} onClose={onClose} busy={busy} />
-        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
-        {footer && <footer className="flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3">{footer}</footer>}
+        <div className="flex-1 overflow-y-auto px-5 py-4 text-slate-800 dark:text-slate-200">{children}</div>
+        {footer && <footer className="flex flex-wrap justify-end gap-2 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-[#0c111d] px-5 py-3">{footer}</footer>}
       </div>
     </div>,
     document.body,

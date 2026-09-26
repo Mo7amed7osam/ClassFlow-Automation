@@ -25,21 +25,21 @@ export function RecordingsTable({ items, loading, empty = 'No recordings yet.', 
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-slate-100">
-        <thead className="bg-slate-50/70">
+      <table className="min-w-full divide-y divide-slate-100 dark:divide-slate-800">
+        <thead className="bg-slate-50/70 dark:bg-[#0c111d]">
           <tr>
             {columns.map((column, i) => (
               <th
                 key={column || i}
                 scope="col"
-                className={`${th} ${i === columns.length - 1 && operations ? 'sticky right-0 bg-slate-50 text-right shadow-[-8px_0_8px_-8px_rgb(15_23_42/0.12)]' : ''}`}
+                className={`${th} ${i === columns.length - 1 && operations ? 'sticky right-0 bg-slate-50 dark:bg-[#0c111d] text-right shadow-[-8px_0_8px_-8px_rgb(15_23_42/0.12)]' : ''}`}
               >
                 {column}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100">
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {loading && !items ? (
             <LoadingRows columns={columns.length} />
           ) : (
@@ -63,20 +63,20 @@ function Row({ recording, operations, onSelect, onEdit, onAttach, onCancel }: { 
   }
 
   return (
-    <tr className={`group hover:bg-slate-50/60 ${onSelect ? 'cursor-pointer' : ''}`} onClick={onSelect ? () => onSelect(recording) : undefined}>
-      <td className={`${td} font-medium text-slate-900`}>
+    <tr className={`group hover:bg-slate-50/60 dark:hover:bg-slate-800/40 ${onSelect ? 'cursor-pointer' : ''}`} onClick={onSelect ? () => onSelect(recording) : undefined}>
+      <td className={`${td} font-medium text-slate-900 dark:text-slate-100`}>
         {onSelect ? (
           // The row is clickable; this button is the same action for keyboards and screen readers.
-          <button type="button" onClick={stop(onSelect)} className="text-left hover:text-teal-700 hover:underline" aria-label={`Details of ${recording.group} on ${recording.date}`}>
+          <button type="button" onClick={stop(onSelect)} className="text-left hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline" aria-label={`Details of ${recording.group} on ${recording.date}`}>
             {recording.group}
           </button>
         ) : (
           recording.group
         )}
       </td>
-      <td className={`${td} whitespace-nowrap`}>{formatSessionDate(recording.date)}</td>
-      <td className={`${td} font-mono tabular-nums`}>{recording.startTime ?? <span className="text-slate-400">—</span>}</td>
-      <td className={`${td} max-w-56 truncate`} title={recording.fileName ?? undefined}>
+      <td className={`${td} whitespace-nowrap text-slate-700 dark:text-slate-300`}>{formatSessionDate(recording.date)}</td>
+      <td className={`${td} font-mono tabular-nums text-slate-700 dark:text-slate-300`}>{recording.startTime ?? <span className="text-slate-400">—</span>}</td>
+      <td className={`${td} max-w-56 truncate text-slate-700 dark:text-slate-300`} title={recording.fileName ?? undefined}>
         {recording.fileName ?? <span className="text-slate-400">—</span>}
       </td>
       <td className={td}>
@@ -85,11 +85,11 @@ function Row({ recording, operations, onSelect, onEdit, onAttach, onCancel }: { 
       <td className={td}>
         <LmsStatusBadge recording={recording} />
       </td>
-      <td className={`${td} text-slate-600`}>
+      <td className={`${td} text-slate-500 dark:text-slate-400`}>
         <TimeAgo iso={recording.updatedAt} />
       </td>
       {operations ? (
-        <td className={`${td} sticky right-0 bg-white text-right shadow-[-8px_0_8px_-8px_rgb(15_23_42/0.12)] group-hover:bg-slate-50`}>
+        <td className={`${td} sticky right-0 bg-white dark:bg-[#111726] text-right shadow-[-8px_0_8px_-8px_rgb(15_23_42/0.12)] group-hover:bg-slate-50 dark:group-hover:bg-[#161d2f]/60`}>
           <div className="flex justify-end gap-1.5">
             {onEdit && (
               <button type="button" className={button.small} onClick={stop(onEdit)} aria-label={`Edit ${recording.group} on ${recording.date}`}>
@@ -111,26 +111,21 @@ function Row({ recording, operations, onSelect, onEdit, onAttach, onCancel }: { 
               <button
                 type="button"
                 className={button.smallPrimary}
-                onClick={stop(onAttach)}
                 disabled={Boolean(blocked)}
-                title={blocked ?? 'Attach this recording to its LMS session'}
-                aria-label={`Attach ${recording.group} on ${recording.date} to LMS`}
+                title={blocked ?? 'Attach the stored Google Drive link to this LMS session'}
+                onClick={stop(onAttach)}
+                aria-label={`Attach ${recording.group} on ${recording.date} to its LMS session`}
               >
                 Attach LMS
               </button>
             )}
           </div>
         </td>
-      ) : (
+      ) : link ? (
         <td className={`${td} text-right`}>
-          {link ? (
-            // The link is not printed: it opens the recording to anyone who has it.
-            <a href={link} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-teal-700 hover:text-teal-900 hover:underline">
-              Open ↗
-            </a>
-          ) : null}
+          <a href={link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300 text-xs font-medium hover:underline">Open</a>
         </td>
-      )}
+      ) : null}
     </tr>
   )
 }

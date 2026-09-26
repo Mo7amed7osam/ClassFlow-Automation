@@ -87,7 +87,7 @@ export function LmsAccountsPage() {
           {error ? <ErrorBanner error={error} /> : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[34rem]">
-                <thead className="border-b border-slate-100 bg-slate-50/60">
+                <thead className="border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-[#0c111d]">
                   <tr>
                     <th className={th}>Email</th>
                     <th className={th}>Name</th>
@@ -96,20 +96,20 @@ export function LmsAccountsPage() {
                     <th className={th}><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
                   {isLoading && <LoadingRows columns={5} />}
                   {!isLoading && accounts.length === 0 && (
                     <tr><td colSpan={5}><EmptyState>No LMS sign-in yet. Your classes cannot be written up until there is one.</EmptyState></td></tr>
                   )}
                   {accounts.map((account) => (
-                    <tr key={account.id} className="hover:bg-slate-50/60">
+                    <tr key={account.id} className="hover:bg-slate-50/60 dark:hover:bg-[#161d2f]/40 transition-colors">
                       <td className={td}>
-                        <p className="font-medium text-slate-900">{account.email}</p>
+                        <p className="font-semibold text-slate-900 dark:text-slate-100">{account.email}</p>
                         {account.active && <Pill tone="green">In use</Pill>}
                       </td>
                       <td className={td}>{account.label || <span className="text-slate-400">—</span>}</td>
                       <td className={td}>{account.role === 'admin' ? 'Admin' : 'Coordinator'}</td>
-                      <td className={`${td} text-slate-500`}><TimeAgo iso={account.updatedAt} /></td>
+                      <td className={`${td} text-slate-500 dark:text-slate-400`}><TimeAgo iso={account.updatedAt} /></td>
                       <td className={`${td} text-right`}>
                         <span className="inline-flex gap-1.5">
                           {!account.active && (
@@ -147,8 +147,8 @@ export function LmsAccountsPage() {
               <Field label="Password" hint="Kept sealed and given only to the machine running your class. It is never shown again.">
                 <input className={`${input} w-full`} type="password" autoComplete="new-password" value={password} maxLength={500} onChange={(e) => setPassword(e.target.value)} />
               </Field>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" className="size-4 rounded border-slate-300" checked={active} onChange={(e) => setActive(e.target.checked)} />
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                <input type="checkbox" className="size-4 rounded border-slate-300 accent-indigo-600" checked={active} onChange={(e) => setActive(e.target.checked)} />
                 Write my classes up under this one
               </label>
               {submitted && problem && <p className="text-xs text-rose-700">{problem}</p>}

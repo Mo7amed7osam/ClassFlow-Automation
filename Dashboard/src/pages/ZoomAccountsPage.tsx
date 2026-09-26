@@ -152,7 +152,7 @@ export function ZoomAccountsPage() {
           {error ? <ErrorBanner error={error} /> : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[46rem]">
-                <thead className="border-b border-slate-100 bg-slate-50/60">
+                <thead className="border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-[#0c111d]">
                   <tr>
                     <th className={th}>Account</th>
                     <th className={th}>Group</th>
@@ -162,22 +162,22 @@ export function ZoomAccountsPage() {
                     <th className={th}><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
                   {isLoading && <LoadingRows columns={6} />}
                   {!isLoading && accounts.length === 0 && (
                     <tr><td colSpan={6}><EmptyState>No Zoom account yet. Add the one your classes are hosted with.</EmptyState></td></tr>
                   )}
                   {accounts.map((account) => (
-                    <tr key={account.id} className="hover:bg-slate-50/60">
+                    <tr key={account.id} className="hover:bg-slate-50/60 dark:hover:bg-[#161d2f]/40 transition-colors">
                       <td className={td}>
-                        <p className="font-medium text-slate-900">{account.accountId}</p>
-                        <p className="text-xs text-slate-500">{account.zoomEmail || account.label || '—'}</p>
+                        <p className="font-semibold text-slate-900 dark:text-slate-100">{account.accountId}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{account.zoomEmail || account.label || '—'}</p>
                         {account.active && <Pill tone="green">In use</Pill>}
                       </td>
                       <td className={td}>{account.group || <span className="text-slate-400">any</span>}</td>
                       <td className={td}>
                         {account.preferredEngine === 'web' ? 'Zoom in a browser' : account.preferredEngine === 'desktop' ? 'The Zoom app' : <span className="text-slate-400">whatever the machine has</span>}
-                        {account.meetingUrl && <p className="text-xs text-slate-500">has a meeting link</p>}
+                        {account.meetingUrl && <p className="text-xs text-slate-500 dark:text-slate-400">has a meeting link</p>}
                       </td>
                       <td className={td}>
                         {account.hasPassword
@@ -235,13 +235,13 @@ export function ZoomAccountsPage() {
                 />
               </Field>
               {existing?.hasPassword && (
-                <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" className="size-4 rounded border-slate-300" checked={draft.clearPassword} onChange={(e) => setDraft({ ...draft, clearPassword: e.target.checked, password: '' })} />
+                <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                  <input type="checkbox" className="size-4 rounded border-slate-300 accent-indigo-600" checked={draft.clearPassword} onChange={(e) => setDraft({ ...draft, clearPassword: e.target.checked, password: '' })} />
                   Remove the saved password
                 </label>
               )}
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" className="size-4 rounded border-slate-300" checked={draft.active} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} />
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                <input type="checkbox" className="size-4 rounded border-slate-300 accent-indigo-600" checked={draft.active} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} />
                 This is the account in use
               </label>
 

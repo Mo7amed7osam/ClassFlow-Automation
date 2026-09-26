@@ -106,15 +106,15 @@ export function NotificationsPage() {
       />
 
       {/* Top Filter Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => setFilter('all')}
             className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors ${
               filter === 'all'
-                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-                : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-[#161d2f]'
             }`}
           >
             All Alerts ({notifications.length})
@@ -124,8 +124,8 @@ export function NotificationsPage() {
             onClick={() => setFilter('error')}
             className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors ${
               filter === 'error'
-                ? 'bg-rose-600 text-white'
-                : 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300'
+                ? 'bg-rose-600 text-white shadow-xs'
+                : 'bg-rose-500/10 text-rose-600 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-400'
             }`}
           >
             Errors ({errorCount})
@@ -135,8 +135,8 @@ export function NotificationsPage() {
             onClick={() => setFilter('warning')}
             className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors ${
               filter === 'warning'
-                ? 'bg-amber-600 text-white'
-                : 'bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-amber-500/10 text-amber-600 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-400'
             }`}
           >
             Warnings ({warningCount})
@@ -146,8 +146,8 @@ export function NotificationsPage() {
             onClick={() => setFilter('success')}
             className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors ${
               filter === 'success'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-emerald-500/10 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-400'
             }`}
           >
             Success ({successCount})
@@ -161,7 +161,7 @@ export function NotificationsPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search notifications…"
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-800 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-200"
+            className="w-full rounded-xl border border-slate-200/80 bg-slate-50/70 px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-800 dark:bg-[#0c111d] dark:text-slate-100 transition-colors"
           />
         </div>
       </div>
@@ -176,21 +176,21 @@ export function NotificationsPage() {
               <div
                 key={item.id}
                 onClick={() => navigate(item.actionUrl)}
-                className="group cursor-pointer p-4 transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/50"
+                className="group cursor-pointer p-4 transition-colors hover:bg-slate-50/80 dark:hover:bg-[#161d2f]/50"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-3.5">
                     <span className="mt-0.5 shrink-0">
                       {item.severity === 'error' ? (
-                        <span className="grid size-8 place-items-center rounded-xl bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-400">
+                        <span className="grid size-8 place-items-center rounded-xl bg-rose-500/10 text-rose-600 ring-1 ring-rose-500/20 dark:bg-rose-500/15 dark:text-rose-400">
                           <IconXCircle className="size-4" />
                         </span>
                       ) : item.severity === 'warning' ? (
-                        <span className="grid size-8 place-items-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400">
+                        <span className="grid size-8 place-items-center rounded-xl bg-amber-500/10 text-amber-600 ring-1 ring-amber-500/20 dark:bg-amber-500/15 dark:text-amber-400">
                           <IconAlertTriangle className="size-4" />
                         </span>
                       ) : (
-                        <span className="grid size-8 place-items-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+                        <span className="grid size-8 place-items-center rounded-xl bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/20 dark:bg-emerald-500/15 dark:text-emerald-400">
                           <IconCheckCircle className="size-4" />
                         </span>
                       )}

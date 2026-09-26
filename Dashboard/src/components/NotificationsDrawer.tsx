@@ -106,16 +106,16 @@ export function NotificationsDrawer({ open, onClose }: NotificationsDrawerProps)
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-xs transition-opacity" onClick={onClose} />
 
       <div className="fixed inset-y-0 right-0 flex max-w-full pl-10">
-        <div className="w-screen max-w-md bg-white shadow-2xl flex flex-col dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800">
+        <div className="w-screen max-w-md bg-white shadow-2xl flex flex-col dark:bg-[#111726] border-l border-slate-200 dark:border-slate-800/80">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800">
+          <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800/80">
             <div className="flex items-center gap-2.5">
               <div className="grid size-9 place-items-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400">
                 <IconBell className="size-5" />
               </div>
               <div>
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Operations Feed</h2>
-                <p className="text-xs text-slate-500">Live alerts, stage failures & automation updates</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Live alerts, stage failures & automation updates</p>
               </div>
             </div>
             <button
@@ -129,14 +129,14 @@ export function NotificationsDrawer({ open, onClose }: NotificationsDrawerProps)
           </div>
 
           {/* Filter Bar */}
-          <div className="flex gap-1.5 border-b border-slate-100 px-5 py-3 dark:border-slate-800 overflow-x-auto">
+          <div className="flex gap-1.5 border-b border-slate-100 px-5 py-3 dark:border-slate-800/80 overflow-x-auto">
             <button
               type="button"
               onClick={() => setFilter('all')}
               className={`rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors ${
                 filter === 'all'
-                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-[#161d2f]'
               }`}
             >
               All ({notifications.length})
@@ -146,8 +146,8 @@ export function NotificationsDrawer({ open, onClose }: NotificationsDrawerProps)
               onClick={() => setFilter('error')}
               className={`rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors ${
                 filter === 'error'
-                  ? 'bg-rose-600 text-white'
-                  : 'text-rose-700 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-rose-600 bg-rose-500/10 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-400'
               }`}
             >
               Errors ({errorCount})
@@ -157,8 +157,8 @@ export function NotificationsDrawer({ open, onClose }: NotificationsDrawerProps)
               onClick={() => setFilter('warning')}
               className={`rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors ${
                 filter === 'warning'
-                  ? 'bg-amber-600 text-white'
-                  : 'text-amber-700 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'text-amber-600 bg-amber-500/10 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-400'
               }`}
             >
               Warnings ({warningCount})
@@ -168,8 +168,8 @@ export function NotificationsDrawer({ open, onClose }: NotificationsDrawerProps)
               onClick={() => setFilter('success')}
               className={`rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors ${
                 filter === 'success'
-                  ? 'bg-emerald-600 text-white'
-                  : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-emerald-600 bg-emerald-500/10 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-400'
               }`}
             >
               Success ({successCount})
@@ -177,7 +177,7 @@ export function NotificationsDrawer({ open, onClose }: NotificationsDrawerProps)
           </div>
 
           {/* List */}
-          <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 p-2">
+          <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/80 p-2">
             {filtered.length === 0 ? (
               <div className="py-16 text-center text-sm text-slate-500">
                 No notifications in this category.
@@ -187,7 +187,7 @@ export function NotificationsDrawer({ open, onClose }: NotificationsDrawerProps)
                 <div
                   key={item.id}
                   onClick={() => handleOpenItem(item.actionUrl)}
-                  className="group cursor-pointer rounded-xl p-3.5 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                  className="group cursor-pointer rounded-xl p-3.5 transition-colors hover:bg-slate-50 dark:hover:bg-[#161d2f]/60"
                 >
                   <div className="flex items-start gap-3">
                     <span className="mt-0.5 shrink-0">

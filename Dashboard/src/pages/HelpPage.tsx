@@ -57,7 +57,7 @@ export function HelpPage() {
 
       <div className="grid gap-6 lg:grid-cols-4">
         {/* Navigation Sidebar */}
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-3 shadow-xs dark:border-slate-800 dark:bg-slate-900 space-y-1">
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03] space-y-1">
           {TOPICS.map((item) => {
             const Icon = item.icon
             const active = topic === item.key
@@ -68,8 +68,8 @@ export function HelpPage() {
                 onClick={() => setTopic(item.key)}
                 className={`w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-bold text-left transition-colors ${
                   active
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-[#161d2f] dark:hover:text-slate-200'
                 }`}
               >
                 <Icon className="size-4 shrink-0" />
@@ -90,7 +90,7 @@ export function HelpPage() {
                 <p>
                   ClassFlow is a fully automated operations platform that runs live Zoom classes, admits students from the waiting room, tracks attendance, synchronizes portal records, and archives video recordings to Google Drive without requiring manual intervention from an operator or instructor.
                 </p>
-                <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/40 space-y-2">
+                <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 dark:border-slate-800/80 dark:bg-[#0c111d] space-y-2">
                   <h4 className="font-bold text-slate-900 dark:text-slate-100">The 3-Step Setup Checklist:</h4>
                   <ol className="list-decimal list-inside space-y-1.5 pl-1">
                     <li><strong className="text-slate-900 dark:text-slate-100">Add Zoom Web Profiles:</strong> Configure your G1 and G2 profiles in Zoom Accounts.</li>
@@ -190,13 +190,13 @@ export function HelpPage() {
                   To host concurrent classes, ClassFlow separates Zoom web profiles into <strong>G1</strong> and <strong>G2</strong>:
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                  <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3 dark:border-slate-800/80 dark:bg-[#0c111d]">
                     <h4 className="font-bold text-slate-900 dark:text-slate-100">Profile G1</h4>
-                    <p className="mt-1 text-slate-500">Dedicated browser instance for primary group sessions.</p>
+                    <p className="mt-1 text-slate-500 dark:text-slate-400">Dedicated browser instance for primary group sessions.</p>
                   </div>
-                  <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                  <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3 dark:border-slate-800/80 dark:bg-[#0c111d]">
                     <h4 className="font-bold text-slate-900 dark:text-slate-100">Profile G2</h4>
-                    <p className="mt-1 text-slate-500">Isolated secondary browser profile for concurrent evening classes.</p>
+                    <p className="mt-1 text-slate-500 dark:text-slate-400">Isolated secondary browser profile for concurrent evening classes.</p>
                   </div>
                 </div>
               </div>

@@ -44,33 +44,33 @@ export function LoginPage() {
   const message = loginMessage(login.error)
 
   return (
-    <div className="grid min-h-full place-items-center bg-slate-100 px-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-7 shadow-sm" aria-label="Sign in">
+    <div className="grid min-h-full place-items-center bg-slate-100 dark:bg-[#090d16] px-4">
+      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border border-slate-200/80 bg-white p-7 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]" aria-label="Sign in">
         <div className="mb-6 flex items-center gap-2.5">
-          <span className="grid size-9 place-items-center rounded-lg bg-teal-600 font-bold text-white">Z</span>
+          <span className="grid size-9 place-items-center rounded-xl bg-indigo-600 font-bold text-white shadow-xs">C</span>
           <div>
-            <h1 className="text-base font-semibold text-slate-900">Zoom Auto Admit</h1>
-            <p className="text-xs text-slate-500">Recordings dashboard</p>
+            <h1 className="text-base font-bold text-slate-900 dark:text-slate-100">ClassFlow</h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Operations Control Center</p>
           </div>
         </div>
 
-        <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor="username">Username</label>
+        <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300" htmlFor="username">Username</label>
         <input id="username" className={`${input} mb-4 w-full`} autoComplete="username" autoFocus required value={username} onChange={(e) => setUsername(e.target.value)} />
 
-        <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor="password">Password</label>
+        <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300" htmlFor="password">Password</label>
         <input id="password" type="password" className={`${input} mb-5 w-full`} autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
 
         {message && (
-          <p role="alert" className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <p role="alert" className="mb-4 rounded-lg bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
             {message}
           </p>
         )}
 
-        <button type="submit" disabled={login.isPending} className="h-10 w-full rounded-lg bg-teal-700 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
+        <button type="submit" disabled={login.isPending} className="h-10 w-full rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-60 transition-colors">
           {login.isPending ? 'Signing in…' : 'Sign in'}
         </button>
-        <p className="mt-5 text-center text-sm text-slate-500">
-          Coordinator without an account? <Link to="/register" className="font-medium text-teal-700 hover:underline">Request one</Link>
+        <p className="mt-5 text-center text-sm text-slate-500 dark:text-slate-400">
+          Coordinator without an account? <Link to="/register" className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Request one</Link>
         </p>
       </form>
     </div>

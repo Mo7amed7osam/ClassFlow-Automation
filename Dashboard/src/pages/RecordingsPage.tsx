@@ -72,7 +72,7 @@ export function RecordingsPage() {
     <>
       <PageHeader title="Recordings" description="Every recording synchronized from Google Sheets. Select a row for details; edit it or attach it to its LMS session." />
       <Card>
-        <div className="flex flex-wrap items-end gap-3 border-b border-slate-100 px-5 py-4" role="search">
+        <div className="flex flex-wrap items-end gap-3 border-b border-slate-100 dark:border-slate-800/80 px-5 py-4" role="search">
           <Field label="Group">
             <select aria-label="Group" className={`${input} min-w-44`} value={current.group} onChange={(e) => update({ group: e.target.value })}>
               <option value="">All groups</option>
@@ -108,7 +108,7 @@ export function RecordingsPage() {
             </select>
           </Field>
           {filtered && (
-            <button type="button" className="h-9 px-2 text-sm font-medium text-slate-600 hover:text-slate-900" onClick={() => setParams(new URLSearchParams(current.sort === 'updated' ? {} : { sort: current.sort }), { replace: true })}>
+            <button type="button" className="h-9 px-2 text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors" onClick={() => setParams(new URLSearchParams(current.sort === 'updated' ? {} : { sort: current.sort }), { replace: true })}>
               Clear filters
             </button>
           )}
@@ -128,16 +128,16 @@ export function RecordingsPage() {
           />
         )}
 
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-3 text-sm text-slate-600">
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800/80 px-5 py-3 text-sm text-slate-600 dark:text-slate-400">
           <span>{recordings.data ? `${total} recording${total === 1 ? '' : 's'}` : ' '}</span>
           <div className="flex items-center gap-2">
-            <button type="button" className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-40" disabled={current.page <= 1} onClick={() => update({ page: String(current.page - 1) })}>
+            <button type="button" className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-[#161d2f] dark:text-slate-200 dark:hover:bg-[#1e273e] disabled:opacity-40 transition-colors" disabled={current.page <= 1} onClick={() => update({ page: String(current.page - 1) })}>
               Previous
             </button>
             <span className="tabular-nums">
               Page {current.page} of {pages}
             </span>
-            <button type="button" className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-40" disabled={current.page >= pages} onClick={() => update({ page: String(current.page + 1) })}>
+            <button type="button" className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-[#161d2f] dark:text-slate-200 dark:hover:bg-[#1e273e] disabled:opacity-40 transition-colors" disabled={current.page >= pages} onClick={() => update({ page: String(current.page + 1) })}>
               Next
             </button>
           </div>
@@ -155,7 +155,7 @@ export function RecordingsPage() {
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-slate-500">{label}</span>
+      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</span>
       {children}
     </div>
   )

@@ -83,7 +83,7 @@ export function HealthModal({ open, onClose }: HealthModalProps) {
             type="button"
             onClick={() => refetch()}
             disabled={isFetching}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 dark:border-slate-800 dark:bg-[#161d2f] dark:text-slate-200 dark:hover:bg-[#1e273e] disabled:opacity-50 transition-colors"
           >
             <IconRefresh className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} />
             Re-check
@@ -91,15 +91,15 @@ export function HealthModal({ open, onClose }: HealthModalProps) {
         </div>
 
         {/* Filter Pills */}
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2 dark:border-slate-800">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-2 dark:border-slate-800/80">
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => setFilter('all')}
               className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                 filter === 'all'
-                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-[#161d2f]'
               }`}
             >
               All Checks ({checks.length})
@@ -109,14 +109,14 @@ export function HealthModal({ open, onClose }: HealthModalProps) {
               onClick={() => setFilter('issues')}
               className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                 filter === 'issues'
-                  ? 'bg-amber-600 text-white'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'text-amber-600 bg-amber-500/10 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-400'
               }`}
             >
               Needs Attention ({issues.length})
             </button>
           </div>
-          <span className="text-xs text-slate-500">Live VPS & Cloud Verification</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">Live VPS & Cloud Verification</span>
         </div>
 
         {/* Check Items List */}
@@ -172,7 +172,7 @@ export function HealthModal({ open, onClose }: HealthModalProps) {
                     <button
                       type="button"
                       onClick={() => handleAction(item.action)}
-                      className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-indigo-400 dark:hover:bg-slate-700"
+                      className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-[#161d2f] dark:text-indigo-400 dark:hover:bg-[#1e273e] transition-colors"
                     >
                       Resolve →
                     </button>
@@ -183,12 +183,12 @@ export function HealthModal({ open, onClose }: HealthModalProps) {
           </div>
         )}
 
-        <div className="flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500 dark:border-slate-800">
+        <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800/80 pt-3 text-xs text-slate-500 dark:text-slate-400">
           <span>Non-destructive read health telemetry</span>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg bg-slate-900 px-4 py-2 font-medium text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900"
+            className="rounded-xl bg-slate-900 px-4 py-2 font-medium text-white hover:bg-slate-800 dark:bg-[#161d2f] dark:hover:bg-[#1e273e] dark:text-slate-200 dark:border dark:border-slate-800 transition-colors"
           >
             Close
           </button>

@@ -132,21 +132,21 @@ function RecordsTable({ details, locked, onlyReview, onEdit }: { details: Sessio
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-slate-100">
-        <thead className="bg-slate-50/70"><tr>{columns.map((c, i) => <th key={i} scope="col" className={th}>{c}</th>)}</tr></thead>
-        <tbody className="divide-y divide-slate-100">
+      <table className="min-w-full divide-y divide-slate-100 dark:divide-slate-800">
+        <thead className="bg-slate-50/70 dark:bg-[#0c111d]"><tr>{columns.map((c, i) => <th key={i} scope="col" className={th}>{c}</th>)}</tr></thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {rows.map((r) => {
             const p = r.participant ? details.participants.find((item) => item.id === r.participant?.id) : undefined
             return (
-              <tr key={r.studentId} className="hover:bg-slate-50/60">
-                <td className={`${td} tabular-nums text-slate-500`}>{r.order ?? ''}</td>
-                <td className={td}><span className="font-medium text-slate-900">{r.fullName}</span>{r.reason && r.status !== 'absent' && <p className="max-w-72 text-xs text-slate-500">{r.reason}</p>}</td>
+              <tr key={r.studentId} className="hover:bg-slate-50/60 dark:hover:bg-[#161d2f]/40 transition-colors">
+                <td className={`${td} tabular-nums text-slate-500 dark:text-slate-400`}>{r.order ?? ''}</td>
+                <td className={td}><span className="font-medium text-slate-900 dark:text-slate-100">{r.fullName}</span>{r.reason && r.status !== 'absent' && <p className="max-w-72 text-xs text-slate-500 dark:text-slate-400">{r.reason}</p>}</td>
                 <td className={td}>
                   <Pill tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Pill>
-                  {r.manual && <span className="ml-1 text-xs text-slate-500" title="Set by hand; re-matching keeps it">✎</span>}
+                  {r.manual && <span className="ml-1 text-xs text-slate-500 dark:text-slate-400" title="Set by hand; re-matching keeps it">✎</span>}
                 </td>
                 <td className={td}>
-                  {r.participant ? <span className="text-slate-800">{r.participant.name}</span> : <span className="text-slate-400">—</span>}
+                  {r.participant ? <span className="text-slate-800 dark:text-slate-200">{r.participant.name}</span> : <span className="text-slate-400">—</span>}
                   {r.extraNames.length > 0 && <p className="text-xs text-slate-500">also {r.extraNames.join(', ')}</p>}
                 </td>
                 <td className={`${td} whitespace-nowrap text-slate-600`}>
@@ -217,16 +217,16 @@ function NamesTable({ details, locked }: { details: SessionDetails; locked: bool
   const columns = ['Zoom name', 'First Observed', 'Last Observed', 'Observation Count', 'Student', '']
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-slate-100">
-        <thead className="bg-slate-50/70"><tr>{columns.map((c, i) => <th key={i} scope="col" className={th}>{c}</th>)}</tr></thead>
-        <tbody className="divide-y divide-slate-100">
+      <table className="min-w-full divide-y divide-slate-100 dark:divide-slate-800">
+        <thead className="bg-slate-50/70 dark:bg-[#0c111d]"><tr>{columns.map((c, i) => <th key={i} scope="col" className={th}>{c}</th>)}</tr></thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {details.participants.map((p: ParticipantView) => (
-            <tr key={p.id} className={p.ignored ? 'opacity-60' : ''}>
-              <td className={td}><span className="font-medium text-slate-800">{p.name}</span>{p.ignored && <span className="ml-2"><Pill tone="slate">Not a student</Pill></span>}</td>
-              <td className={`${td} tabular-nums`}>{hhmm(p.firstSeenAt)}</td>
-              <td className={`${td} tabular-nums`}>{hhmm(p.lastSeenAt)}</td>
-              <td className={`${td} tabular-nums`}>{p.sightings} snapshots</td>
-              <td className={td}>{p.assignedTo ? studentName.get(p.assignedTo) : <span className="text-slate-400">—</span>}</td>
+            <tr key={p.id} className={`${p.ignored ? 'opacity-50' : ''} hover:bg-slate-50/60 dark:hover:bg-[#161d2f]/40 transition-colors`}>
+              <td className={td}><span className="font-medium text-slate-800 dark:text-slate-200">{p.name}</span>{p.ignored && <span className="ml-2"><Pill tone="slate">Not a student</Pill></span>}</td>
+              <td className={`${td} tabular-nums text-slate-600 dark:text-slate-400`}>{hhmm(p.firstSeenAt)}</td>
+              <td className={`${td} tabular-nums text-slate-600 dark:text-slate-400`}>{hhmm(p.lastSeenAt)}</td>
+              <td className={`${td} tabular-nums text-slate-600 dark:text-slate-400`}>{p.sightings} snapshots</td>
+              <td className={td}>{p.assignedTo ? <span className="text-slate-800 dark:text-slate-200">{studentName.get(p.assignedTo)}</span> : <span className="text-slate-400">—</span>}</td>
               <td className={`${td} text-right`}>
                 <button type="button" className={button.small} disabled={locked || ignore.isPending}
                   onClick={() => ignore.mutate({ id: details.session.id, participantId: p.id, ignored: !p.ignored })}>

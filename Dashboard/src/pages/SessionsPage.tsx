@@ -153,14 +153,14 @@ function ClassCard({ row }: { row: SessionClass }) {
   }
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <article className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
       <div className="flex flex-wrap items-start gap-3">
-        <div className="flex w-14 shrink-0 flex-col items-center rounded-lg bg-slate-50 px-2 py-1.5 text-center">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+        <div className="flex w-14 shrink-0 flex-col items-center rounded-xl bg-slate-50 dark:bg-[#0c111d] dark:border dark:border-slate-800/80 px-2 py-1.5 text-center">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
             {day.toLocaleDateString(undefined, { weekday: 'short' })}
           </span>
-          <span className="text-lg font-semibold leading-none text-slate-900">{day.getDate()}</span>
-          <span className="text-[10px] text-slate-500">
+          <span className="text-lg font-bold leading-none text-slate-900 dark:text-slate-100">{day.getDate()}</span>
+          <span className="text-[10px] text-slate-500 dark:text-slate-400">
             {day.toLocaleDateString(undefined, { month: 'short' })}
           </span>
         </div>
@@ -168,11 +168,11 @@ function ClassCard({ row }: { row: SessionClass }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Pill tone="blue">{row.group}</Pill>
-            <span className="truncate font-medium text-slate-900">{row.title ?? 'Session'}</span>
-            <span className="text-sm text-slate-500">{when}</span>
+            <span className="truncate font-semibold text-slate-900 dark:text-slate-100">{row.title ?? 'Session'}</span>
+            <span className="text-sm text-slate-500 dark:text-slate-400">{when}</span>
             <Pill tone={headline.tone}>{headline.label}</Pill>
           </div>
-          <p className="mt-0.5 text-xs text-slate-500">
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             {row.coordinator.name ?? 'Unassigned'}
             {row.meetingUrl ? '' : ' · no Zoom link yet'}
           </p>
@@ -194,17 +194,17 @@ function ClassCard({ row }: { row: SessionClass }) {
       {/* Everything else about this class, one press away: who was there, its recording, and what
           the machine actually did - which is where a stage that failed says why. */}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-        <Link className="font-medium text-teal-700 hover:underline" to={`/attendance?group=${encodeURIComponent(row.group)}&date=${row.date}`}>
+        <Link className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400" to={`/attendance?group=${encodeURIComponent(row.group)}&date=${row.date}`}>
           Who was there
         </Link>
-        <Link className="font-medium text-teal-700 hover:underline" to={`/recordings?group=${encodeURIComponent(row.group)}&date=${row.date}`}>
+        <Link className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400" to={`/recordings?group=${encodeURIComponent(row.group)}&date=${row.date}`}>
           Recording
         </Link>
-        <Link className="font-medium text-teal-700 hover:underline" to={`/activity?group=${encodeURIComponent(row.group)}`}>
+        <Link className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400" to={`/activity?group=${encodeURIComponent(row.group)}`}>
           What the machine did
         </Link>
         {row.meetingUrl && (
-          <a className="font-medium text-teal-700 hover:underline" href={row.meetingUrl} target="_blank" rel="noreferrer noopener">
+          <a className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400" href={row.meetingUrl} target="_blank" rel="noreferrer noopener">
             Open the meeting
           </a>
         )}

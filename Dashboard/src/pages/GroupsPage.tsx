@@ -19,17 +19,17 @@ function GroupName({ group }: { group: GroupSummary }) {
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-2">
-        <Link to={`/recordings?group=${encodeURIComponent(group.group)}`} className="font-medium text-teal-700 hover:underline">
+        <Link to={`/recordings?group=${encodeURIComponent(group.group)}`} className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
           {group.group}
         </Link>
         {group.archived && <Pill tone="slate" title="Archived: hidden from coordinators">Archived</Pill>}
       </div>
-      <div className="mt-2 flex gap-3 text-xs text-teal-700">
+      <div className="mt-2 flex gap-3 text-xs text-indigo-600 dark:text-indigo-400">
         <Link to={`/students?group=${encodeURIComponent(group.group)}`}>Students</Link>
         <Link to={`/attendance?group=${encodeURIComponent(group.group)}`}>Attendance</Link>
         <Link to={`/recordings?group=${encodeURIComponent(group.group)}`}>Recordings</Link>
       </div>
-      {group.displayName && <p className="text-xs text-slate-500">{group.displayName}</p>}
+      {group.displayName && <p className="text-xs text-slate-500 dark:text-slate-400">{group.displayName}</p>}
     </div>
   )
 }
@@ -67,16 +67,16 @@ function MyGroups() {
           <ErrorBanner error={groups.error} />
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-100">
-              <thead className="bg-slate-50/70">
+            <table className="min-w-full divide-y divide-slate-100 dark:divide-slate-800/80">
+              <thead className="bg-slate-50/70 dark:bg-[#0c111d]">
                 <tr>{columns.map((c) => <th key={c} scope="col" className={th}>{c}</th>)}</tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
                 {groups.isLoading ? (
                   <LoadingRows columns={columns.length} />
                 ) : (
                   items?.map((g) => (
-                    <tr key={g.id} className="hover:bg-slate-50/60">
+                    <tr key={g.id} className="hover:bg-slate-50/60 dark:hover:bg-[#161d2f]/40 transition-colors">
                       <td className={td}><GroupName group={g} /></td>
                       <Stats group={g} />
                     </tr>
@@ -122,8 +122,8 @@ function AdminGroups() {
       />
       <Card>
         {archivedCount > 0 && (
-          <label className="flex items-center gap-2 border-b border-slate-100 px-5 py-2.5 text-sm text-slate-600">
-            <input type="checkbox" className="size-4 accent-teal-700" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+          <label className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800/80 px-5 py-2.5 text-sm text-slate-600 dark:text-slate-400">
+            <input type="checkbox" className="size-4 accent-indigo-600" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
             Show archived groups ({archivedCount})
           </label>
         )}
@@ -131,16 +131,16 @@ function AdminGroups() {
           <ErrorBanner error={groups.error} />
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-100">
-              <thead className="bg-slate-50/70">
+            <table className="min-w-full divide-y divide-slate-100 dark:divide-slate-800/80">
+              <thead className="bg-slate-50/70 dark:bg-[#0c111d]">
                 <tr>{columns.map((c) => <th key={c} scope="col" className={th}>{c}</th>)}</tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
                 {groups.isLoading ? (
                   <LoadingRows columns={columns.length} />
                 ) : (
                   items.map((g) => (
-                    <tr key={g.id} className={`hover:bg-slate-50/60 ${g.archived ? 'opacity-60' : ''}`}>
+                    <tr key={g.id} className={`hover:bg-slate-50/60 dark:hover:bg-[#161d2f]/40 transition-colors ${g.archived ? 'opacity-60' : ''}`}>
                       <td className={td}><GroupName group={g} /></td>
                       <td className={`${td} max-w-56`}>
                         {g.coordinators.length ? (

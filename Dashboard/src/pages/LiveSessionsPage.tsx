@@ -31,7 +31,7 @@ export function LiveSessionsPage() {
               type="button"
               onClick={() => live.refetch()}
               disabled={live.isFetching}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 dark:border-slate-800 dark:bg-[#161d2f] dark:text-slate-200 dark:hover:bg-[#1e273e] disabled:opacity-50 transition-colors"
             >
               <IconRefresh className={`size-3.5 ${live.isFetching ? 'animate-spin' : ''}`} />
               Refresh Snapshot
@@ -39,7 +39,7 @@ export function LiveSessionsPage() {
             <button
               type="button"
               onClick={() => setHealthModalOpen(true)}
-              className="rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900"
+              className="rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-slate-800 dark:bg-indigo-600 dark:hover:bg-indigo-500 dark:text-white transition-colors"
             >
               Health Check
             </button>
@@ -143,43 +143,43 @@ export function LiveSessionsPage() {
 
                   {/* Telemetry Grid: Mapped 100% to real backend API fields */}
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6 text-xs">
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-800/40">
-                      <span className="text-slate-500 text-[11px] block">Observed in Snapshot</span>
+                    <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3.5 dark:border-slate-800/80 dark:bg-[#0c111d]">
+                      <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Observed in Snapshot</span>
                       <span className="text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5 block">
                         {session.observed}
                       </span>
                     </div>
 
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-800/40">
-                      <span className="text-slate-500 text-[11px] block">Snapshots Captured</span>
+                    <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3.5 dark:border-slate-800/80 dark:bg-[#0c111d]">
+                      <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Snapshots Captured</span>
                       <span className="text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5 block">
                         {session.snapshots}
                       </span>
                     </div>
 
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-800/40">
-                      <span className="text-slate-500 text-[11px] block">Worker Device</span>
+                    <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3.5 dark:border-slate-800/80 dark:bg-[#0c111d]">
+                      <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Worker Device</span>
                       <span className="text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5 block truncate">
                         {session.worker || 'Pending'}
                       </span>
                     </div>
 
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-800/40">
-                      <span className="text-slate-500 text-[11px] block">Attendance Session</span>
+                    <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3.5 dark:border-slate-800/80 dark:bg-[#0c111d]">
+                      <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Attendance Session</span>
                       <span className="text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5 block">
                         {session.attendanceStatus ? session.attendanceStatus.toUpperCase() : 'None'}
                       </span>
                     </div>
 
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-800/40">
-                      <span className="text-slate-500 text-[11px] block">Job State</span>
+                    <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3.5 dark:border-slate-800/80 dark:bg-[#0c111d]">
+                      <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Job State</span>
                       <span className="text-base font-bold text-indigo-600 dark:text-indigo-400 mt-0.5 block uppercase">
                         {session.status}
                       </span>
                     </div>
 
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-800/40">
-                      <span className="text-slate-500 text-[11px] block">Planned Duration</span>
+                    <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-3.5 dark:border-slate-800/80 dark:bg-[#0c111d]">
+                      <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Planned Duration</span>
                       <span className="text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5 block">
                         {session.durationMinutes ? `${session.durationMinutes}m` : '—'}
                       </span>
@@ -187,13 +187,13 @@ export function LiveSessionsPage() {
                   </div>
 
                   {/* Operational Controls & Direct Links */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3 dark:border-slate-800">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800/80 pt-3">
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => live.refetch()}
                         disabled={live.isFetching}
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 disabled:opacity-50"
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-[#161d2f] dark:text-slate-200 dark:hover:bg-[#1e273e] disabled:opacity-50 transition-colors"
                       >
                         Refresh Telemetry
                       </button>
@@ -201,7 +201,7 @@ export function LiveSessionsPage() {
                       <button
                         type="button"
                         onClick={() => setHealthModalOpen(true)}
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-[#161d2f] dark:text-slate-200 dark:hover:bg-[#1e273e] transition-colors"
                       >
                         Run Diagnostics
                       </button>

@@ -123,10 +123,10 @@ export function ClassCard({ item, onHealthCheck, onSelect }: ClassCardProps) {
 
   return (
     <div
-      className={`rounded-2xl bg-white p-5 shadow-xs transition-all border ${
+      className={`rounded-2xl bg-white p-5 shadow-xs transition-all border ring-1 ${
         hasProblem
-          ? 'border-rose-400 bg-rose-50/20 shadow-rose-100/50 dark:border-rose-700/60 dark:bg-rose-950/15'
-          : 'border-slate-200/90 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700'
+          ? 'border-rose-300 bg-rose-50/30 dark:border-rose-900/60 dark:bg-rose-950/20 ring-rose-500/10'
+          : 'border-slate-200/80 hover:border-slate-300 dark:border-slate-800/80 dark:bg-[#111726] dark:hover:border-slate-700/80 ring-slate-900/5 dark:ring-white/[0.03]'
       }`}
     >
       {/* Top Header */}

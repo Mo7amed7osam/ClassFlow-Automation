@@ -22,14 +22,14 @@ function Switch({ label, hint, checked, onChange, disabled }: {
   disabled?: boolean
 }) {
   return (
-    <label className="flex items-start gap-3 border-t border-slate-100 px-5 py-4 first:border-t-0">
+    <label className="flex items-start gap-3 border-t border-slate-100 dark:border-slate-800/80 px-5 py-4 first:border-t-0">
       <input
-        type="checkbox" className="mt-0.5 size-4 rounded border-slate-300" checked={checked} disabled={disabled}
+        type="checkbox" className="mt-0.5 size-4 rounded border-slate-300 accent-indigo-600" checked={checked} disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span>
-        <span className="block text-sm font-medium text-slate-800">{label}</span>
-        <span className="mt-0.5 block text-xs text-slate-500">{hint}</span>
+        <span className="block text-sm font-medium text-slate-800 dark:text-slate-200">{label}</span>
+        <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{hint}</span>
       </span>
     </label>
   )
@@ -101,7 +101,7 @@ export function SettingsPage() {
             disabled={!isAdmin || savePolicy.isPending}
             onChange={(value) => set({ autoEnd: value })}
           />
-          <p className="border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
+          <p className="border-t border-slate-100 dark:border-slate-800/80 px-5 py-3 text-xs text-slate-500 dark:text-slate-400">
             {isAdmin
               ? 'A class already running keeps the settings it started with.'
               : 'Only the admin changes these. They apply to every machine.'}
@@ -111,7 +111,7 @@ export function SettingsPage() {
         {isAdmin && (
           <Card title="A machine of yours">
             <div className="flex flex-col gap-4 px-5 py-4">
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-slate-600 dark:text-slate-300">
                 A machine joins with a token it spends at once. It is single-use and short-lived, and grants no more
                 than registering: nothing that reads a password.
               </p>
@@ -128,10 +128,10 @@ export function SettingsPage() {
                 </button>
               </div>
               {token && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Enrollment token</p>
-                  <code className="mt-1 block break-all font-mono text-xs text-slate-800">{token}</code>
-                  <p className="mt-2 text-xs text-slate-500">
+                <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 dark:border-slate-800/80 dark:bg-[#0c111d] px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-400">Enrollment token</p>
+                  <code className="mt-1 block break-all font-mono text-xs text-slate-900 dark:text-slate-100">{token}</code>
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                     Give it to the machine as CLASSFLOW_ENROLLMENT_TOKEN (or paste it into the app). It works once, and
                     expires shortly.
                   </p>
@@ -195,22 +195,22 @@ export function SettingsPage() {
             action={notify.data?.lastSentAt ? <span className="text-xs text-slate-500">last sent <TimeAgo iso={notify.data.lastSentAt} /></span> : null}
           >
             <div className="flex flex-col gap-4 px-5 py-4">
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-slate-600 dark:text-slate-300">
                 When a step of a class fails for good, or a meeting is left open, the server posts an alert notification to your
                 webhook URL. Nothing about a class depends on it: an alert webhook that is down is
                 tried three times and then written off.
               </p>
               <label className="flex items-start gap-3">
                 <input
-                  type="checkbox" className="mt-0.5 size-4 rounded border-slate-300"
+                  type="checkbox" className="mt-0.5 size-4 rounded border-slate-300 accent-indigo-600"
                   checked={notify.data?.enabled ?? true} disabled={saveNotify.isPending}
                   onChange={(event) => saveNotify.mutate({ enabled: event.target.checked }, {
                     onSuccess: () => toast.success(event.target.checked ? 'Notices are on.' : 'Notices are off.'),
                   })}
                 />
                 <span>
-                  <span className="block text-sm font-medium text-slate-800">Say when a class needs somebody</span>
-                  <span className="mt-0.5 block text-xs text-slate-500">
+                  <span className="block text-sm font-medium text-slate-800 dark:text-slate-200">Say when a class needs somebody</span>
+                  <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
                     {notify.data?.hasUrl
                       ? `Sent to ${notify.data.urlHost ?? 'your webhook'}.`
                       : 'There is nowhere to send them yet.'}

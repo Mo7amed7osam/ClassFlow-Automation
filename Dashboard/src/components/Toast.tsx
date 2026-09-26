@@ -39,17 +39,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={toast.id}
             role={toast.kind === 'error' ? 'alert' : 'status'}
-            className={`pointer-events-auto w-full max-w-sm rounded-xl border px-4 py-3 text-sm shadow-lg ${
-              toast.kind === 'error' ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-white text-slate-800'
+            className={`pointer-events-auto w-full max-w-sm rounded-xl border px-4 py-3 text-sm shadow-xl backdrop-blur-md ${
+              toast.kind === 'error'
+                ? 'border-rose-200 bg-rose-50/95 text-rose-800 dark:border-rose-900/60 dark:bg-[#1f1318] dark:text-rose-200'
+                : 'border-emerald-200 bg-white/95 text-slate-800 dark:border-slate-800/80 dark:bg-[#111726]/95 dark:text-slate-100 ring-1 ring-slate-900/5 dark:ring-white/[0.03]'
             }`}
           >
             <div className="flex items-start gap-3">
               <span aria-hidden className={`mt-1 size-2 shrink-0 rounded-full ${toast.kind === 'error' ? 'bg-rose-500' : 'bg-emerald-500'}`} />
               <div className="min-w-0 flex-1">
-                <p className="font-semibold">{toast.title}</p>
-                {toast.body && <p className="mt-0.5 break-words text-slate-600">{toast.body}</p>}
+                <p className="font-semibold text-slate-900 dark:text-slate-100">{toast.title}</p>
+                {toast.body && <p className="mt-0.5 break-words text-slate-600 dark:text-slate-400">{toast.body}</p>}
               </div>
-              <button type="button" aria-label="Dismiss" onClick={() => dismiss(toast.id)} className="text-slate-400 hover:text-slate-700">×</button>
+              <button type="button" aria-label="Dismiss" onClick={() => dismiss(toast.id)} className="text-slate-400 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">×</button>
             </div>
           </div>
         ))}

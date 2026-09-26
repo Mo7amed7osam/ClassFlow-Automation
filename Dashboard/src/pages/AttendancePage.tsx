@@ -37,17 +37,17 @@ export function AttendancePage() {
       <PageHeader title="Attendance" description="Sessions taken by the Windows agent during the meeting, or created here by hand. Open one to review who attended."
         action={<button type="button" className={button.primary} onClick={() => setCreating(true)}>New session</button>} />
       <Card>
-        <div className="flex flex-wrap items-end gap-3 border-b border-slate-100 px-5 py-4" role="search">
-          <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">Group
+        <div className="flex flex-wrap items-end gap-3 border-b border-slate-100 dark:border-slate-800/80 px-5 py-4" role="search">
+          <label className="flex flex-col gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">Group
             <select aria-label="Group" className={`${input} min-w-44`} value={group} onChange={(e) => update({ group: e.target.value })}>
               <option value="">All groups</option>
               {groups.data?.groups.map((g) => <option key={g.group} value={g.group}>{g.group}</option>)}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">Date
+          <label className="flex flex-col gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">Date
             <input aria-label="Date" type="date" className={input} value={date} onChange={(e) => update({ date: e.target.value })} />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">Status
+          <label className="flex flex-col gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">Status
             <select aria-label="Status" className={input} value={status} onChange={(e) => update({ status: e.target.value })}>
               <option value="">Any</option><option value="open">Live</option><option value="closed">Ended</option><option value="finalized">Finalized</option>
             </select>
@@ -55,23 +55,23 @@ export function AttendancePage() {
         </div>
         {sessions.error ? <ErrorBanner error={sessions.error} /> : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-100">
-              <thead className="bg-slate-50/70"><tr>{COLUMNS.map((c, i) => <th key={i} scope="col" className={th}>{c}</th>)}</tr></thead>
-              <tbody className="divide-y divide-slate-100">
+            <table className="min-w-full divide-y divide-slate-100 dark:divide-slate-800/80">
+              <thead className="bg-slate-50/70 dark:bg-[#0c111d]"><tr>{COLUMNS.map((c, i) => <th key={i} scope="col" className={th}>{c}</th>)}</tr></thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
                 {sessions.isLoading ? <LoadingRows columns={COLUMNS.length} /> : items.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50/60">
+                  <tr key={s.id} className="hover:bg-slate-50/60 dark:hover:bg-[#161d2f]/40 transition-colors">
                     <td className={td}>
-                      <Link to={`/attendance/${s.id}`} className="font-medium text-teal-700 hover:underline">
+                      <Link to={`/attendance/${s.id}`} className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
                         {formatSessionDate(s.date)}{s.startTime ? ` · ${s.startTime}` : ''}
                       </Link>
-                      {s.title && <p className="text-xs text-slate-500">{s.title}</p>}
+                      {s.title && <p className="text-xs text-slate-500 dark:text-slate-400">{s.title}</p>}
                     </td>
                     <td className={td}>{s.group}</td>
                     <td className={td}><Pill tone={STATUS_TONE[s.status]}>{STATUS_LABEL[s.status]}</Pill></td>
                     <td className={`${td} tabular-nums`}>{s.present > 0 ? <Pill tone="green">{s.present}</Pill> : <span className="text-slate-400">0</span>}</td>
                     <td className={`${td} tabular-nums`}>{s.needsReview > 0 ? <Pill tone="amber">{s.needsReview}</Pill> : <span className="text-slate-400">0</span>}</td>
-                    <td className={`${td} tabular-nums text-slate-600`}>{s.absent}</td>
-                    <td className={`${td} text-slate-600`}><TimeAgo iso={s.lastCapturedAt} /></td>
+                    <td className={`${td} tabular-nums text-slate-600 dark:text-slate-400`}>{s.absent}</td>
+                    <td className={`${td} text-slate-600 dark:text-slate-400`}><TimeAgo iso={s.lastCapturedAt} /></td>
                     <td className={`${td} text-right`}><Link to={`/attendance/${s.id}`} className={button.small}>Open</Link></td>
                   </tr>
                 ))}
@@ -80,7 +80,7 @@ export function AttendancePage() {
             {!sessions.isLoading && items.length === 0 && <EmptyState>No sessions yet. They appear when the Windows agent takes attendance in a meeting, or create one by hand.</EmptyState>}
           </div>
         )}
-        <footer className="flex items-center justify-between border-t border-slate-100 px-5 py-3 text-sm text-slate-600">
+        <footer className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800/80 px-5 py-3 text-sm text-slate-600 dark:text-slate-400">
           <span>{sessions.data ? `${sessions.data.total} session${sessions.data.total === 1 ? '' : 's'}` : ' '}</span>
           <div className="flex items-center gap-2">
             <button type="button" className={button.small} disabled={page <= 1} onClick={() => update({ page: String(page - 1) })}>Previous</button>
