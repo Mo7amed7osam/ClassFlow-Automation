@@ -135,8 +135,34 @@ public sealed class AccountsViewModel : ObservableObject
                 ? "Profile saved. Its password is protected by Windows Credential Manager."
                 : "Profile saved. Save a password if this Zoom profile needs one.";
             AccountsChanged?.Invoke();
+            if (HasSavedPassword) _ = SignInProfileAsync();
         }
         catch (Exception ex) { StatusMessage = ex.Message; }
+    }
+
+    /// <summary>
+    /// Signs the account's browser profile in to Zoom and keeps it signed in: set by the window.
+    /// Given the account and its profile folder, it answers what happened.
+    /// </summary>
+    public Func<string, string, Task<string>>? SignInToZoom { get; set; }
+
+    private bool _signingIn;
+
+    /// <summary>
+    /// After a save: the profile is signed in to Zoom now, once, so later meetings, recordings and
+    /// reports on it start signed in. A window opens only if Zoom wants a person to finish.
+    /// </summary>
+    private async Task SignInProfileAsync()
+    {
+        if (SignInToZoom == null || _signingIn || string.IsNullOrWhiteSpace(AccountId)) return;
+        _signingIn = true;
+        string account = AccountId.Trim();
+        string profile = string.IsNullOrWhiteSpace(WebProfileName) ? account : WebProfileName.Trim();
+        string saved = StatusMessage;
+        StatusMessage = $"{saved} Signing the '{profile}' profile in to Zoom… if a window opens, finish the sign-in there (captcha or code).";
+        try { StatusMessage = $"{saved} {await SignInToZoom(account, profile)}"; }
+        catch (Exception ex) { StatusMessage = $"{saved} The '{profile}' profile could not be signed in to Zoom: {ex.Message}"; }
+        finally { _signingIn = false; }
     }
 
     /// <summary>
@@ -183,6 +209,7 @@ public sealed class AccountsViewModel : ObservableObject
         StatusMessage = (hereProblem == null ? "Zoom password saved on this PC" : $"This PC did not keep it ({hereProblem})")
                         + (serverSaid == null ? ". Sign in on the Dashboard page to keep it in the database too." : $"; {serverSaid}.");
         ConsoleLogger.Info($"[ACCOUNTS] {AccountId}: {StatusMessage}");
+        if (hereProblem == null) _ = SignInProfileAsync();
         return hereProblem == null || inDatabase;
     }
 

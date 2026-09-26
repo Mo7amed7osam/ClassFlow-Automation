@@ -109,6 +109,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // A Zoom password typed here goes to the database at once, encrypted against the signed-in
         // dashboard account - not on the next pass, and not only into this PC's Credential Manager.
         // Every other PC, a cloud one included, takes it from there.
+        // Saving an account signs its browser profile in to Zoom there and then, so nothing later
+        // stops at Zoom's sign-in page.
+        Accounts.SignInToZoom = (accountId, profile) => new ZoomProfileSignIn().SignInAsync(accountId, profile);
         Accounts.SaveToDatabase = async (accountId, password) =>
         {
             if (!Central.Api.IsSignedIn) return "nobody is signed in to the dashboard here, so it is only on this PC";

@@ -112,9 +112,29 @@ public static class ZoomWebSignIn
     private static readonly Regex SignInButton = new(@"^\s*sign\s*in\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex NextButton = new(@"^\s*(next|continue)\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    public static async Task<ZoomSignInOutcome> EnsureSignedInAsync(IBrowserContext context, ZoomSignInCredential? credential, CancellationToken token)
+    /// <param name="keepPageForPerson">
+    /// In a visible browser: when Zoom wants a person, the page is left open where the typing
+    /// stopped, so they carry on from there instead of starting again.
+    /// </param>
+    public static async Task<ZoomSignInOutcome> EnsureSignedInAsync(IBrowserContext context, ZoomSignInCredential? credential, CancellationToken token,
+        bool keepPageForPerson = false)
     {
         var page = await context.NewPageAsync();
+        var outcome = ZoomSignInOutcome.Failed;
+        try
+        {
+            outcome = await SignInOnAsync(page, credential, token);
+            return outcome;
+        }
+        finally
+        {
+            if (!(keepPageForPerson && outcome is ZoomSignInOutcome.NeedsPerson or ZoomSignInOutcome.Failed))
+                try { await page.CloseAsync(); } catch (PlaywrightException) { }
+        }
+    }
+
+    private static async Task<ZoomSignInOutcome> SignInOnAsync(IPage page, ZoomSignInCredential? credential, CancellationToken token)
+    {
         try
         {
             await page.GotoAsync("https://zoom.us/profile", new() { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 30000 });
@@ -185,10 +205,6 @@ public static class ZoomWebSignIn
             ConsoleLogger.Warn($"WEB_SIGN_IN: {ex.Message.Split('\n')[0]}");
             return ZoomSignInOutcome.Failed;
         }
-        finally
-        {
-            try { await page.CloseAsync(); } catch (PlaywrightException) { }
-        }
     }
 
     /// <summary>
@@ -214,14 +230,26 @@ public static class ZoomWebSignIn
         var credential = accounts.Where(name => !string.IsNullOrWhiteSpace(name))
             .Select(name => ZoomSignInCredential.ReadFor(null, name))
             .FirstOrDefault(found => found != null);
-        var outcome = await EnsureSignedInAsync(page.Context, credential, token);
+        bool person = waitForPerson is { } w && w > TimeSpan.Zero;
+        var outcome = await EnsureSignedInAsync(page.Context, credential, token, keepPageForPerson: person);
         if (outcome is not (ZoomSignInOutcome.SignedIn or ZoomSignInOutcome.AlreadySignedIn))
         {
-            if (waitForPerson is not { } wait || wait <= TimeSpan.Zero) return false;
-            await GotoAsync(page, url, waitUntil, token);
-            ConsoleLogger.Info($"WEB_SIGN_IN: sign in to Zoom in the open browser window (captcha or code); waiting up to {wait.TotalMinutes:0} minutes.");
-            try { await page.WaitForURLAsync(address => !OnSignInPage(address), new() { Timeout = (float)wait.TotalMilliseconds }); }
-            catch (TimeoutException) { return false; }
+            if (!person) return false;
+            // The person finishes in the window: the tab where the e-mail and password were typed
+            // is still open. Signed in shows as any tab of the profile leaving Zoom's sign-in page.
+            ConsoleLogger.Info($"WEB_SIGN_IN: finish signing in to Zoom in the open window (captcha or code); waiting up to {waitForPerson!.Value.TotalMinutes:0} minutes.");
+            var until = DateTime.UtcNow + waitForPerson.Value;
+            bool done = false;
+            while (!done && DateTime.UtcNow < until)
+            {
+                token.ThrowIfCancellationRequested();
+                await Task.Delay(2000, token);
+                var tabs = page.Context.Pages;
+                if (tabs.Count == 0) return false;                       // the window was closed
+                done = tabs.Any(tab => tab.Url.Contains("zoom.us", StringComparison.OrdinalIgnoreCase) && !OnSignInPage(tab.Url)
+                                       && !tab.Url.Contains("/signup", StringComparison.OrdinalIgnoreCase));
+            }
+            if (!done) return false;
             ConsoleLogger.Success("WEB_SIGN_IN: signed in by hand; the profile remembers it.");
         }
         await GotoAsync(page, url, waitUntil, token);

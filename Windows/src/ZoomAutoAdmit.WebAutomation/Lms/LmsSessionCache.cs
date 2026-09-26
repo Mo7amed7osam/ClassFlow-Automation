@@ -32,7 +32,15 @@ public sealed class LmsSessionCache(string? path = null)
     /// Replaces what is known for the days read. A quick read (list only) keeps the link and
     /// attendance learned by an earlier full read of the same session.
     /// </summary>
-    public void Merge(IEnumerable<LmsSessionRunner.LmsSessionInfo> sessions, DateOnly from, DateOnly to, string account, bool listOnly)
+    public void Merge(IEnumerable<LmsSessionRunner.LmsSessionInfo> sessions, DateOnly from, DateOnly to, string account, bool listOnly) =>
+        Merge(sessions, from, to, _ => account, listOnly);
+
+    /// <summary>
+    /// The same, for a reading made with several sign-ins at once - each coordinator's classes read
+    /// with their own - so each session keeps the account it was read with.
+    /// </summary>
+    public void Merge(IEnumerable<LmsSessionRunner.LmsSessionInfo> sessions, DateOnly from, DateOnly to,
+        Func<LmsSessionRunner.LmsSessionInfo, string> accountOf, bool listOnly)
     {
         lock (Gate)
         {
@@ -53,7 +61,7 @@ public sealed class LmsSessionCache(string? path = null)
                         DetailsReadAt = before.Session.DetailsReadAt,
                     }
                     : s;
-                fresh.Add(new Entry(session, now, account));
+                fresh.Add(new Entry(session, now, accountOf(s)));
             }
             var kept = old.Where(e => e.Session.Date is not { } d || d < from || d > to).ToList();
             var doc = new Document { Sessions = [.. kept, .. fresh] };

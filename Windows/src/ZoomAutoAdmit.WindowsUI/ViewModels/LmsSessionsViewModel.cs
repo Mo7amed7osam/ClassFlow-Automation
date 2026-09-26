@@ -84,6 +84,8 @@ public sealed class LmsSessionsViewModel : ObservableObject
     private readonly LmsSessionCache _cache;
     private readonly LmsAccountDirectory _accounts;
     private readonly Func<LmsSessionRunner> _runner;
+    /// <summary>The runner a group's classes are read with: signed in as that group's coordinator.</summary>
+    private readonly Func<string?, LmsSessionRunner> _runnerFor;
     /// <summary>Which group belongs to which coordinator, and the LMS account its classes go up under.</summary>
     private readonly ClassLmsAccounts _classAccounts = new();
     /// <summary>When each class's meeting ended, and how - including one closed from a phone.</summary>
@@ -117,6 +119,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
         _cache = cache ?? new LmsSessionCache();
         _accounts = accounts ?? new LmsAccountDirectory();
         _runner = runner ?? (() => new LmsSessionRunner(new LmsCredentialStore()));
+        _runnerFor = runner != null ? _ => runner() : group => new LmsSessionRunner(_classAccounts.StoreFor(group));
         RefreshCommand = new AsyncRelayCommand(_ => ReloadAsync());
         CheckLmsCommand = new AsyncRelayCommand(_ => CheckLmsAsync(full: false));
         FullCheckCommand = new AsyncRelayCommand(_ => CheckLmsAsync(full: true));
@@ -245,15 +248,40 @@ public sealed class LmsSessionsViewModel : ObservableObject
         Status = full ? $"Reading every session from {from:dd MMM} to {to:dd MMM} on the LMS (status, link, attendance)…" : "Reading the LMS session list…";
         try
         {
-            var groups = (await _schedules.ListAsync()).Select(s => s.GroupName ?? s.AccountId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var groups = (await _schedules.ListAsync()).Select(s => s.GroupName ?? s.AccountId)
+                .Concat(_classAccounts.List().Select(c => c.Group))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             // Check LMS opens only the sessions this app put material or an assignment on: a file deleted
             // on the LMS shows on the card straight after, without a full check of every session.
             var withMaterial = MaterialSettings.Load().Done.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             bool HasMaterial(string group, DateOnly? date, TimeOnly? start) =>
                 date is { } d && start is { } t && withMaterial.Contains(MaterialSettings.KeyOf(group, d, t));
-            var list = await Task.Run(() => _runner().SurveyAsync(from, to, groups, openEach: full, openWhen: HasMaterial));
-            _cache.Merge(list, from, to, _accounts.Active().Email, listOnly: !full);
-            Status = $"LMS read at {DateTime.Now:HH:mm}: {list.Count} session(s) from {from:dd MMM} to {to:dd MMM}.";
+            // Each coordinator's groups are read with their own LMS sign-in: the account in use sees
+            // only its own groups, so a coordinator's class read with it stayed "Not read" (2026-09-26).
+            var byAccount = groups.GroupBy(g => _classAccounts.Find(g)?.AccountId ?? "", StringComparer.OrdinalIgnoreCase).ToArray();
+            var list = new List<LmsSessionRunner.LmsSessionInfo>();
+            var readWith = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var problems = new List<string>();
+            foreach (var account in byAccount)
+            {
+                string first = account.First();
+                string email = LmsEmailFor(first);
+                try
+                {
+                    var read = await Task.Run(() => _runnerFor(first).SurveyAsync(from, to, [.. account], openEach: full, openWhen: HasMaterial));
+                    list.AddRange(read);
+                    foreach (var s in read) readWith[s.Group] = email;
+                }
+                catch (Exception ex)
+                {
+                    problems.Add($"{(email.Length > 0 ? email : "the account in use")}: {ex.Message}");
+                    ConsoleLogger.Warn($"[LMS] Sessions page, {string.Join(", ", account)}: {ex.GetType().Name}.");
+                }
+            }
+            string fallback = _accounts.Active().Email;
+            _cache.Merge(list, from, to, s => readWith.GetValueOrDefault(s.Group, fallback), listOnly: !full);
+            Status = $"LMS read at {DateTime.Now:HH:mm}: {list.Count} session(s) from {from:dd MMM} to {to:dd MMM}, " +
+                     $"with {byAccount.Length} LMS account(s)" + (problems.Count > 0 ? $". Not read: {string.Join("; ", problems)}" : ".");
         }
         catch (Exception ex)
         {
