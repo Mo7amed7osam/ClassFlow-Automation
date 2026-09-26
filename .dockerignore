@@ -47,7 +47,9 @@ Windows/src/ZoomAutoAdmit.WaitingRoomAutomation/
 Windows/src/ZoomAutoAdmit.WaitingRoomTester/
 Windows/src/ZoomAutoAdmit.Setup/
 # The cloud worker uses the cross-platform session-role library.
-Windows/tests/
+Windows/tests/*
+!Windows/tests/ZoomAutoAdmit.WebAutomation.Tests/
+!Windows/tests/ZoomAutoAdmit.WebAutomation.Tests/**
 Windows/design-reference/
 Windows/installer/
 Windows/web/
