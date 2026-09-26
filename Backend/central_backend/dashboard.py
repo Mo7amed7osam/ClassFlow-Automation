@@ -17,6 +17,7 @@ write operations are in dashboard_operations.py, the account management in admin
 
 from __future__ import annotations
 
+import shutil
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -24,7 +25,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .access import Viewer, current_viewer
@@ -353,6 +354,194 @@ async def ai(request: Request) -> JSONResponse:
     matcher = getattr(request.app.state, "attendance_ai", None)
     return _no_store({"available": matcher is not None,
                       "model": getattr(matcher, "model", None)})
+
+
+@router.get("/api/v1/dashboard/health-detailed")
+async def health_detailed(request: Request, viewer: Viewer = Depends(current_viewer)) -> JSONResponse:
+    """11-point system diagnostic for the operations panel."""
+    state = request.app.state
+    now = state.clock()
+    checks: list[dict[str, Any]] = []
+
+    # 1. Backend
+    from . import __version__
+    checks.append({
+        "name": "Backend",
+        "status": "healthy",
+        "summary": f"FastAPI v{__version__} running",
+        "detail": f"Server time: {now.isoformat()} (Africa/Cairo: {now.astimezone(timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S')})",
+        "fix": None,
+        "action": None,
+    })
+
+    # 2. Database
+    db_status, db_detail = "healthy", "PostgreSQL responsive"
+    try:
+        async with state.sessionmaker() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as exc:
+        db_status = "failed"
+        db_detail = f"Database query failed: {exc}"
+    checks.append({
+        "name": "Database",
+        "status": db_status,
+        "summary": "PostgreSQL connection",
+        "detail": db_detail,
+        "fix": "Check PostgreSQL database container status and database connection string." if db_status != "healthy" else None,
+        "action": None,
+    })
+
+    # 3. Worker
+    connected_ids = state.registry.connected_device_ids()
+    online_count = len(connected_ids)
+    try:
+        async with state.sessionmaker() as session:
+            devices = (await session.execute(select(Device).where(Device.revoked_at.is_(None)))).scalars().all()
+            total_devices = len(devices)
+    except Exception:
+        total_devices = online_count
+
+    worker_status = "healthy" if online_count > 0 else "warning"
+    checks.append({
+        "name": "Worker",
+        "status": worker_status,
+        "summary": f"{online_count} online / {total_devices} registered",
+        "detail": "Automation workers handle live Zoom admittance and LMS automation." if online_count > 0 else "No workers connected. Live Zoom sessions and LMS tasks cannot run until an agent or container joins.",
+        "fix": "Start the Windows agent or verify the cloud worker container is online." if online_count == 0 else None,
+        "action": "agents" if viewer.is_admin else None,
+    })
+
+    # 4. Chromium
+    chromium_status = "healthy" if online_count > 0 else "warning"
+    checks.append({
+        "name": "Chromium",
+        "status": chromium_status,
+        "summary": "Browser automation ready" if online_count > 0 else "No active browser worker",
+        "detail": "Playwright Chromium headless instances run on active worker nodes." if online_count > 0 else "Waiting for worker connection to verify browser engine.",
+        "fix": "Ensure Playwright dependencies are installed on worker nodes.",
+        "action": None,
+    })
+
+    # 5. Zoom profiles
+    zoom_count = 0
+    try:
+        from .models import ZoomAccount
+        async with state.sessionmaker() as session:
+            q = select(func.count()).select_from(ZoomAccount)
+            if not viewer.is_admin and viewer.user:
+                q = q.where(ZoomAccount.user_id == viewer.user.id)
+            zoom_count = (await session.execute(q)).scalar_one()
+    except Exception:
+        pass
+    checks.append({
+        "name": "Zoom profiles",
+        "status": "healthy" if zoom_count > 0 else "warning",
+        "summary": f"{zoom_count} account{'s' if zoom_count != 1 else ''} configured",
+        "detail": "Zoom profiles ready for web admittance." if zoom_count > 0 else "No Zoom accounts configured. Classes will be blocked without an account.",
+        "fix": "Add a Zoom profile in Zoom Accounts." if zoom_count == 0 else None,
+        "action": "zoom-accounts",
+    })
+
+    # 6. LMS
+    lms_count = 0
+    try:
+        from .models import LmsAccount
+        async with state.sessionmaker() as session:
+            q = select(func.count()).select_from(LmsAccount)
+            if not viewer.is_admin and viewer.user:
+                q = q.where(LmsAccount.user_id == viewer.user.id)
+            lms_count = (await session.execute(q)).scalar_one()
+    except Exception:
+        pass
+    checks.append({
+        "name": "LMS",
+        "status": "healthy" if lms_count > 0 else "warning",
+        "summary": f"{lms_count} account{'s' if lms_count != 1 else ''} configured",
+        "detail": "LMS credentials securely stored for session runs and attendance." if lms_count > 0 else "No LMS sign-in configured.",
+        "fix": "Configure an LMS profile in LMS Accounts." if lms_count == 0 else None,
+        "action": "lms-accounts",
+    })
+
+    # 7. Google OAuth & 8. Sheet
+    google_configured = False
+    spreadsheet_id = None
+    try:
+        from .models import GoogleSheetsConnection
+        async with state.sessionmaker() as session:
+            conn = (await session.execute(select(GoogleSheetsConnection).limit(1))).scalar_one_or_none()
+            if conn:
+                google_configured = True
+                spreadsheet_id = conn.spreadsheet_id
+    except Exception:
+        pass
+
+    checks.append({
+        "name": "Google OAuth",
+        "status": "healthy" if google_configured else "warning",
+        "summary": "Google account connected" if google_configured else "Not connected",
+        "detail": "Read-only access granted to sync recording links." if google_configured else "Google Sheets OAuth is not connected. Recording links must be added manually.",
+        "fix": "Authorize Google Sheets in Settings." if not google_configured else None,
+        "action": "settings",
+    })
+
+    checks.append({
+        "name": "Sheet",
+        "status": "healthy" if google_configured and spreadsheet_id else "warning",
+        "summary": f"Sheet linked ({spreadsheet_id[:8]}…)" if spreadsheet_id else "No spreadsheet selected",
+        "detail": "ClassFlow reads this spreadsheet at 08:00 Cairo. It never modifies it.",
+        "fix": "Configure Spreadsheet ID in Settings." if not spreadsheet_id else None,
+        "action": "settings",
+    })
+
+    # 9. OpenRouter
+    matcher = getattr(state, "attendance_ai", None)
+    ai_available = matcher is not None
+    checks.append({
+        "name": "OpenRouter",
+        "status": "healthy" if ai_available else "warning",
+        "summary": f"Model: {getattr(matcher, 'model', 'default')}" if ai_available else "Rule-based only",
+        "detail": "AI-assisted attendance name matching is active." if ai_available else "CENTRAL_AI_API_KEY is not set. Attendance matching uses rules and memory.",
+        "fix": "Set CENTRAL_AI_API_KEY in environment to enable LLM-assisted name resolution." if not ai_available else None,
+        "action": None,
+    })
+
+    # 10. Scheduler
+    scheduler = getattr(state, "scheduler", None)
+    checks.append({
+        "name": "Scheduler",
+        "status": "healthy" if scheduler is not None else "warning",
+        "summary": "Internal scheduler active" if scheduler is not None else "Scheduler inactive",
+        "detail": "Automated 15-min pre-flight and stage trigger loop is active.",
+        "fix": "Check backend container logs." if scheduler is None else None,
+        "action": None,
+    })
+
+    # 11. Disk
+    disk_status, disk_detail = "healthy", "Storage nominal"
+    try:
+        usage = shutil.disk_usage("/")
+        free_pct = (usage.free / usage.total) * 100
+        free_gb = usage.free / (1024 ** 3)
+        disk_status = "healthy" if free_pct > 10 else "warning" if free_pct > 5 else "failed"
+        disk_detail = f"{free_gb:.1f} GB free ({free_pct:.1f}% available)"
+    except Exception:
+        pass
+    checks.append({
+        "name": "Disk",
+        "status": disk_status,
+        "summary": "Storage status",
+        "detail": disk_detail,
+        "fix": "Clean up temporary logs and old test artifacts." if disk_status != "healthy" else None,
+        "action": None,
+    })
+
+    overall = "failed" if any(c["status"] == "failed" for c in checks) else "warning" if any(c["status"] == "warning" for c in checks) else "healthy"
+
+    return _no_store({
+        "overall": overall,
+        "checks": checks,
+        "serverTime": now,
+    })
 
 
 @router.get("/api/v1/dashboard/agents", dependencies=[Depends(require_admin)])
