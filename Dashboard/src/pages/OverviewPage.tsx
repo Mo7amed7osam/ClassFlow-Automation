@@ -11,16 +11,9 @@ import {
 } from '../api/hooks'
 import type { SessionClass } from '../api/types'
 import { HealthModal } from '../components/HealthModal'
-import {
-  IconAlertTriangle,
-  IconAttendance,
-  IconCalendar,
-  IconCheckCircle,
-  IconFilm,
-} from '../components/Icons'
 import { PageHeader } from '../components/Layout'
 import { RecordingsTable } from '../components/RecordingsTable'
-import { Card, EmptyState, ErrorBanner, Pill, StatCard, TimeAgo, td, th } from '../components/ui'
+import { Card, EmptyState, ErrorBanner, Pill, TimeAgo, td, th } from '../components/ui'
 import { formatHumanActivity } from '../lib/translations'
 
 /** Today in Africa/Cairo ISO format */
@@ -117,6 +110,8 @@ export function OverviewPage() {
   const agents = o?.agents
   const jobs = o?.jobs
   const classes = sessions.data?.classes ?? []
+  const checks = systemHealth.data?.checks ?? []
+  const findCheck = (name: string) => checks.find((item) => item.name === name)
 
   // Operational categorizations
   const runningClasses = classes.filter((c) => c.headline === 'running')
@@ -130,7 +125,70 @@ export function OverviewPage() {
   ).length
   const recordingsPending = o?.recordings.pending ?? 0
 
-  const isHealthy = attentionClasses.length === 0 && systemHealth.data?.overall !== 'failed'
+  const isHealthy = attentionClasses.length === 0 && systemHealth.data?.overall === 'healthy'
+  const healthTitle = systemHealth.error ? 'Unavailable' : systemHealth.isLoading || !systemHealth.data
+    ? 'Checking services'
+    : isHealthy ? 'All clear' : 'Needs attention'
+  const healthColor = isHealthy ? 'green' : !systemHealth.data || systemHealth.error ? 'slate'
+    : systemHealth.data.overall === 'failed' || attentionClasses.length > 0 ? 'red' : 'amber'
+  const healthStyles = {
+    green: { header: 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20 dark:text-emerald-400 hover:bg-emerald-500/20', dot: 'bg-emerald-500', accent: 'border-emerald-500', title: 'text-emerald-700 dark:text-emerald-400' },
+    amber: { header: 'bg-amber-500/10 text-amber-700 border-amber-500/20 dark:text-amber-400 hover:bg-amber-500/20', dot: 'bg-amber-500', accent: 'border-amber-500', title: 'text-amber-700 dark:text-amber-400' },
+    red: { header: 'bg-rose-500/10 text-rose-700 border-rose-500/20 dark:text-rose-400 hover:bg-rose-500/20', dot: 'bg-rose-500', accent: 'border-rose-500', title: 'text-rose-700 dark:text-rose-400' },
+    slate: { header: 'bg-slate-500/10 text-slate-700 border-slate-500/20 dark:text-slate-300 hover:bg-slate-500/20', dot: 'bg-slate-400', accent: 'border-slate-400', title: 'text-slate-700 dark:text-slate-300' },
+  }[healthColor]
+  const healthHint = systemHealth.error
+    ? 'Diagnostics could not be loaded'
+    : systemHealth.data
+      ? `${checks.filter((item) => item.status === 'healthy').length} of ${checks.length} checks healthy`
+      : 'Checking service health'
+
+  const metrics = isAdmin
+    ? [
+        { label: 'Classes today', value: String(classesTodayCount) },
+        { label: 'Live now', value: String(runningClasses.length) },
+        { label: 'Needs attention', value: String(attentionClasses.length), alert: attentionClasses.length > 0 },
+        { label: 'Workers online', value: agents ? `${agents.online} / ${agents.total}` : overview.isLoading ? '…' : '—' },
+        { label: 'Jobs running', value: jobs ? String(jobs.running) : overview.isLoading ? '…' : '—' },
+      ]
+    : [
+        { label: 'My groups', value: o ? String(o.groups) : overview.isLoading ? '…' : '—' },
+        { label: 'Classes today', value: String(classesTodayCount) },
+        { label: 'Live now', value: String(runningClasses.length) },
+        { label: 'Attendance due', value: String(attendancePendingCount) },
+        { label: 'Drive links pending', value: String(recordingsPending) },
+      ]
+
+  const integrationStatus = (name: string) => systemHealth.error ? 'failed'
+    : findCheck(name)?.status ?? (systemHealth.isLoading ? 'checking' : 'warning')
+
+  const integrations = [
+    {
+      name: 'Google Sheets',
+      to: '/settings',
+      summary: google.isLoading ? 'Checking connection' : google.error ? 'Connection could not be checked'
+        : google.data?.configured ? 'Read-only · daily sync at 08:00 Cairo' : findCheck('Sheet')?.summary ?? 'Not connected',
+      status: google.isLoading ? 'checking' : google.error ? 'failed' : google.data?.configured ? 'healthy' : 'warning',
+    },
+    {
+      name: 'LMS portal',
+      to: '/lms-accounts',
+      summary: findCheck('LMS')?.summary ?? (systemHealth.isLoading ? 'Checking saved sign-ins' : 'Status unavailable'),
+      status: integrationStatus('LMS'),
+    },
+    {
+      name: 'Zoom profiles',
+      to: '/zoom-accounts',
+      summary: findCheck('Zoom profiles')?.summary ?? (systemHealth.isLoading ? 'Checking configured accounts' : 'Status unavailable'),
+      status: integrationStatus('Zoom profiles'),
+    },
+    {
+      name: 'OpenRouter',
+      to: '/settings',
+      summary: findCheck('OpenRouter')?.summary ?? (systemHealth.isLoading ? 'Checking AI matching' : 'Status unavailable'),
+      status: integrationStatus('OpenRouter'),
+    },
+  ]
 
   return (
     <div className="space-y-8 pb-12">
@@ -139,23 +197,19 @@ export function OverviewPage() {
         title="Overview"
         description={
           isAdmin
-            ? 'Operations Control Center · Real-time telemetry across cloud Zoom workers, LMS automation, attendance matching and Google Drive archival.'
-            : "Your assigned groups' live sessions, attendance capture and recording synchronizations."
+            ? 'Your cloud activity and the classes that need attention.'
+            : "Your groups' classes, attendance and recordings."
         }
         action={
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setHealthModalOpen(true)}
-              className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-xs border ${
-                isHealthy
-                  ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20 dark:bg-emerald-500/10 dark:border-emerald-500/30 dark:text-emerald-400 hover:bg-emerald-500/20'
-                  : 'bg-rose-500/10 text-rose-700 border-rose-500/20 dark:bg-rose-500/10 dark:border-rose-500/30 dark:text-rose-400 hover:bg-rose-500/20 animate-pulse'
-              }`}
+              className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition-all shadow-xs border ${healthStyles.header}`}
             >
-              <span className={`size-2 rounded-full ${isHealthy ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-              {isHealthy ? 'System Healthy' : `${attentionClasses.length} Needs Attention`}
-              <span className="text-[11px] font-normal opacity-80">· Run Health Check →</span>
+              <span className={`size-2 rounded-full ${healthStyles.dot}`} />
+              {healthTitle}
+              <span className="text-[11px] font-normal opacity-80">· View diagnostics</span>
             </button>
           </div>
         }
@@ -163,158 +217,29 @@ export function OverviewPage() {
 
       {overview.error && <ErrorBanner error={overview.error} />}
 
-      {/* ========================================================================= */}
-      {/* 1. TOP OPERATIONAL KPI CARDS */}
-      {/* ========================================================================= */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        {/* System Health */}
-        <div
-          onClick={() => setHealthModalOpen(true)}
-          className={`cursor-pointer rounded-2xl p-4 transition-all shadow-xs border ring-1 ${
-            isHealthy
-              ? 'bg-white border-slate-200/80 dark:bg-[#111726] dark:border-slate-800/80 ring-slate-900/5 dark:ring-white/[0.03] hover:border-emerald-500/50'
-              : 'bg-rose-50/50 border-rose-300 dark:bg-rose-950/20 dark:border-rose-900/50 ring-rose-500/10 hover:border-rose-400'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Health</span>
-            {isHealthy ? (
-              <IconCheckCircle className="size-4 text-emerald-500 dark:text-emerald-400" />
-            ) : (
-              <IconAlertTriangle className="size-4 text-rose-500 dark:text-rose-400" />
-            )}
-          </div>
-          <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            {isHealthy ? 'Nominal' : 'Warning'}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 truncate">
-            {isHealthy ? 'All 11 checks pass' : `${attentionClasses.length} class issue(s)`}
-          </p>
+      <section aria-label="Operations summary" className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xs dark:border-slate-800/80 dark:bg-[#0c111d] dark:shadow-none">
+        <div className="grid divide-y divide-slate-100 dark:divide-slate-800/80 sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-6 lg:divide-x lg:divide-y-0">
+          <button
+            type="button"
+            onClick={() => setHealthModalOpen(true)}
+            className={`border-l-[3px] p-4 text-left transition-colors hover:bg-slate-50 dark:hover:bg-[#111726] sm:col-span-2 lg:col-span-1 ${healthStyles.accent}`}
+          >
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">System health</p>
+            <p className={`mt-2 text-lg font-semibold tracking-tight ${healthStyles.title}`}>
+              {healthTitle}
+            </p>
+            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{healthHint}</p>
+          </button>
+          {metrics.map((metric) => (
+            <div key={metric.label} className="flex min-h-[6.25rem] flex-col justify-between p-4">
+              <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">{metric.label}</p>
+              <p className={`mt-3 text-2xl font-semibold tabular-nums tracking-tight ${metric.alert ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-slate-100'}`}>
+                {metric.value}
+              </p>
+            </div>
+          ))}
         </div>
-
-        {/* Classes Today */}
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
-          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Today</span>
-            <IconCalendar className="size-4 text-indigo-500 dark:text-indigo-400" />
-          </div>
-          <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            {classesTodayCount}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            Sessions scheduled
-          </p>
-        </div>
-
-        {/* Running Now */}
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
-          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Running</span>
-            <span className="relative flex size-2.5">
-              <span className={`inline-flex size-full rounded-full ${runningClasses.length > 0 ? 'bg-emerald-500 animate-ping' : 'bg-slate-300 dark:bg-slate-700'}`} />
-            </span>
-          </div>
-          <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            {runningClasses.length}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            Active in Zoom now
-          </p>
-        </div>
-
-        {/* Needs Attention */}
-        <div
-          className={`rounded-2xl p-4 shadow-xs border ring-1 transition-all ${
-            attentionClasses.length > 0
-              ? 'bg-rose-50/70 border-rose-300 dark:bg-rose-950/30 dark:border-rose-900/50 ring-rose-500/10'
-              : 'bg-white border-slate-200/80 dark:bg-[#111726] dark:border-slate-800/80 ring-slate-900/5 dark:ring-white/[0.03]'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Attention</span>
-            <IconAlertTriangle className={`size-4 ${attentionClasses.length > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400 dark:text-slate-500'}`} />
-          </div>
-          <p className={`mt-2 text-xl font-bold tracking-tight ${attentionClasses.length > 0 ? 'text-rose-700 dark:text-rose-400' : 'text-slate-900 dark:text-slate-100'}`}>
-            {attentionClasses.length}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            {attentionClasses.length === 0 ? 'Zero failures' : 'Requires review'}
-          </p>
-        </div>
-
-        {/* Attendance Pending */}
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
-          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Attendance</span>
-            <IconAttendance className="size-4 text-amber-500 dark:text-amber-400" />
-          </div>
-          <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            {attendancePendingCount}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            Pending upload
-          </p>
-        </div>
-
-        {/* Recordings Pending */}
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
-          <div className="flex items-center justify-between text-slate-400 dark:text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Recordings</span>
-            <IconFilm className="size-4 text-sky-500 dark:text-sky-400" />
-          </div>
-          <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            {recordingsPending}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            Pending Drive sync
-          </p>
-        </div>
-      </div>
-
-      {/* Legacy compatibility stat cards (for vitest assertions: "Agents online", "My groups", "Pending on LMS", "On LMS") */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {isAdmin ? (
-          <StatCard
-            label="Agents online"
-            value={agents ? `${agents.online} / ${agents.total}` : '1 / 1'}
-            hint={agents ? `${agents.busy} busy` : undefined}
-            tone={agents && agents.total > 0 && agents.online === 0 ? 'red' : 'green'}
-          />
-        ) : (
-          <StatCard
-            label="My groups"
-            value={o?.groups ?? '…'}
-            hint={o ? `${o.recordings.total} recordings` : undefined}
-          />
-        )}
-        <StatCard
-          label="Pending on LMS"
-          value={o?.recordings.pending ?? '…'}
-          hint={o ? `${o.recordings.total} recordings in total` : undefined}
-          tone="amber"
-        />
-        <StatCard
-          label="On LMS"
-          value={o?.recordings.onLms ?? '…'}
-          hint={o ? `${o.recordings.missingLink} without a link` : undefined}
-          tone="green"
-        />
-        {isAdmin ? (
-          <StatCard
-            label="Jobs"
-            value={jobs ? `${jobs.running} running` : '…'}
-            hint={jobs ? `${jobs.queued} queued · ${jobs.failedLast24h} failed in 24 h` : undefined}
-            tone={jobs && jobs.failedLast24h > 0 ? 'red' : 'slate'}
-          />
-        ) : (
-          <StatCard
-            label="Without a link"
-            value={o?.recordings.missingLink ?? '…'}
-            hint="Add the Drive link to attach them"
-            tone={o && o.recordings.missingLink > 0 ? 'red' : 'slate'}
-          />
-        )}
-      </div>
+      </section>
 
       {!isAdmin && me?.groups?.length === 0 && (
         <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
@@ -352,86 +277,28 @@ export function OverviewPage() {
       {/* 3. CONNECTION HEALTH & RECENT ACTIVITY DUAL GRID */}
       {/* ========================================================================= */}
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left: Google / LMS / Zoom Health Cards */}
-        <div className="space-y-4">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">
-            Integration Health
-          </h2>
-
-          <div className="space-y-3">
-            {/* Google Sheets Status */}
-            <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className={`size-2 rounded-full ${google.data?.configured ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                  <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">Google Sheets</h3>
+        <Card title="Integrations">
+          <div className="divide-y divide-slate-100 px-5 dark:divide-slate-800/70">
+            {integrations.map((integration) => {
+              const tone = integration.status === 'healthy' ? 'green' : integration.status === 'failed' ? 'red'
+                : integration.status === 'checking' ? 'slate' : 'amber'
+              const label = integration.status === 'healthy' ? 'Ready' : integration.status === 'failed' ? 'Unavailable'
+                : integration.status === 'checking' ? 'Checking' : 'Setup needed'
+              return (
+                <div key={integration.name} className="flex items-center justify-between gap-3 py-3.5">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">{integration.name}</p>
+                    <p className="mt-1 truncate text-[11px] text-slate-500 dark:text-slate-400">{integration.summary}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Pill tone={tone}>{label}</Pill>
+                    <Link to={integration.to} aria-label={`Manage ${integration.name}`} className="text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Manage</Link>
+                  </div>
                 </div>
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                  google.data?.configured
-                    ? 'text-emerald-600 bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20'
-                    : 'text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20'
-                }`}>
-                  {google.data?.configured ? 'Connected' : 'Setup needed'}
-                </span>
-              </div>
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                {google.data?.configured
-                  ? `Syncs daily at 08:00 Cairo (${google.data.spreadsheetId?.slice(0, 8)}…)`
-                  : 'Configure OAuth to enable automatic recording sync.'}
-              </p>
-              <div className="mt-3 flex justify-between items-center text-xs">
-                <span className="text-[11px] text-slate-400">Read-only ledger</span>
-                <Link to="/settings" className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
-                  Manage →
-                </Link>
-              </div>
-            </div>
-
-            {/* LMS Connection Status */}
-            <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="size-2 rounded-full bg-emerald-500" />
-                  <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">LMS Portal</h3>
-                </div>
-                <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full dark:bg-emerald-500/10 dark:border-emerald-500/20 dark:text-emerald-400">
-                  Active
-                </span>
-              </div>
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                Encrypted AES-GCM credentials stored for automated session runs and attendance.
-              </p>
-              <div className="mt-3 flex justify-between items-center text-xs">
-                <span className="text-[11px] text-slate-400">Passwords protected</span>
-                <Link to="/lms-accounts" className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
-                  Sign-ins →
-                </Link>
-              </div>
-            </div>
-
-            {/* Zoom Web Profiles */}
-            <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800/80 dark:bg-[#111726] dark:shadow-none ring-1 ring-slate-900/5 dark:ring-white/[0.03]">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="size-2 rounded-full bg-emerald-500" />
-                  <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">Zoom Web Profiles</h3>
-                </div>
-                <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full dark:bg-emerald-500/10 dark:border-emerald-500/20 dark:text-emerald-400">
-                  G1 / G2 Ready
-                </span>
-              </div>
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                Persistent browser automation holding meetings and admitting students.
-              </p>
-              <div className="mt-3 flex justify-between items-center text-xs">
-                <span className="text-[11px] text-slate-400">Chromium Playwright</span>
-                <Link to="/zoom-accounts" className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
-                  Profiles →
-                </Link>
-              </div>
-            </div>
+              )
+            })}
           </div>
-        </div>
+        </Card>
 
         {/* Right 2 cols: Recent Operational Activity Timeline */}
         <div className="lg:col-span-2 space-y-4">
