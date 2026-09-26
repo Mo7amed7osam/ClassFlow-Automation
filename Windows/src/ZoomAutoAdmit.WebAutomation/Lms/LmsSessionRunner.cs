@@ -22,6 +22,13 @@ public enum LmsFailure
     Failed,
 }
 
+internal enum LmsRunSessionDecision
+{
+    PressButton,
+    AlreadyRunning,
+    Refuse,
+}
+
 /// <summary>What one attempt to start a session on the LMS did.</summary>
 public sealed record LmsRunResult(bool IsSuccess, string Message)
 {
@@ -142,14 +149,15 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             bool present = true;
             try { await run.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 20000 }); }
             catch (TimeoutException) { present = false; }
-            if (!present)
+            string state = await ReadStatusAsync(page);
+            var decision = DecideRunSession(present, state);
+            if (decision == LmsRunSessionDecision.AlreadyRunning)
+                return LmsRunResult.Success($"{group}: the LMS session is already running.");
+            if (decision == LmsRunSessionDecision.Refuse)
             {
-                // An already-running session is the desired result; do not press anything else.
-                string state = await ReadStatusAsync(page);
-                if (IsRunningStatus(state))
-                    return LmsRunResult.Success($"{group}: the LMS session is already running.");
+                var offered = present ? "offers Run Session" : "has no Run Session button";
                 return LmsRunResult.Failure(
-                    $"The session page for {group} has no Run Session button{(state.Length > 0 ? $"; it reads \"{state}\"" : string.Empty)}.");
+                    $"The session page for {group} {offered}{(state.Length > 0 ? $"; it reads \"{state}\"" : "; its status is unknown")}. Nothing was pressed.");
             }
 
             if (dryRun)
@@ -170,13 +178,14 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             // session is running, so it still being there means the dashboard refused it.
             bool stillOffered = await run.IsVisibleAsync().ConfigureAwait(false);
             string finalState = await ReadStatusAsync(page);
-            if (stillOffered)
+            if (!stillOffered && IsRunningStatus(finalState))
+                return LmsRunResult.Success(
+                    $"{group}: the session is now running on the dashboard ({finalState}).");
+            if (stillOffered || !IsRunningStatus(finalState))
                 return LmsRunResult.Failure(
-                    $"{group}: Run Session was pressed but the session still offers it" +
-                    $"{(finalState.Length > 0 ? $" and reads \"{finalState}\"" : string.Empty)}.");
-            return LmsRunResult.Success(
-                $"{group}: the session is now running on the dashboard" +
-                $"{(finalState.Length > 0 ? $" ({finalState})" : string.Empty)}.");
+                    $"{group}: Run Session did not verify as running after the press" +
+                    $"{(stillOffered ? "; the button is still offered" : string.Empty)}" +
+                    $"{(finalState.Length > 0 ? $"; the page reads \"{finalState}\"" : "; the status is unknown")}.");
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -1313,6 +1322,19 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     internal static bool IsRunningStatus(string status) =>
         string.Equals(status?.Trim(), "running", StringComparison.OrdinalIgnoreCase);
 
+    internal static LmsRunSessionDecision DecideRunSession(bool runButtonVisible, string status)
+    {
+        if (IsRunningStatus(status)) return LmsRunSessionDecision.AlreadyRunning;
+        var normalized = status?.Trim();
+        if (string.Equals(normalized, "finished", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "completed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "cancelled", StringComparison.OrdinalIgnoreCase))
+            return LmsRunSessionDecision.Refuse;
+        return runButtonVisible && string.Equals(normalized, "pending", StringComparison.OrdinalIgnoreCase)
+            ? LmsRunSessionDecision.PressButton
+            : LmsRunSessionDecision.Refuse;
+    }
+
     /// <summary>"Showing 1-10 of 45 items" is 5 pages; anything unreadable is one.</summary>
     internal static int PageCount(string pagerText)
     {
@@ -1906,7 +1928,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         try
         {
             var status = page.GetByText(new System.Text.RegularExpressions.Regex(
-                @"^\s*(pending|running|finished|cancelled)\s*$",
+                @"^\s*(pending|running|finished|completed|cancelled)\s*$",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase)).First;
             return await status.CountAsync() > 0 ? (await status.InnerTextAsync()).Trim() : string.Empty;
         }

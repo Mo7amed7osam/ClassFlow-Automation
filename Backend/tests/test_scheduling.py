@@ -7,6 +7,7 @@ hours late is worse than one that never opened at all.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import uuid
@@ -93,6 +94,13 @@ def jobs_of(client: TestClient, job_type: str = "lms.run_session") -> list:
             for r in rows]
 
 
+def occurrence_for(client: TestClient, plan_id: str) -> dict | None:
+    rows = run_sql(client.app.state.settings.database_url,
+                   "SELECT id, class_plan_id, scheduled_start, scheduled_end FROM class_occurrences WHERE class_plan_id = $1::uuid",
+                   uuid.UUID(plan_id))
+    return rows[0] if rows else None
+
+
 def test_a_class_becomes_a_job_at_its_own_time(app, clock):
     plan, coordinator = a_class(app)
     scheduler = Scheduler(app.app.state.sessionmaker, clock)
@@ -116,6 +124,18 @@ def test_a_class_becomes_a_job_at_its_own_time(app, clock):
     assert payload["dryRun"] is False
 
 
+def test_occurrence_exists_after_scheduler_restart_thirty_minutes_before_class(app, clock):
+    plan, _ = a_class(app)
+    restarted_scheduler = Scheduler(app.app.state.sessionmaker, clock)
+    clock.now = at_local(date(2026, 9, 20), "18:30")
+
+    assert app.portal.call(restarted_scheduler.schedule_once) == {"created": 0, "missed": 0}
+    occurrence = occurrence_for(app, plan)
+    assert occurrence is not None
+    assert occurrence["scheduled_start"] == at_local(date(2026, 9, 20), "19:00")
+    assert jobs_of(app, "class.run") == []
+
+
 def test_the_same_class_is_never_opened_twice(app, clock):
     """Pass after pass, and across a restart: one job. This is what stops two meetings."""
     a_class(app)
@@ -132,17 +152,17 @@ def test_the_same_class_is_never_opened_twice(app, clock):
 
 
 def test_a_class_whose_time_has_passed_is_not_opened_hours_later(app, clock):
-    """After an outage the queue must not fill with the morning's classes."""
-    a_class(app)
+    """After the class's end, a recovery pass records it but does not start it late."""
+    plan, _ = a_class(app)
     scheduler = Scheduler(app.app.state.sessionmaker, clock)
 
-    clock.now = at_local(date(2026, 9, 20), "19:00") + GRACE + timedelta(minutes=1)
+    clock.now = at_local(date(2026, 9, 20), "19:00") + timedelta(hours=4)
     counts = app.portal.call(scheduler.schedule_once)
 
-    # The two stages due by now are past their window: the meeting, due a quarter of an hour before
-    # the class, and the LMS session due on the hour. The follow-ups are not due yet, so they are
-    # neither made nor missed - and they are never made for a class whose meeting was not held.
+    # The class.run recovery deadline is the occurrence's scheduled end. Once it has passed,
+    # neither opening the meeting nor starting the LMS session is safe.
     assert counts == {"created": 0, "missed": 2}
+    assert occurrence_for(app, plan) is not None
     assert jobs_of(app) == []
     assert jobs_of(app, "class.run") == []
 
@@ -155,6 +175,58 @@ def test_a_class_is_still_opened_just_inside_the_window(app, clock):
     clock.now = at_local(date(2026, 9, 20), "19:00") + GRACE - timedelta(minutes=1)
 
     assert (app.portal.call(scheduler.schedule_once))["created"] == 1
+
+
+def test_restart_five_minutes_before_class_recovers_one_linked_meeting_job(app, clock):
+    plan, _ = a_class(app, with_zoom=True)
+    restarted_scheduler = Scheduler(app.app.state.sessionmaker, clock)
+    clock.now = at_local(date(2026, 9, 20), "18:55")
+
+    assert app.portal.call(restarted_scheduler.schedule_once) == {"created": 1, "missed": 0}
+    occurrence = occurrence_for(app, plan)
+    jobs = jobs_of(app, "class.run")
+    assert occurrence is not None
+    assert len(jobs) == 1
+    linked = run_sql(app.app.state.settings.database_url,
+                     "SELECT occurrence_id FROM jobs WHERE idempotency_key = $1",
+                     jobs[0]["idempotency_key"])
+    assert str(linked[0]["occurrence_id"]) == str(occurrence["id"])
+
+
+def test_restart_shortly_after_start_recovers_inside_scheduled_occurrence(app, clock):
+    plan, _ = a_class(app, with_zoom=True)
+    scheduler = Scheduler(app.app.state.sessionmaker, clock)
+    clock.now = at_local(date(2026, 9, 20), "19:05")
+
+    assert app.portal.call(scheduler.schedule_once) == {"created": 2, "missed": 0}
+    assert occurrence_for(app, plan) is not None
+    assert len(jobs_of(app, "class.run")) == 1
+    assert len(jobs_of(app, "lms.run_session")) == 1
+
+
+def test_duplicate_scheduler_instances_do_not_create_duplicate_jobs_or_occurrences(app, clock):
+    plan, _ = a_class(app, with_zoom=True)
+    clock.now = at_local(date(2026, 9, 20), "18:55")
+    first = Scheduler(app.app.state.sessionmaker, clock)
+    second = Scheduler(app.app.state.sessionmaker, clock)
+
+    async def run_both():
+        return await asyncio.gather(first.schedule_once(), second.schedule_once())
+
+    counts = app.portal.call(run_both)
+    assert sum(result["created"] for result in counts) == 1
+    assert occurrence_for(app, plan) is not None
+    assert len(jobs_of(app, "class.run")) == 1
+
+
+def test_class_run_recovers_after_grace_but_never_after_scheduled_end(app, clock):
+    plan, _ = a_class(app, with_zoom=True)
+    scheduler = Scheduler(app.app.state.sessionmaker, clock)
+    clock.now = at_local(date(2026, 9, 20), "19:20")
+
+    assert app.portal.call(scheduler.schedule_once) == {"created": 1, "missed": 1}
+    assert occurrence_for(app, plan) is not None
+    assert len(jobs_of(app, "class.run")) == 1
 
 
 def test_a_coordinator_who_is_turned_off_has_no_classes_opened(app, clock):

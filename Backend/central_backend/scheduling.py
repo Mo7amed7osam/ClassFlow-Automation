@@ -184,10 +184,25 @@ class Scheduler:
                     ClassPlan.session_date.between(
                         (now - timedelta(days=1)).date(), (now + timedelta(days=1)).date()),
                 )
+                # Each plan is the scheduler's unit of work. Locking it until the jobs and
+                # occurrence commit lets a second scheduler instance safely skip it; the unique
+                # occurrence and job keys remain the final guard if a process dies mid-pass.
+                .order_by(ClassPlan.id)
+                .with_for_update(skip_locked=True)
                 .limit(500)
             )).scalars().all()
 
             for plan in plans:
+                # Record the scheduled class as soon as it enters the scheduler horizon, even
+                # when the first action is not due yet. This makes the occurrence survive a
+                # restart before the meeting-open minute and gives every eventual stage one
+                # durable parent. The one-per-plan constraint and row lock make this restart- and
+                # multi-instance-safe.
+                payload = await self._payload(session, plan)
+                occurrence = None
+                if due_at(plan, Stage("occurrence", timedelta(), "")) is not None:
+                    occurrence = await ensure_occurrence(session, plan, payload or {}, now)
+
                 for stage in STAGES:
                     when = due_at(plan, stage)
                     if when is None:
@@ -195,13 +210,21 @@ class Scheduler:
                     if when > now + LOOKAHEAD:
                         continue                       # not yet
                     if when < now - GRACE:
-                        # Too late to be worth opening. Said once per pass, so somebody can see it
-                        # happened rather than wondering why a class never ran.
-                        counts["missed"] += 1
-                        emit("schedule.missed", level=logging.WARNING, group=plan.group_name,
-                             date=plan.session_date.isoformat(), startTime=plan.start_time,
-                             jobType=stage.job_type, lateBySeconds=int((now - when).total_seconds()))
-                        continue
+                        # A short outage must not lose a class merely because its usual
+                        # pre-class dispatch minute passed. Recover the single class.run job
+                        # while the scheduled class is still in progress; its plan/stage key
+                        # guarantees this can never create a second meeting job.
+                        if (stage.job_type == "class.run" and occurrence is not None
+                                and occurrence.scheduled_end is not None and now < occurrence.scheduled_end):
+                            pass
+                        else:
+                            # Too late to be worth opening. Said once per pass, so somebody can see
+                            # it happened rather than wondering why a class never ran.
+                            counts["missed"] += 1
+                            emit("schedule.missed", level=logging.WARNING, group=plan.group_name,
+                                 date=plan.session_date.isoformat(), startTime=plan.start_time,
+                                 jobType=stage.job_type, lateBySeconds=int((now - when).total_seconds()))
+                            continue
 
                     # What follows the meeting follows from it. A class whose meeting was never
                     # made, or failed to open, has no attendance to write and no report to read -
@@ -210,12 +233,10 @@ class Scheduler:
                     if stage.follows_meeting and not await self._meeting_held(session, plan):
                         continue
 
-                    payload = await self._payload(session, plan)
                     if payload is None:
                         self._say_blocked(plan, stage.job_type,
                                           "no LMS sign-in is chosen for this coordinator")
                         continue
-                    occurrence = await ensure_occurrence(session, plan, payload, now)
                     if (why := self._can_run(stage, payload)) is not None:
                         emit("schedule.cannot_run", level=logging.WARNING, group=plan.group_name,
                              date=plan.session_date.isoformat(), jobType=stage.job_type, reason=why)

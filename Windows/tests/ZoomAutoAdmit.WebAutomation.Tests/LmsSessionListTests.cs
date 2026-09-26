@@ -16,6 +16,20 @@ public class LmsSessionListTests
         Assert.Equal(running, LmsSessionRunner.IsRunningStatus(status));
 
     [Theory]
+    [InlineData(true, "pending", LmsRunSessionDecision.PressButton)]
+    [InlineData(false, "running", LmsRunSessionDecision.AlreadyRunning)]
+    [InlineData(true, "running", LmsRunSessionDecision.AlreadyRunning)]
+    [InlineData(false, "finished", LmsRunSessionDecision.Refuse)]
+    [InlineData(true, "completed", LmsRunSessionDecision.Refuse)]
+    [InlineData(true, "cancelled", LmsRunSessionDecision.Refuse)]
+    [InlineData(true, "", LmsRunSessionDecision.Refuse)]
+    [InlineData(false, "unknown", LmsRunSessionDecision.Refuse)]
+    [InlineData(false, "pending", LmsRunSessionDecision.Refuse)]
+    public void RunSessionRequiresPendingStateAndNeverReopensTerminalOrUnknownPages(
+        bool buttonVisible, string status, LmsRunSessionDecision expected) =>
+        Assert.Equal(expected, LmsSessionRunner.DecideRunSession(buttonVisible, status));
+
+    [Theory]
     [InlineData("Showing 1-10 of 45 items 1 2 3 4 5", 5)]
     [InlineData("Showing 1-10 of 40 items", 4)]
     [InlineData("Showing 1-7 of 7 items", 1)]

@@ -24,12 +24,15 @@ COPY Windows/src/ZoomAutoAdmit.SessionRoles/ZoomAutoAdmit.SessionRoles.csproj   
 # Nothing of it is built for Linux.
 COPY Windows/src/ZoomAutoAdmit.UIAutomation/ZoomAutoAdmit.UIAutomation.csproj         Windows/src/ZoomAutoAdmit.UIAutomation/
 COPY Windows/src/ZoomAutoAdmit.CloudWorker/ZoomAutoAdmit.CloudWorker.csproj           Windows/src/ZoomAutoAdmit.CloudWorker/
+COPY Windows/tests/ZoomAutoAdmit.WebAutomation.Tests/ZoomAutoAdmit.WebAutomation.Tests.csproj Windows/tests/ZoomAutoAdmit.WebAutomation.Tests/
 # EnableWindowsTargeting, and it is not a contradiction. The worker itself is net8.0 alone, but the
 # libraries it references multi-target, and `restore` evaluates every target framework a referenced
 # project declares - including net8.0-windows, which Linux refuses to restore without this. The
 # build that follows still picks each library's net8.0 output; this only lets restore read past the
 # Windows one rather than stopping at it.
 RUN dotnet restore Windows/src/ZoomAutoAdmit.CloudWorker/ZoomAutoAdmit.CloudWorker.csproj \
+      -p:EnableWindowsTargeting=true
+RUN dotnet restore Windows/tests/ZoomAutoAdmit.WebAutomation.Tests/ZoomAutoAdmit.WebAutomation.Tests.csproj \
       -p:EnableWindowsTargeting=true
 
 COPY Windows/src/ZoomAutoAdmit.Core/               Windows/src/ZoomAutoAdmit.Core/
@@ -40,6 +43,13 @@ COPY Windows/src/ZoomAutoAdmit.CentralAgent/       Windows/src/ZoomAutoAdmit.Cen
 COPY Windows/src/ZoomAutoAdmit.Attendance/         Windows/src/ZoomAutoAdmit.Attendance/
 COPY Windows/src/ZoomAutoAdmit.SessionRoles/       Windows/src/ZoomAutoAdmit.SessionRoles/
 COPY Windows/src/ZoomAutoAdmit.CloudWorker/        Windows/src/ZoomAutoAdmit.CloudWorker/
+COPY Windows/tests/ZoomAutoAdmit.WebAutomation.Tests/ Windows/tests/ZoomAutoAdmit.WebAutomation.Tests/
+
+# The cloud build is the available Linux .NET test host. Run the portable web-automation tests
+# here so LMS session-state safety is validated before the worker image is assembled. The
+# Windows-only target is not run in this Linux image.
+RUN dotnet test Windows/tests/ZoomAutoAdmit.WebAutomation.Tests/ZoomAutoAdmit.WebAutomation.Tests.csproj \
+      -c Release -f net8.0 --no-restore -p:EnableWindowsTargeting=true
 
 # The worker targets net8.0 alone. If a Windows-only project ever creeps into its references, this
 # line fails on Linux, which is the point of keeping it net8.0 and not multi-targeted.
