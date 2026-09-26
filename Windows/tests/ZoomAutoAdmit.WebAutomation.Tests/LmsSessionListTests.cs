@@ -7,6 +7,15 @@ namespace ZoomAutoAdmit.WebAutomation.Tests;
 public class LmsSessionListTests
 {
     [Theory]
+    [InlineData("running", true)]
+    [InlineData(" Running ", true)]
+    [InlineData("pending", false)]
+    [InlineData("finished", false)]
+    [InlineData("", false)]
+    public void AnAlreadyRunningSessionIsRecognisedAsTheDesiredState(string status, bool running) =>
+        Assert.Equal(running, LmsSessionRunner.IsRunningStatus(status));
+
+    [Theory]
     [InlineData("Showing 1-10 of 45 items 1 2 3 4 5", 5)]
     [InlineData("Showing 1-10 of 40 items", 4)]
     [InlineData("Showing 1-7 of 7 items", 1)]

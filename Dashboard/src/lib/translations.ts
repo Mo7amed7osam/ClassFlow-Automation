@@ -119,33 +119,43 @@ export function formatCairoClockWithSeconds(date: Date | string | null): string 
 }
 
 /** Human-readable event description for the operational activity feed */
-export function formatHumanActivity(kind: string, summary: string, detail?: Record<string, unknown> | null): string {
+export function formatHumanActivity(
+  kind: string,
+  summary: string,
+  detail?: Record<string, unknown> | null,
+  outcome?: 'done' | 'failed' | 'skipped',
+): string {
+  const describe = (success: string) => {
+    if (outcome === 'failed') return `${success} failed: ${summary || kind}`
+    if (outcome === 'skipped') return `${success} skipped: ${summary || kind}`
+    return success
+  }
   if (kind === 'lms.run_session' || summary.includes('run_session')) {
-    return 'LMS session started'
+    return describe('LMS session start')
   }
   if (kind === 'lms.attendance' || summary.includes('attendance')) {
-    return 'Attendance submitted to LMS'
+    return describe('Attendance submission to LMS')
   }
   if (kind === 'lms.late_joiners' || summary.includes('late_joiners')) {
-    return 'Late attendance correction completed'
+    return describe('Late attendance correction')
   }
   if (kind === 'lms.complete' || summary.includes('complete')) {
-    return 'LMS session marked complete'
+    return describe('LMS session completion')
   }
   if (kind === 'zoom.recording' || summary.includes('zoom.recording')) {
-    return 'Zoom cloud recording link found'
+    return describe('Zoom cloud recording lookup')
   }
   if (kind === 'recording.process' || summary.includes('recording.process')) {
     if (detail && typeof detail.link === 'string' && detail.link.includes('drive.google.com')) {
-      return 'Google Drive recording link attached to LMS'
+      return describe('Google Drive recording update')
     }
-    return 'Recording link attached to LMS'
+    return describe('Recording update')
   }
   if (kind === 'class.run' || summary.includes('class.run')) {
-    return 'Zoom meeting admitted students & held session'
+    return describe('Zoom meeting run')
   }
   if (kind === 'google_sheets.sync') {
-    return 'Google Sheets recording sync executed'
+    return describe('Google Sheets recording sync')
   }
   return summary || kind
 }

@@ -144,8 +144,10 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             catch (TimeoutException) { present = false; }
             if (!present)
             {
-                // Already running or already finished: the button is gone, and that is not a failure.
+                // An already-running session is the desired result; do not press anything else.
                 string state = await ReadStatusAsync(page);
+                if (IsRunningStatus(state))
+                    return LmsRunResult.Success($"{group}: the LMS session is already running.");
                 return LmsRunResult.Failure(
                     $"The session page for {group} has no Run Session button{(state.Length > 0 ? $"; it reads \"{state}\"" : string.Empty)}.");
             }
@@ -1307,6 +1309,9 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         System.Text.RegularExpressions.Regex.IsMatch(rowText ?? "",
             $@"(?<![A-Za-z0-9_]){System.Text.RegularExpressions.Regex.Escape(group.Trim())}(?![A-Za-z0-9_])",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    internal static bool IsRunningStatus(string status) =>
+        string.Equals(status?.Trim(), "running", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>"Showing 1-10 of 45 items" is 5 pages; anything unreadable is one.</summary>
     internal static int PageCount(string pagerText)

@@ -714,7 +714,7 @@ async def run_stage_now(
     A stage that cannot run yet is refused with the reason (no Zoom link on the class, no Zoom
     account for the group, no LMS account chosen for the coordinator) rather than queued to fail.
     """
-    from .scheduling import STAGES, class_payload, why_not
+    from .scheduling import STAGES, class_payload, ensure_occurrence, why_not
     from .validation import PayloadError, validate_payload
 
     stage = next((item for item in STAGES if item.job_type == body.stage), None)
@@ -736,6 +736,7 @@ async def run_stage_now(
             payload = validate_payload(stage.job_type, payload)
         except PayloadError as problem:
             raise ApiError(409, "Cannot run", str(problem)) from problem
+        occurrence = await ensure_occurrence(session, plan, payload, now)
         job, created = await create_job(
             session,
             job_type=stage.job_type,
@@ -744,6 +745,8 @@ async def run_stage_now(
             now=now,
             max_attempts=3,
         )
+        if job.occurrence_id is None:
+            job.occurrence_id = occurrence.id
         audit(session, admin, "run_plan.stage_run",
               {"plan": str(plan.id), "group": plan.group_name, "date": plan.session_date.isoformat(),
                "stage": stage.job_type, "job": str(job.id), "created": created}, now)

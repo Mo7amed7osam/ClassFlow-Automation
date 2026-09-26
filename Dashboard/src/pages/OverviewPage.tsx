@@ -446,7 +446,7 @@ export function OverviewPage() {
             ) : (
               <div className="relative divide-y divide-slate-100 dark:divide-slate-800">
                 {activity.data.items.map((event) => {
-                  const readable = formatHumanActivity(event.kind, event.summary, event.detail)
+                  const readable = formatHumanActivity(event.kind, event.summary, event.detail, event.outcome)
                   const isDone = event.outcome === 'done'
                   const isFail = event.outcome === 'failed'
 

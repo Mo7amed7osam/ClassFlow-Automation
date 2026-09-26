@@ -72,7 +72,7 @@ export function NotificationsDrawer({ open, onClose }: NotificationsDrawerProps)
   if (activity?.items) {
     for (const item of activity.items) {
       const severity = item.outcome === 'failed' ? 'error' : item.outcome === 'skipped' ? 'warning' : 'success'
-      const readable = formatHumanActivity(item.kind, item.summary, item.detail)
+      const readable = formatHumanActivity(item.kind, item.summary, item.detail, item.outcome)
       notifications.push({
         id: `act-${item.id}`,
         title: item.group ? `${item.group}: ${item.kind}` : item.kind,

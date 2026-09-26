@@ -447,7 +447,7 @@ export function ClassDetailPage() {
                 <div key={act.id} className="flex items-start justify-between py-3">
                   <div>
                     <p className="font-semibold text-slate-900 dark:text-slate-100">
-                      {formatHumanActivity(act.kind, act.summary, act.detail)}
+                      {formatHumanActivity(act.kind, act.summary, act.detail, act.outcome)}
                     </p>
                     <p className="text-[11px] text-slate-500 font-mono mt-0.5">{act.kind}</p>
                   </div>

@@ -62,6 +62,12 @@ def test_the_meeting_of_a_class_is_opened_now_and_the_job_is_the_scheduler_s_own
     assert job["payload"]["meetingUrl"] == "https://zoom.us/j/91473108491"
     assert job["payload"]["zoomAccountId"]
     assert job["payload"]["lmsAccountId"]
+    links = run_sql(dash.app.state.settings.database_url,
+                    "SELECT j.occurrence_id, o.class_plan_id FROM jobs j "
+                    "JOIN class_occurrences o ON o.id = j.occurrence_id WHERE j.id = $1::uuid",
+                    body["jobId"])
+    assert len(links) == 1
+    assert str(links[0]["class_plan_id"]) == item["id"]
 
 
 def test_pressing_it_twice_in_a_minute_does_not_queue_the_same_stage_twice(dash, two):

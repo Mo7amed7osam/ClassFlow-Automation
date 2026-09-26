@@ -213,7 +213,10 @@ public static class ZoomWebSignIn
         foreach (var button in await page.GetByRole(AriaRole.Button, new() { NameRegex = name }).AllAsync())
         {
             if (!await button.IsVisibleAsync() || !await button.IsEnabledAsync()) continue;
-            await button.ClickAsync(new() { Timeout = 5000 });
+            // Zoom's account page can keep the enabled Continue button in motion during its
+            // responsive-layout transition. A five-second click timeout turned that transient
+            // movement into a permanent class failure even though the button was present.
+            await button.ClickAsync(new() { Timeout = 20000 });
             return true;
         }
         return false;
