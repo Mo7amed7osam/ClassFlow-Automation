@@ -55,7 +55,7 @@ from .attendance_matching import (
     merge_intervals,
     presence,
 )
-from .attendance_names import clean_display_name, normalize
+from .attendance_names import clean_display_name, is_globally_ignored, normalize
 from .attendance_names import score as score_names
 from .auth import require_dashboard_header
 from .dashboard import parse_id
@@ -116,14 +116,22 @@ async def recompute(session: AsyncSession, att: AttendanceSession, now: datetime
     )).scalars().all()
     staff: set[str] = set()
     views = []
+    group_name_lower = (att.group_name or "").lower()
+    group_ignores: set[str] = set()
+    if "g1" in group_name_lower:
+        group_ignores.update({normalize(n) for n in ("Ibrahim Mohamed", "ibrahim mohamed") if normalize(n)})
+    elif "g2" in group_name_lower:
+        group_ignores.update({normalize(n) for n in ("Hussein Farghal", "Acc Hussein", "hussein farghal") if normalize(n)})
+
     for snap in snapshots:
         names = []
         for raw in snap.names:
             cleaned = clean_display_name(raw)
             if cleaned.name:
                 names.append(cleaned.name)
-                if cleaned.is_staff:
-                    staff.add(normalize(cleaned.name))
+                norm = normalize(cleaned.name)
+                if cleaned.is_staff or is_globally_ignored(cleaned.name) or norm in group_ignores:
+                    staff.add(norm)
         views.append(SnapshotView(snap.captured_at, names, snap.is_complete))
     seen = presence(views, session_end=att.ended_at)
 
@@ -132,15 +140,18 @@ async def recompute(session: AsyncSession, att: AttendanceSession, now: datetime
     for key, p in seen.items():
         row = existing.get(key)
         intervals = [[a.isoformat(), b.isoformat()] for a, b in p.intervals]
+        should_ignore = (key in staff) or (key in group_ignores) or is_globally_ignored(p.name)
         if row is None:
             row = AttendanceParticipant(id=uuid.uuid4(), session_id=att.id, name=p.name, name_key=key, first_seen_at=p.first_seen,
                                         last_seen_at=p.last_seen, sightings=p.sightings, present_seconds=p.seconds,
-                                        intervals=intervals, ignored=key in staff, created_at=now)
+                                        intervals=intervals, ignored=should_ignore, created_at=now)
             session.add(row)
             existing[key] = row
         else:
             row.first_seen_at, row.last_seen_at, row.sightings = p.first_seen, p.last_seen, p.sightings
             row.present_seconds, row.intervals = p.seconds, intervals
+            if should_ignore:
+                row.ignored = True
     await session.flush()
 
     students = (await session.execute(

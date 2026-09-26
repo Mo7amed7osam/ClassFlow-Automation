@@ -65,6 +65,16 @@ async def _revoke(device_id: uuid.UUID) -> bool:
         await engine.dispose()
 
 
+async def _seed_data() -> dict[str, int]:
+    from .seed import seed_production_data
+    engine = make_engine(database_url())
+    try:
+        async with make_sessionmaker(engine)() as session, session.begin():
+            return await seed_production_data(session)
+    finally:
+        await engine.dispose()
+
+
 async def _create_admin(username: str, password_hash: str, display_name: str) -> str | None:
     """Insert an admin account; the reason it could not be, or None.
 
@@ -172,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     admin.add_argument("--display-name", default=None, help="the name shown in the dashboard (default: the username)")
     admin.add_argument("--from-env", action="store_true",
                        help="take the account from the old CENTRAL_ADMIN_USERS setting instead of asking for a password")
+    sub.add_parser("seed-production-data", help="seed G1/G2 groups, 45 students, aliases, zoom accounts, and schedules")
     args = parser.parse_args(argv)
     if args.command == "create-enrollment-token" and not 1 <= args.ttl_hours <= 336:
         parser.error("--ttl-hours must be between 1 and 336")
@@ -180,6 +191,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "migrate":
             migrate()
             print("Migrations applied.")
+        elif args.command == "seed-production-data":
+            res = asyncio.run(_seed_data())
+            print(f"Seeded production data: {res}")
         elif args.command == "new-api-key":
             key = new_client_api_key()
             print("API key (give it to n8n; it is not stored anywhere):")

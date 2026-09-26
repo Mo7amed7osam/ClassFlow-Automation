@@ -104,8 +104,11 @@ class Notifier:
         async with self.sessionmaker() as session:
             row = await session.get(AppSetting, SETTING_KEY)
         value = row.value if row and isinstance(row.value, dict) else {}
+        import os
+        env_url = (os.environ.get("CENTRAL_WEBHOOK_URL") or "").strip()
+        configured_url = (value.get("url") or "").strip()
         return {
-            "url": (value.get("url") or "").strip(),
+            "url": configured_url or env_url,
             "enabled": value.get("enabled") is not False,
             "label": (value.get("label") or self.label).strip() or self.label,
             "updatedAt": row.updated_at if row else None,

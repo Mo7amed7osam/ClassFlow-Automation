@@ -27,9 +27,8 @@ public sealed class MeetingAttendance(
     /// <summary>After the meeting opens: long enough for the people waiting to be let in.</summary>
     public static readonly TimeSpan FirstRead = TimeSpan.FromMinutes(2);
 
-    /// <summary>Between reads. The Windows app reads every fifteen minutes and on every admission;
-    /// a server admits without an event to hang a read on, so it reads a little more often.</summary>
-    public static readonly TimeSpan Interval = TimeSpan.FromMinutes(10);
+    /// <summary>Between reads. Reads every fifteen minutes, matching the business cadence.</summary>
+    public static readonly TimeSpan Interval = TimeSpan.FromMinutes(15);
 
     private readonly Action<string> _log = log ?? (_ => { });
     private readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);

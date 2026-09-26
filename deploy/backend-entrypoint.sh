@@ -4,4 +4,5 @@
 set -eu
 
 python -m central_backend.cli migrate
+python -m central_backend.cli seed-production-data
 exec "$@"

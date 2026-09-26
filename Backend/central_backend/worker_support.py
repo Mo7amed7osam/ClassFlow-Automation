@@ -102,7 +102,7 @@ async def job_attendance(job_id: str, request: Request) -> Any:
     LMS would write down as a whole class absent.
     """
     state = request.app.state
-    async with state.sessionmaker() as session:
+    async with state.sessionmaker() as session, session.begin():
         device = await _device(session, request)
         try:
             job = await session.get(Job, uuid.UUID(job_id))
@@ -144,6 +144,15 @@ async def job_attendance(job_id: str, request: Request) -> Any:
             raise ApiError(409, "Conflict",
                            f"{group} has no students on the server, so the names seen in the meeting cannot be "
                            "matched to anybody. Import the group's roster on the dashboard.")
+
+        if job.type in ("lms.late_joiners", "lms.complete") and att.status != "finalized":
+            ai = getattr(state, "attendance_ai", None)
+            if ai is not None:
+                from .attendance import recompute
+                from .attendance_ai import apply_ai
+                now = state.clock()
+                await apply_ai(session, att, ai, now)
+                await recompute(session, att, now)
 
         rows = (await session.execute(
             select(AttendanceRecord.status, Student.full_name, Student.order_index)

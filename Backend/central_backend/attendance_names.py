@@ -34,7 +34,7 @@ class CleanName:
 
     @property
     def is_staff(self) -> bool:
-        return bool(self.roles & STAFF_ROLES)
+        return bool(self.roles & STAFF_ROLES) or is_globally_ignored(self.name)
 
 
 def clean_display_name(raw: str) -> CleanName:
@@ -171,6 +171,29 @@ def normalize(value: str | None) -> str:
     words = [_canonical(t) for t in _join_compounds(_fold_chars(value[:MAX_NAME]).split())]
     without_titles = [w for w in words if w not in _TITLES]
     return " ".join(without_titles or words)
+
+
+GLOBAL_IGNORED_NAMES: frozenset[str] = frozenset({
+    "eyouth coordinator",
+    "depi wavz",
+    "youssef ayoub",
+    "yossef ayoub",
+    "mohamed hosam",
+})
+
+
+def is_globally_ignored(value: str | None) -> bool:
+    """True if the display name belongs to global staff, coordinators, or ignored monitors."""
+    if not value or not value.strip():
+        return False
+    norm = normalize(value)
+    if not norm:
+        return False
+    for ign in GLOBAL_IGNORED_NAMES:
+        ign_norm = normalize(ign)
+        if ign_norm == norm or ign_norm in norm or norm in ign_norm:
+            return True
+    return False
 
 
 def tokens(value: str) -> list[str]:

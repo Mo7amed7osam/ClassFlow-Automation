@@ -69,19 +69,71 @@ async def record_occurrence_outcome(session: AsyncSession, job: Job, now: dateti
 
     if job.type == "recording.process":
         if not result.get("dryRun") and isinstance((job.payload or {}).get("recordLink"), str):
-            occurrence.drive_recording_url = job.payload["recordLink"]
-            if _STATE_ORDER.get(occurrence.state, -1) <= _STATE_ORDER["driveLinkAttached"]:
-                occurrence.state = "driveLinkAttached"
+            link = str(job.payload["recordLink"])
+            if "drive.google.com" in link.lower():
+                occurrence.drive_recording_url = link
+                if _STATE_ORDER.get(occurrence.state, -1) <= _STATE_ORDER["driveLinkAttached"]:
+                    occurrence.state = "driveLinkAttached"
+            else:
+                occurrence.zoom_recording_url = link
+                if _STATE_ORDER.get(occurrence.state, -1) <= _STATE_ORDER["waitingForDrive"]:
+                    occurrence.state = "waitingForDrive"
         return
 
     state = _SUCCESS_STATES.get(job.type)
     if state and _STATE_ORDER.get(occurrence.state, -1) <= _STATE_ORDER[state]:
         occurrence.state = state
+
+    if job.type == "lms.late_joiners":
+        # When late joiners correction succeeds on LMS, finalize the attendance session
+        if occurrence.attendance_session_id is not None:
+            from .models import AttendanceSession
+            att = await session.get(AttendanceSession, occurrence.attendance_session_id)
+            if att is not None and att.status != "finalized":
+                att.status = "finalized"
+
     if job.type == "zoom.recording":
         link = result.get("shareUrl")
         if isinstance(link, str) and link:
             occurrence.zoom_recording_url = link
             occurrence.recording_found_at = now
+            # Automatically enqueue recording.process to attach the Zoom recording link to the LMS
+            from .jobs import create_job
+            from .models import ClassPlan
+            from .validation import validate_payload
+
+            plan = await session.get(ClassPlan, occurrence.class_plan_id)
+            start_time = plan.start_time if plan else None
+            if not start_time and occurrence.scheduled_start:
+                start_time = occurrence.scheduled_start.strftime("%H:%M")
+
+            attach_payload = {
+                "group": occurrence.group_name,
+                "recordLink": link,
+                "date": occurrence.session_date.isoformat(),
+                "replaceExisting": False,
+                "dryRun": False,
+            }
+            if start_time:
+                attach_payload["startTime"] = start_time
+            if occurrence.lms_account_id:
+                attach_payload["lmsAccountId"] = str(occurrence.lms_account_id)
+
+            try:
+                validated = validate_payload("recording.process", attach_payload)
+                attach_job, _ = await create_job(
+                    session,
+                    job_type="recording.process",
+                    payload=validated,
+                    idempotency_key=f"attach:zoom:{occurrence.id}",
+                    now=now,
+                    max_attempts=3,
+                )
+                if attach_job.occurrence_id is None:
+                    attach_job.occurrence_id = occurrence.id
+            except Exception as exc:
+                occurrence.last_error = f"Failed to enqueue Zoom link attachment: {exc}"
+
 
 
 def _timestamp(value: object) -> datetime | None:
