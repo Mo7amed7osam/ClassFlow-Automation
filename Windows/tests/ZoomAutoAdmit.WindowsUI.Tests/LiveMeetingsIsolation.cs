@@ -14,6 +14,9 @@ internal static class LiveMeetingsIsolation
         // Nor the attendance really taken of this PC's classes, which a match would write over.
         ZoomAutoAdmit.WindowsUI.Services.ExtensionAttendanceFeed.ResultsPath = Path.Combine(
             Path.GetTempPath(), "ZoomAutoAdmit.Tests", "results-" + Guid.NewGuid().ToString("N") + ".json");
+        // Nor which coordinators are turned off on this PC.
+        ZoomAutoAdmit.WindowsUI.Services.CoordinatorPause.DefaultPath = Path.Combine(
+            Path.GetTempPath(), "ZoomAutoAdmit.Tests", "paused-" + Guid.NewGuid().ToString("N") + ".json");
         // Nor which of this PC's real classes are held in a room: a test's class is on Zoom unless it says.
         ZoomAutoAdmit.WindowsRuntime.Scheduling.ClassMode.LmsSessions = () => [];
         ZoomAutoAdmit.WindowsRuntime.Scheduling.ClassMode.Schedules = _ => Task.FromResult<IReadOnlyList<ZoomAutoAdmit.WindowsRuntime.Scheduling.MeetingSchedule>>([]);

@@ -316,7 +316,12 @@ public sealed class LmsSessionsViewModel : ObservableObject
             var keys = new Dictionary<string, (string Group, DateOnly Date, TimeOnly Start)>();
             // Only a real group is a class: a step written down under a whole LMS row read as one word
             // (2026-09-26) is not shown as a class, or as a group to filter by.
-            void Add(string g, DateOnly d, TimeOnly t) { if (d >= from && d <= to && LmsSessionCache.IsGroupCode(g)) keys.TryAdd(Key(g, d, t), (g, d, t)); }
+            // Nor a class of a coordinator turned off here ("Run their classes" unticked).
+            var notRunHere = new CoordinatorPause().Groups();
+            void Add(string g, DateOnly d, TimeOnly t)
+            {
+                if (d >= from && d <= to && LmsSessionCache.IsGroupCode(g) && !notRunHere.Contains(g)) keys.TryAdd(Key(g, d, t), (g, d, t));
+            }
             foreach (var s in schedules.Where(s => s.OccurrenceDate.HasValue))
                 Add(s.GroupName ?? s.AccountId, s.OccurrenceDate!.Value, new TimeOnly(s.Time.Hour, s.Time.Minute));
             // An LMS session belongs to the class of its group that day, whatever time each side shows.

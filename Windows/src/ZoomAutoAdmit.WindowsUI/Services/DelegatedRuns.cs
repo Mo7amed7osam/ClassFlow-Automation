@@ -67,6 +67,8 @@ public sealed class DelegatedRuns
     private readonly Func<DateOnly> _today;
     private readonly Dictionary<string, DateTimeOffset> _lastRead = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _gate = new(1, 1);
+    /// <summary>This PC's own classes of the coordinators turned off, held while they are off.</summary>
+    private readonly CoordinatorPause _pause;
 
     public DelegatedRuns(
         IDelegatedRunsApi api,
@@ -76,8 +78,10 @@ public sealed class DelegatedRuns
         IZoomProfileCredentialStore? zoomCredentials = null,
         ReadTimetable? readTimetable = null,
         Action<string>? log = null,
-        Func<DateOnly>? today = null)
+        Func<DateOnly>? today = null,
+        CoordinatorPause? pause = null)
     {
+        _pause = pause ?? new CoordinatorPause();
         _api = api;
         _service = service;
         _directory = directory ?? new LmsAccountDirectory();
@@ -121,6 +125,23 @@ public sealed class DelegatedRuns
 
         foreach (var stopped in answer.Delegations.Where(d => !d.Enabled))
             _classes.Forget(stopped.CoordinatorId);
+
+        // One switch for all of it: a coordinator turned off has this PC's own classes of their
+        // groups held too, not only the ones their delegation added; turned on, they come back.
+        try
+        {
+            static IEnumerable<string> GroupsOf(IEnumerable<CentralDelegation> delegations) =>
+                delegations.SelectMany(d => d.GroupList.Where(g => !g.Archived).Select(g => g.Name));
+            var (paused, resumed) = await _pause.ApplyAsync(
+                GroupsOf(answer.Delegations.Where(d => !d.Enabled)), GroupsOf(running),
+                await _service.GetSchedulesAsync(token), (schedule, t) => _service.SaveScheduleAsync(schedule, t), token);
+            if (paused > 0) _log($"{paused} class(es) of this PC's own schedule are held: their coordinator is not run here.");
+            if (resumed > 0) _log($"{resumed} held class(es) are back on this PC's schedule: their coordinator is run here again.");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            problems.Add($"The classes of the coordinators turned off could not be held ({ex.Message}).");
+        }
 
         var ready = new List<(CentralDelegation Delegation, LmsAccountEntry Entry)>();
         foreach (var delegation in running)
