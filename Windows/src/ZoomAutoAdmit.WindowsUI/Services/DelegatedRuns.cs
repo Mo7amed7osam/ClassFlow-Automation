@@ -362,7 +362,10 @@ public sealed class DelegatedRuns
             if (item.Status != "planned" || item.Day is not { } day || item.Start is not { } start) continue;
             if (!whose.TryGetValue(item.CoordinatorId, out var delegation)) continue;
             string who = delegation.DisplayName;
-            if (ownClasses.Any(s => IsSameClass(s, item.Group, day, start))) { scheduled++; continue; }
+            // The uploaded timetable is the one to go by: the LMS's times can be hours off (S8 on
+            // Wed 30 Sep: 19:00 in the timetable, 17:00 on the LMS - shown and opened as two classes).
+            // A class of this group on this day already on this PC's own schedule is this class.
+            if (ownClasses.Any(s => IsSameDay(s, item.Group, day))) { scheduled++; continue; }
 
             // Missing on their side but known here: this PC's own account for the group has its link
             // and opens it (2026-09-26: a class of ONL5_AIS7_S1 on Hosam's LMS, a group of this PC's).
@@ -434,6 +437,11 @@ public sealed class DelegatedRuns
         }
         return (scheduled, removed);
     }
+
+    /// <summary>The same group on that day (once, or every week), whatever time either side gives it.</summary>
+    internal static bool IsSameDay(MeetingSchedule schedule, string group, DateOnly day) =>
+        string.Equals(schedule.GroupName ?? schedule.AccountId, group, StringComparison.OrdinalIgnoreCase)
+        && (schedule.OccurrenceDate is { } once ? once == day : schedule.Days.Includes(day.DayOfWeek));
 
     /// <summary>The same class: the same group, at the same time, on that day (once, or every week).</summary>
     internal static bool IsSameClass(MeetingSchedule schedule, string group, DateOnly day, TimeOnly start) =>

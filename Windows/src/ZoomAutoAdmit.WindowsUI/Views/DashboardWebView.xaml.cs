@@ -294,7 +294,10 @@ public partial class DashboardWebView : UserControl
                 username = me.Username, displayName = me.DisplayName, role = me.Role, allGroups = me.AllGroups,
                 groups = (me.Groups ?? []).Where(g => !g.Archived).Select(g => g.Name),
             },
-            lms = _serverLms != null
+            // The database's list once it has been read. Until then - the moment after the page opens,
+            // or when the server cannot be reached - this PC's own accounts, which are the same ones,
+            // rather than an empty card saying there are none (2026-09-26).
+            lms = _serverLms is { Loaded: true }
                 ? (object)new
                 {
                     active = _serverLms.Accounts.FirstOrDefault(a => a.Active)?.Id, onServer = true, canKeepPasswords = _serverLms.CanKeepPasswords,

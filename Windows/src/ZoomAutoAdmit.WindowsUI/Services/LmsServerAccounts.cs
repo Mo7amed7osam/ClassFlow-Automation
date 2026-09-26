@@ -14,6 +14,8 @@ public sealed class LmsServerAccounts(CentralApiClient api, LmsAccountDirectory?
     private readonly LmsAccountDirectory _local = local ?? new LmsAccountDirectory();
 
     public IReadOnlyList<CentralLmsAccount> Accounts { get; private set; } = [];
+    /// <summary>The server's list has been read at least once; until then there is nothing to show from it.</summary>
+    public bool Loaded { get; private set; }
     public bool CanKeepPasswords { get; private set; } = true;
 
     /// <summary>
@@ -40,6 +42,7 @@ public sealed class LmsServerAccounts(CentralApiClient api, LmsAccountDirectory?
             if (uploaded > 0) ConsoleLogger.Info($"[LMS] {uploaded} LMS account(s) of this PC were saved to your dashboard account.");
         }
         Accounts = answer.Accounts;
+        Loaded = true;
         return await CopyActiveHereAsync(token);
     }
 
