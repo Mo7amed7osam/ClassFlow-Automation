@@ -22,6 +22,7 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
@@ -369,7 +370,7 @@ async def health_detailed(request: Request, viewer: Viewer = Depends(current_vie
         "name": "Backend",
         "status": "healthy",
         "summary": f"FastAPI v{__version__} running",
-        "detail": f"Server time: {now.isoformat()} (Africa/Cairo: {now.astimezone(timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S')})",
+        "detail": f"Server time: {now.isoformat()} (Africa/Cairo: {now.astimezone(ZoneInfo('Africa/Cairo')).strftime('%Y-%m-%d %H:%M:%S')})",
         "fix": None,
         "action": None,
     })
