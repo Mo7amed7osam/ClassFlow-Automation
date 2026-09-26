@@ -213,6 +213,14 @@ public sealed class AccountsViewModel : ObservableObject
         return hereProblem == null || inDatabase;
     }
 
+    /// <summary>The account's saved Zoom password, for "Show password"; null when none is saved.</summary>
+    public string? SavedPassword()
+    {
+        if (string.IsNullOrWhiteSpace(AccountId)) return null;
+        try { return ZoomAutoAdmit.WebAutomation.ZoomSignInCredential.ReadFor(null, AccountId.Trim())?.Password; }
+        catch { return null; }
+    }
+
     public void ForgetPassword()
     {
         try { _credentials.Delete(AccountId); StatusMessage = "The saved Zoom password was removed."; }

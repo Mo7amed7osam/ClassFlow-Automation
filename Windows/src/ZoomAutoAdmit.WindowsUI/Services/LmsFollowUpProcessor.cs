@@ -312,6 +312,12 @@ public sealed class LmsFollowUpProcessor
                 foreach (var item in session.OrderBy(item => item.Step))
                 {
                     if (chainBlocked && item.Step != LmsFollowUpStep.AttachZoomRecording) continue;
+                    // Written down under a whole LMS row read as one word, not a group: nothing to do.
+                    if (!LmsSessionCache.IsGroupCode(item.Group))
+                    {
+                        if (!dryRun) await _queue.CompleteAsync(item, token);
+                        continue;
+                    }
                     // A physical class has no meeting to read attendance from: what was written
                     // down for it as an online class (a meeting opened by hand) is not owed.
                     if (LmsFollowUpQueue.IsFromZoom(item.Step) && await _isPhysical(item, token))

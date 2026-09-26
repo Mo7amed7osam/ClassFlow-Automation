@@ -75,11 +75,24 @@ public sealed class ZoomSignInCredential(string email, string password)
             try
             {
                 Marshal.Copy(native.Blob, bytes, 0, bytes.Length);
-                return new ZoomSignInCredential(native.UserName.Trim(), Encoding.UTF8.GetString(bytes));
+                return new ZoomSignInCredential(native.UserName.Trim(), DecodeSecret(bytes));
             }
             finally { Array.Clear(bytes); }
         }
         finally { CredFree(pointer); }
+    }
+
+    /// <summary>
+    /// A password as Credential Manager holds it. The app writes UTF-8; a password typed into
+    /// Windows' own Credential Manager window is kept as UTF-16, and read as UTF-8 every letter
+    /// came out followed by a NUL - Zoom was sent "D\0e\0p\0..." and refused it (2026-09-26, S8).
+    /// </summary>
+    public static string DecodeSecret(byte[] bytes)
+    {
+        bool utf16 = bytes.Length >= 2 && bytes.Length % 2 == 0
+                     && Enumerable.Range(0, bytes.Length / 2).Count(i => bytes[2 * i + 1] == 0) * 2 >= bytes.Length / 2;
+        string text = utf16 ? Encoding.Unicode.GetString(bytes) : Encoding.UTF8.GetString(bytes);
+        return text.TrimEnd('\0');
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
