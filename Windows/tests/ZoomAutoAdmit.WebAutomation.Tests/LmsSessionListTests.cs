@@ -16,18 +16,18 @@ public class LmsSessionListTests
         Assert.Equal(running, LmsSessionRunner.IsRunningStatus(status));
 
     [Theory]
-    [InlineData(true, "pending", LmsRunSessionDecision.PressButton)]
-    [InlineData(false, "running", LmsRunSessionDecision.AlreadyRunning)]
-    [InlineData(true, "running", LmsRunSessionDecision.AlreadyRunning)]
-    [InlineData(false, "finished", LmsRunSessionDecision.Refuse)]
-    [InlineData(true, "completed", LmsRunSessionDecision.Refuse)]
-    [InlineData(true, "cancelled", LmsRunSessionDecision.Refuse)]
-    [InlineData(true, "", LmsRunSessionDecision.Refuse)]
-    [InlineData(false, "unknown", LmsRunSessionDecision.Refuse)]
-    [InlineData(false, "pending", LmsRunSessionDecision.Refuse)]
+    [InlineData(true, "pending", "PressButton")]
+    [InlineData(false, "running", "AlreadyRunning")]
+    [InlineData(true, "running", "AlreadyRunning")]
+    [InlineData(false, "finished", "Refuse")]
+    [InlineData(true, "completed", "Refuse")]
+    [InlineData(true, "cancelled", "Refuse")]
+    [InlineData(true, "", "Refuse")]
+    [InlineData(false, "unknown", "Refuse")]
+    [InlineData(false, "pending", "Refuse")]
     public void RunSessionRequiresPendingStateAndNeverReopensTerminalOrUnknownPages(
-        bool buttonVisible, string status, LmsRunSessionDecision expected) =>
-        Assert.Equal(expected, LmsSessionRunner.DecideRunSession(buttonVisible, status));
+        bool buttonVisible, string status, string expected) =>
+        Assert.Equal(expected, LmsSessionRunner.DecideRunSession(buttonVisible, status).ToString());
 
     [Theory]
     [InlineData("Showing 1-10 of 45 items 1 2 3 4 5", 5)]
