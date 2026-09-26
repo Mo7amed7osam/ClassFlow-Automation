@@ -9,7 +9,7 @@ const STEP_ACTIONS: Partial<Record<StepKey, Action[]>> = {
   // Pressing Zoom asks about the meeting itself: whether it is still running here, and opening it
   // again when it is not.
   zoom: ['zoom', 'zoomAgain', 'inRoom', 'onZoom'],
-  run: ['run'], attendance: ['attendance'], correct: ['correct'], report: ['report'], complete: ['complete'], record: ['recording', 'zoomRecording', 'link'], drive: ['recording', 'sheet', 'link'],
+  run: ['run'], attendance: ['attendance'], correct: ['correct'], report: ['report'], complete: ['complete'], record: ['recording', 'zoomRecording', 'noRecording', 'link'], drive: ['recording', 'sheet', 'link'],
   material: ['material'], assignment: ['assignment'],
 }
 const LMS_LABEL: Record<string, string> = { running: 'Running', finished: 'Finished', completed: 'Finished', pending: 'Pending', '': 'Not read' }

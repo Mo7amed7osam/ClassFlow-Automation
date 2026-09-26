@@ -110,9 +110,44 @@ public sealed class DelegatedRuns
     {
         // One pass at a time: two overlapping passes would fight over the same schedules and
         // browser profiles, which is the very thing this class exists to prevent.
+        // Who is off is applied first, and outside the pass: a pass still reading somebody's
+        // timetable must not keep a coordinator who was just turned off opening classes here.
+        var paused = await HoldTurnedOffAsync(token);
         await _gate.WaitAsync(token);
-        try { return await RunOnceAsync(readTimetables, token); }
+        try
+        {
+            var report = await RunOnceAsync(readTimetables, token);
+            return paused == null ? report : report with { Problems = [.. report.Problems, paused] };
+        }
         finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// One switch for all of a coordinator's classes here: turned off, this PC's own classes of
+    /// their groups are held too, not only the ones their delegation added; turned on, they come
+    /// back. Answers a problem to report, or null.
+    /// </summary>
+    private async Task<string?> HoldTurnedOffAsync(CancellationToken token)
+    {
+        if (!_api.IsAdmin) return null;
+        try
+        {
+            var answer = await _api.DelegationsAsync(token);
+            static IEnumerable<string> GroupsOf(IEnumerable<CentralDelegation> delegations) =>
+                delegations.SelectMany(d => d.GroupList.Where(g => !g.Archived).Select(g => g.Name));
+            var (paused, resumed) = await _pause.ApplyAsync(
+                GroupsOf(answer.Delegations.Where(d => !d.Enabled)), GroupsOf(answer.Delegations.Where(d => d.Enabled)),
+                await _service.GetSchedulesAsync(token), (schedule, t) => _service.SaveScheduleAsync(schedule, t), token);
+            _log($"Not run here: {string.Join(", ", _pause.Groups().OrderBy(g => g))}" +
+                 $"{(paused > 0 ? $"; {paused} class(es) of this PC's own schedule held" : "")}" +
+                 $"{(resumed > 0 ? $"; {resumed} held class(es) back on the schedule" : "")}.");
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log($"The classes of the coordinators turned off could not be held: {ex.Message}");
+            return $"The classes of the coordinators turned off could not be held ({ex.Message}).";
+        }
     }
 
     private async Task<DelegatedRunReport> RunOnceAsync(bool readTimetables, CancellationToken token)
@@ -125,23 +160,6 @@ public sealed class DelegatedRuns
 
         foreach (var stopped in answer.Delegations.Where(d => !d.Enabled))
             _classes.Forget(stopped.CoordinatorId);
-
-        // One switch for all of it: a coordinator turned off has this PC's own classes of their
-        // groups held too, not only the ones their delegation added; turned on, they come back.
-        try
-        {
-            static IEnumerable<string> GroupsOf(IEnumerable<CentralDelegation> delegations) =>
-                delegations.SelectMany(d => d.GroupList.Where(g => !g.Archived).Select(g => g.Name));
-            var (paused, resumed) = await _pause.ApplyAsync(
-                GroupsOf(answer.Delegations.Where(d => !d.Enabled)), GroupsOf(running),
-                await _service.GetSchedulesAsync(token), (schedule, t) => _service.SaveScheduleAsync(schedule, t), token);
-            if (paused > 0) _log($"{paused} class(es) of this PC's own schedule are held: their coordinator is not run here.");
-            if (resumed > 0) _log($"{resumed} held class(es) are back on this PC's schedule: their coordinator is run here again.");
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            problems.Add($"The classes of the coordinators turned off could not be held ({ex.Message}).");
-        }
 
         var ready = new List<(CentralDelegation Delegation, LmsAccountEntry Entry)>();
         foreach (var delegation in running)

@@ -537,6 +537,14 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 // recording are the same as any class's; the Zoom half says it was held in the room.
                 if (physical)
                 {
+                    // Held in a room with nothing recorded on Zoom: no recording and no Drive copy
+                    // is owed, and neither is shown as failed or waited for.
+                    var noRecording = Done(LmsFollowUpStep.AttachZoomRecording) is { Succeeded: true } rec
+                                      && rec.Message.StartsWith(LmsFollowUpProcessor.NoZoomRecording, StringComparison.Ordinal) ? rec : null;
+                    if (noRecording != null)
+                        for (int i = 0; i < steps.Count; i++)
+                            if (steps[i].Key is "record" || (steps[i].Key is "drive" && steps[i].State is not ("done" or "lms")))
+                                steps[i] = steps[i] with { State = "none", Text = "None", Detail = noRecording.Message };
                     for (int i = 0; i < steps.Count; i++)
                     {
                         steps[i] = steps[i].Key switch
@@ -635,6 +643,27 @@ public sealed class LmsSessionsViewModel : ObservableObject
     /// schedule entry, which the LMS's type never overrides: a physical class opens no meeting and
     /// takes no attendance from Zoom; it is still run, completed and given its recording.
     /// </summary>
+    /// <summary>
+    /// A physical class that was not recorded on Zoom, said by hand: its recording step is done with
+    /// "none", so it is neither tried again nor shown as failed. Only a class held in the room.
+    /// </summary>
+    private async Task<(bool Ok, string Message)> MarkNoRecordingAsync(string group, DateOnly date, TimeOnly start)
+    {
+        if (!ClassMode.IsPhysical(await _schedules.ListAsync(), _cache.Read(), group, date, start))
+            return (false, $"{group} {date:ddd d MMM} is an online class: its Zoom recording is owed. Mark it held in the room first if it was.");
+        var owed = (await _queue.ReadAsync()).FirstOrDefault(p => p.Step == LmsFollowUpStep.AttachZoomRecording && p.SessionDate == date
+            && p.SessionStart == start && p.Group.Equals(group, StringComparison.OrdinalIgnoreCase));
+        var item = owed ?? new LmsFollowUp
+        {
+            Id = $"{group}|{date:yyyy-MM-dd}|{start:HH:mm}|{LmsFollowUpStep.AttachZoomRecording}",
+            Group = group, SessionDate = date, SessionStart = start, Step = LmsFollowUpStep.AttachZoomRecording, DueAt = DateTimeOffset.Now,
+        };
+        await _queue.RecordAsync(item, true, $"{LmsFollowUpProcessor.NoZoomRecording}: marked by hand - this physical session was not recorded on Zoom.");
+        if (owed != null) await _queue.CompleteAsync(owed);
+        ConsoleLogger.Info($"[SESSIONS] {group} {date:yyyy-MM-dd} {start:HH:mm}: marked as having no Zoom recording.");
+        return (true, $"{group} {date:ddd d MMM}: no Zoom recording - nothing more is looked for.");
+    }
+
     private async Task<(bool Ok, string Message)> SetModeAsync(string group, DateOnly date, TimeOnly start, string mode)
     {
         var schedules = await _schedules.ListAsync();
@@ -728,6 +757,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 }),
                 "yesThem" => Answer(group, date, start, link, present: true),
                 "notThem" => Answer(group, date, start, link, present: false),
+                "noRecording" => await MarkNoRecordingAsync(group, date, start),
                 "inRoom" => await SetModeAsync(group, date, start, ClassMode.Physical),
                 "onZoom" => await SetModeAsync(group, date, start, ClassMode.Online),
                 "zoom" => await OpenZoomAsync(group, date, start),

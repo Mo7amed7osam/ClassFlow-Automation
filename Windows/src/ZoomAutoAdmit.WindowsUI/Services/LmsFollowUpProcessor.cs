@@ -183,6 +183,18 @@ public sealed class LmsFollowUpProcessor
     public sealed class MeetingNotInReportException(string? message = null)
         : Exception(message ?? "Zoom's usage report does not list the meeting yet, so it has not ended.");
 
+    /// <summary>How long after a physical class Zoom has to list its recording before there is taken to be none.</summary>
+    public static readonly TimeSpan NoRecordingAfter = TimeSpan.FromHours(6);
+
+    /// <summary>How the outcome of a physical class with no Zoom recording begins, for the class card.</summary>
+    public const string NoZoomRecording = "No Zoom recording";
+
+    /// <summary>Zoom answered, and it has no recording of that class (as opposed to not answering).</summary>
+    public static bool LooksLikeNoRecording(string message) =>
+        message.Contains("None of the", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("no recording", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("not found", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>The browser could not reach Zoom: no network, no DNS, the connection dropped.</summary>
     public static bool IsNetworkDown(Exception ex) =>
         ex.Message.Contains("net::ERR_", StringComparison.OrdinalIgnoreCase)
@@ -350,6 +362,14 @@ public sealed class LmsFollowUpProcessor
                             chainBlocked = true;
                             continue;
                         }
+                        // A physical class often has no Zoom recording at all. Once Zoom has had the
+                        // time it takes to publish one, "not found" is the answer, not a failure: the
+                        // step is done, and the card says there is none rather than "Failed".
+                        if (!outcome.IsSuccess && item.Step == LmsFollowUpStep.AttachZoomRecording
+                            && LooksLikeNoRecording(outcome.Message)
+                            && (now ?? DateTimeOffset.Now) - new DateTimeOffset(item.SessionDate.ToDateTime(item.SessionStart), (now ?? DateTimeOffset.Now).Offset) > NoRecordingAfter
+                            && await _isPhysical(item, token))
+                            outcome = (true, $"{NoZoomRecording}: Zoom lists no recording of this physical session. {outcome.Message}");
                         messages.Add(outcome.Message);
                         // Kept for the Sessions page: what each step did, or why it has not yet.
                         if (!dryRun) await _queue.RecordAsync(item, outcome.IsSuccess, outcome.Message, token);

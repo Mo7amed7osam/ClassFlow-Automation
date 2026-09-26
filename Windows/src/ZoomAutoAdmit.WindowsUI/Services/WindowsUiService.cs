@@ -298,7 +298,10 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
     }
 
     private static readonly string[] RuntimeLogCategories =
-        ["ATTENDANCE", "ROLE", "COHOST", "AUTO_ADMIT", "MEETING", "SESSION", "ALLOCATOR", "PREPARE", "MATCHING", "LMS", "ADMISSION", "ERROR"];
+        ["ATTENDANCE", "ROLE", "COHOST", "AUTO_ADMIT", "MEETING", "SESSION", "ALLOCATOR", "PREPARE", "MATCHING", "LMS", "ADMISSION", "ERROR",
+         // What the coordinators' sync, the accounts, the recordings and the notices did: without
+         // them a coordinator turned off whose classes stayed left no trace (2026-09-26).
+         "RUNS", "ACCOUNTS", "RECORDING", "RECORDINGS", "REPORT", "NOTIFY", "SCHEDULER", "SESSIONS"];
 
     private void OnRuntimeLogEntry(LogEntry entry)
     {
@@ -311,6 +314,8 @@ public sealed class WindowsUiService : IWindowsUiService, IAttendanceUiActions, 
         }
         if (message.StartsWith("[DEBUG_SWITCH]", StringComparison.Ordinal))
             WindowsUiRuntimeLog.Write("DEBUG_SWITCH", message);
+        if (message.StartsWith("WEB_SIGN_IN", StringComparison.Ordinal))
+            WindowsUiRuntimeLog.Write("WEB_SIGN_IN", message);
         // These ran only on the console before. Without them in the runtime log, a meeting that
         // silently admits nobody or assigns no co-host leaves no evidence at all.
         foreach (var category in RuntimeLogCategories)
