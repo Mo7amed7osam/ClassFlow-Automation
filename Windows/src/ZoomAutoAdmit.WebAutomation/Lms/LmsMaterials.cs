@@ -18,7 +18,11 @@ public sealed record LmsMaterialResult(
 }
 
 /// <summary>One class of the timetable: its group, day, time and name ("CAI5_AIS4_S7 • 29 • Freelancing Skills").</summary>
-public sealed record TimetableEntry(string Group, DateOnly Date, TimeOnly Start, string Name);
+public sealed record TimetableEntry(string Group, DateOnly Date, TimeOnly Start, string Name)
+{
+    /// <summary>Known only from the LMS's list, whose times are not the timetable's.</summary>
+    public bool FromLms { get; init; }
+}
 
 /// <summary>What was put on a class's session, so it is never put there twice.</summary>
 public sealed record MaterialRecord(DateTimeOffset At, string[] Files, string? Assignment, DateTime? Deadline);
@@ -196,14 +200,15 @@ public static class MaterialPlanner
     }
 
     /// <summary>
-    /// The start of the group's next class of the same track after this one, in the timetable -
-    /// the uploaded one, and the LMS's own list for the classes it does not have. Null when none is known.
+    /// The start of the group's next class of the same track after this one, in the uploaded
+    /// timetable (not the LMS's list, whose times are off). Null when none is known.
     /// </summary>
     public static DateTime? NextOfTrack(IEnumerable<TimetableEntry> timetable, string group, DateOnly date, TimeOnly start, string track)
     {
         var after = date.ToDateTime(start);
         return timetable
-            .Where(e => e.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && TrackOf(e.Name) == track && e.Date.ToDateTime(e.Start) > after.AddHours(4))
+            // The timetable's classes only: its times are the ones to trust.
+            .Where(e => !e.FromLms && e.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && TrackOf(e.Name) == track && e.Date.ToDateTime(e.Start) > after.AddHours(4))
             .Select(e => (DateTime?)e.Date.ToDateTime(e.Start))
             .OrderBy(at => at)
             .FirstOrDefault();

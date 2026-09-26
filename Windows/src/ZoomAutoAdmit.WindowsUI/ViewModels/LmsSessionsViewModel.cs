@@ -227,6 +227,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
             await CheckLmsAsync(full: false);
         await SweepSheetAsync();
         await SweepMaterialsAsync();
+        await ReadFinishedSessionsAsync();
     }
 
     public Task CheckAsync(bool full) => CheckLmsAsync(full);
@@ -568,7 +569,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 if (date < today)
                 {
                     for (int i = 0; i < steps.Count; i++)
-                        if (steps[i].Key is "zoom" or "run" or "attendance" or "correct" or "complete" && steps[i].State is not ("done" or "lms")
+                        if (steps[i].Key is "zoom" or "run" or "attendance" or "correct" or "complete" or "ended" or "report" && steps[i].State is not ("done" or "lms")
                             && !(physical && steps[i].Text == "In the room"))
                             steps[i] = steps[i] with { State = "lms", Text = "Past" };
                     (next, tone) = driveOnLms ? ("Done", "done") : zoomOnLms ? ("Waiting for the Drive link", "warn") : ("Add the recording", "warn");
@@ -927,10 +928,11 @@ public sealed class LmsSessionsViewModel : ObservableObject
 
     private static List<TimetableEntry> Timetable(IEnumerable<MeetingSchedule> schedules, IReadOnlyList<LmsSessionCache.Entry> lms)
     {
+        // The group's session of that day: the LMS's times are not the timetable's, so only the day counts.
         LmsSessionRunner.LmsSessionInfo? Listed(string group, DateOnly day, TimeOnly start) => lms
-            .Where(c => c.Session.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && c.Session.Date == day && c.Session.Start is { } t
-                        && Math.Abs((t.ToTimeSpan() - start.ToTimeSpan()).TotalMinutes) <= 90)
-            .OrderByDescending(c => c.ReadAt).Select(c => c.Session).FirstOrDefault();
+            .Where(c => c.Session.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && c.Session.Date == day)
+            .OrderBy(c => c.Session.Start is { } t ? Math.Abs((t.ToTimeSpan() - start.ToTimeSpan()).TotalMinutes) : 9999)
+            .ThenByDescending(c => c.ReadAt).Select(c => c.Session).FirstOrDefault();
         var entries = schedules.Where(s => s.OccurrenceDate.HasValue).Select(s =>
         {
             string group = s.GroupName ?? s.AccountId;
@@ -942,9 +944,9 @@ public sealed class LmsSessionsViewModel : ObservableObject
         }).ToList();
         foreach (var session in lms.Select(c => c.Session).Where(s => s.Date != null && s.Start != null && s.Focus.Length > 0))
         {
-            if (entries.Any(e => e.Group.Equals(session.Group, StringComparison.OrdinalIgnoreCase) && e.Date == session.Date
-                                 && Math.Abs((e.Start.ToTimeSpan() - session.Start!.Value.ToTimeSpan()).TotalMinutes) <= 90)) continue;
-            entries.Add(new TimetableEntry(session.Group, session.Date!.Value, session.Start!.Value, $"{session.Group} • {session.Title} • {session.Focus}"));
+            if (entries.Any(e => e.Group.Equals(session.Group, StringComparison.OrdinalIgnoreCase) && e.Date == session.Date)) continue;
+            entries.Add(new TimetableEntry(session.Group, session.Date!.Value, session.Start!.Value, $"{session.Group} • {session.Title} • {session.Focus}")
+                { FromLms = true });
         }
         return entries;
     }
@@ -1068,6 +1070,55 @@ public sealed class LmsSessionsViewModel : ObservableObject
     /// once they have started (ten minutes in, clear of the Run Session at the start), each at most
     /// every 30 minutes until it is up.
     /// </summary>
+    private DateTimeOffset _lastDetailsRead = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// What is on each finished class's session - its attachments, its assignment, its record link -
+    /// read a few days at a time in the background. The quick read lists sessions without opening
+    /// them, so a class whose material and assignment were on the LMS showed both as still owed
+    /// (2026-09-26, S7 on 13 Sep). A session is read again only when its last read was before the
+    /// class ended; each is read with its own coordinator's sign-in.
+    /// </summary>
+    private async Task ReadFinishedSessionsAsync()
+    {
+        if (IsBusy || DateTimeOffset.Now - _lastDetailsRead < TimeSpan.FromMinutes(10) || _accounts.List().Count == 0) return;
+        _lastDetailsRead = DateTimeOffset.Now;
+        var now = DateTime.Now;
+        var today = DateOnly.FromDateTime(now);
+        var cache = _cache.Read();
+        bool Unread(ClassRow row)
+        {
+            var classEnd = new DateTimeOffset(row.Date.ToDateTime(row.Start).AddHours(3));
+            var listed = cache.Where(c => c.Session.Group.Equals(row.Group, StringComparison.OrdinalIgnoreCase) && c.Session.Date == row.Date).ToArray();
+            return listed.Length > 0 && listed.All(c => c.Session.DetailsReadAt is not { } at || at < classEnd);
+        }
+        var targets = Rows.Where(r => r.Date >= today.AddDays(-14) && r.Date.ToDateTime(r.Start).AddHours(3) < now && Unread(r))
+            .OrderByDescending(r => r.Date).ToList();
+        if (targets.Count == 0) return;
+        // A few days a pass, newest first: each day is one list read and a page per class.
+        var days = targets.GroupBy(r => (Account: _classAccounts.Find(r.Group)?.AccountId ?? "", r.Date)).Take(3).ToList();
+        IsBusy = true;
+        try
+        {
+            foreach (var day in days)
+            {
+                var wanted = day.Select(r => r.Group).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                string first = day.First().Group;
+                try
+                {
+                    var read = await Task.Run(() => _runnerFor(first).SurveyAsync(day.Key.Date, day.Key.Date, [.. wanted], openEach: false,
+                        openWhen: (group, date, _) => date == day.Key.Date && wanted.Contains(group)));
+                    // listOnly: a session not opened keeps what an earlier read learned of it.
+                    _cache.Merge(read, day.Key.Date, day.Key.Date, LmsEmailFor(first), listOnly: true);
+                    ConsoleLogger.Info($"[LMS] Sessions page: read {string.Join(", ", wanted)} of {day.Key.Date:ddd dd MMM} - what is on each session.");
+                }
+                catch (Exception ex) { ConsoleLogger.Warn($"[LMS] Sessions page, reading {string.Join(", ", wanted)} of {day.Key.Date:dd MMM}: {ex.Message}"); }
+            }
+        }
+        finally { IsBusy = false; }
+        await ReloadAsync();
+    }
+
     private async Task SweepMaterialsAsync()
     {
         if (Processor == null || DateTimeOffset.Now - _lastMaterialSweep < TimeSpan.FromMinutes(5)) return;

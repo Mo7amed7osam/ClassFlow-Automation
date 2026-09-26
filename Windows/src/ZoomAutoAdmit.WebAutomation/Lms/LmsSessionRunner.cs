@@ -57,7 +57,7 @@ public sealed record LmsAttendanceResult(bool IsSuccess, string Message, LmsAtte
 /// today, opens the one row that matches the group, and presses the button on that session's own
 /// page. It never presses anything on a row it could not match.
 /// </summary>
-public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfileManager? profiles = null)
+public sealed partial class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfileManager? profiles = null)
 {
     private const string LoginUrl = "https://dashboard.depi.eyouthbusiness.com/auth/login";
     private const string SessionsUrl = "https://dashboard.depi.eyouthbusiness.com/group_admin/sessions";
@@ -770,6 +770,9 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         Func<string, DateOnly?, TimeOnly?, bool>? openWhen = null)
     {
         var account = credentials.Read() ?? throw new InvalidOperationException("No LMS sign-in is saved.");
+        // The API first: a day is one answer, and a session's contents two more. The pages are read
+        // only when the API cannot be used.
+        if (!headed && await SurveyByApiAsync(from, to, groups, openEach, openWhen, cancellationToken) is { } viaApi) return viaApi;
         // Its own profile: a look at the list must never collide with the automation pressing a button.
         var profile = _profiles.GetOrCreate(ProfileName + "-view");
         var browser = await new ZoomBrowserLauncher().LaunchAsync(
@@ -1189,11 +1192,24 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         await using var closing = browser;
         var page = browser.Context.Pages.Count > 0 ? browser.Context.Pages[0] : await browser.Context.NewPageAsync();
         page.SetDefaultTimeout((float)StepTimeout.TotalMilliseconds);
+        // The dashboard's own API calls while the list and the session open: what reading them
+        // directly would ask for. Sign-in answers are left out, since they carry the token.
+        var calls = new List<string>();
+        page.Response += async (_, response) =>
+        {
+            string url = response.Url;
+            if (!url.Contains("back.depi.eyouthbusiness.com", StringComparison.OrdinalIgnoreCase)
+                || System.Text.RegularExpressions.Regex.IsMatch(url, "auth|login|token|refresh", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) return;
+            string body = "";
+            try { body = await response.TextAsync(); } catch (PlaywrightException) { }
+            lock (calls) calls.Add($"{response.Request.Method} {url} -> {response.Status}{Environment.NewLine}    {(body.Length > 1500 ? body[..1500] + "..." : body)}");
+        };
         await SignInAsync(page, account, cancellationToken);
         var opened = await OpenSessionAsync(page, group, day, startTime, cancellationToken);
         if (!opened.IsOpen) return opened.Reason;
         await page.WaitForTimeoutAsync(2500);
         var text = new System.Text.StringBuilder();
+        lock (calls) foreach (var call in calls) text.AppendLine("API " + call);
         text.AppendLine("PAGE TEXT: " + (await SessionTextAsync(page)).ReplaceLineEndings(" | "));
         var listed = await ReadAttachmentsAsync(page);
         text.AppendLine("ATTACHMENTS READ: " + (listed == null ? "(card not found)" : listed.Count == 0 ? "(none)" : string.Join(" | ", listed)));

@@ -31,11 +31,11 @@ public static class ClassMode
             .Select(s => Normalize(s.Mode))
             .FirstOrDefault();
         if (fromSchedule != null) return fromSchedule;
+        // The LMS's own times are not to be trusted (they can be hours off the timetable), so its
+        // session is the group's session of that day - the nearest one when there are two.
         return lms
             .Where(c => c.Session.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && c.Session.Date == day
-                        && Normalize(c.Session.Mode) != null
-                        && (c.Session.Start is not { } at || ScheduleTiming.IsSameClass(start.ToTimeSpan(), at.ToTimeSpan())
-                            || ScheduleTiming.IsSameClass(at.ToTimeSpan(), start.ToTimeSpan())))
+                        && Normalize(c.Session.Mode) != null)
             .OrderBy(c => c.Session.Start is { } at ? Math.Abs((at.ToTimeSpan() - start.ToTimeSpan()).TotalMinutes) : 9999)
             .ThenByDescending(c => c.ReadAt)
             .Select(c => Normalize(c.Session.Mode))
