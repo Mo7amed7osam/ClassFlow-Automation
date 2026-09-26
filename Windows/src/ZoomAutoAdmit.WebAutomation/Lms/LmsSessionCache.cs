@@ -23,7 +23,13 @@ public sealed class LmsSessionCache(string? path = null)
     {
         lock (Gate)
         {
-            try { return File.Exists(Path) ? JsonSerializer.Deserialize<Document>(File.ReadAllText(Path), Json)?.Sessions ?? [] : []; }
+            // A row read without its group code (the LMS's list of 2026-09-26, read whole, gave the
+            // entire row as the "group") is not a class of anybody's: it is not shown or kept.
+            try
+            {
+                var sessions = File.Exists(Path) ? JsonSerializer.Deserialize<Document>(File.ReadAllText(Path), Json)?.Sessions ?? [] : [];
+                return [.. sessions.Where(e => IsGroupCode(e.Session.Group))];
+            }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return []; }
         }
     }
@@ -71,6 +77,10 @@ public sealed class LmsSessionCache(string? path = null)
             File.Move(temporary, Path, overwrite: true);
         }
     }
+
+    /// <summary>A group as the LMS names it: CAI5_AIS4_S8, CAI5_IND1_G2.</summary>
+    public static bool IsGroupCode(string? group) =>
+        group != null && System.Text.RegularExpressions.Regex.IsMatch(group.Trim(), @"^[A-Za-z]{2,6}\d*_[A-Za-z0-9]+_[A-Za-z0-9]+$");
 
     private static bool Same(LmsSessionRunner.LmsSessionInfo a, LmsSessionRunner.LmsSessionInfo b) =>
         a.Group.Equals(b.Group, StringComparison.OrdinalIgnoreCase) && a.Date == b.Date && a.Start == b.Start;

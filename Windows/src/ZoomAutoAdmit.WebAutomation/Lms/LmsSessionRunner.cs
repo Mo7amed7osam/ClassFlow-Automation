@@ -726,7 +726,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     }
 
     private static readonly System.Text.RegularExpressions.Regex ModeCell =
-        new(@"^(Physical|Online|Offline|Hybrid)(\s+Session)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        new(@"^(Physical|Online|Offline|Hybrid|Live)(\s+Session)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     /// <summary>
     /// The session's type and focus from its list row. The row reads, one cell a tab apart,
@@ -744,7 +744,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             string mode = match.Groups[1].Value.ToLowerInvariant() switch
             {
                 "physical" or "offline" => "Physical",
-                "online" => "Online",
+                "online" or "live" => "Online",
                 _ => "Hybrid",
             };
             string focus = i + 1 < cells.Length &&
@@ -794,12 +794,26 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
                 foreach (var row in await page.Locator("table tbody tr").AllAsync())
                 {
                     string text;
-                    try { text = await row.InnerTextAsync(new() { Timeout = 3000 }); }
+                    try { text = await RowTextAsync(row); }
                     catch (PlaywrightException) { index++; continue; }
+                    // The page has carried a second, hidden copy of the list since 2026-09-26: its rows
+                    // cannot be opened, and read whole they came out glued into one word.
+                    bool shown;
+                    try { shown = await row.IsVisibleAsync(); } catch (PlaywrightException) { shown = false; }
+                    if (!shown) { index++; continue; }
                     string key = text.Trim();
                     if (key.Length == 0 || !seen.Add(key)) { index++; continue; }
-                    string group = GroupCode.Match(text) is { Success: true } g ? g.Value : Summarise(text);
+                    // A row without a group code is not a class of any group: it is left out rather than
+                    // shown with the whole row for a name.
+                    if (GroupCode.Match(text) is not { Success: true } g)
+                    {
+                        ConsoleLogger.Info($"[LMS] A listed row names no group, left out: {Summarise(text)}");
+                        index++; continue;
+                    }
+                    string group = g.Value;
                     if (groups != null && groups.Count > 0 && !groups.Contains(group, StringComparer.OrdinalIgnoreCase)) { index++; continue; }
+                    // One class once, however many copies of it the page lists.
+                    if (!seen.Add($"{group}|{ReadRowTime(text)}|{System.Text.RegularExpressions.Regex.Match(text, @"\d{4}-\d{2}-\d{2}").Value}")) { index++; continue; }
                     var dateMatch = System.Text.RegularExpressions.Regex.Match(text, @"\d{4}-\d{2}-\d{2}");
                     DateOnly? date = dateMatch.Success && DateOnly.TryParse(dateMatch.Value, out var d) ? d : null;
                     var status = System.Text.RegularExpressions.Regex.Match(text, @"\b(pending|running|finished|cancelled|completed)\b",
@@ -837,7 +851,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
                 // The row must still be this group's before it is opened: a list that moved must not
                 // have another group's session read in its place.
                 onList = onList && await row.CountAsync() > 0 &&
-                         (!GroupCode.IsMatch(item.Group) || RowHasGroup(await row.InnerTextAsync(new() { Timeout = 3000 }), item.Group));
+                         (!GroupCode.IsMatch(item.Group) || RowHasGroup(await RowTextAsync(row), item.Group));
                 var open = row.Locator("td:first-child a, td:first-child button").First;
                 if (onList && await open.CountAsync() > 0 && await OpenSessionPageAsync(page, open, item.Group))
                 {
@@ -937,7 +951,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
                     if (!await OpenListPageAsync(page, day, day, listPage)) continue;           // back to that page of the list
                     var row = page.Locator("table tbody tr").Nth(index);
                     // Only a row that still names the group is opened: another group's students must never be read.
-                    if (!RowHasGroup(await row.InnerTextAsync(new() { Timeout = 3000 }), group)) continue;
+                    if (!RowHasGroup(await RowTextAsync(row), group)) continue;
                     var link = row.Locator("td:first-child a, td:first-child button").First;
                     if (await link.CountAsync() == 0 || !await OpenSessionPageAsync(page, link, group)) continue;
 
@@ -1258,7 +1272,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             foreach (var row in await page.Locator("table tbody tr").AllAsync())
             {
                 string text;
-                try { text = await row.InnerTextAsync(new() { Timeout = 3000 }); }
+                try { text = await RowTextAsync(row); }
                 catch (PlaywrightException) { index++; continue; }
                 if (RowHasGroup(text, group)) found.Add((number, index));
                 index++;
@@ -1320,6 +1334,20 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
     /// The row names this group as a whole word: CAI5_AIS4_S1 is not CAI5_AIS4_S10. With an admin
     /// account every group is listed, so a plain "contains" would open another group's class.
     /// </summary>
+    /// <summary>
+    /// A list row's text, one cell a tab apart. Read as a whole, a row the page is not laying out
+    /// comes back with its cells glued together - "...2026-09-2514:00CAI5_AIS4_S7secondyth..." - and
+    /// its group code cannot be found in it (2026-09-26, when the LMS changed its session list). The
+    /// cells are read one by one instead, whatever the page does with them.
+    /// </summary>
+    private static async Task<string> RowTextAsync(ILocator row)
+    {
+        string cells = await row.EvaluateAsync<string>(
+            "tr => [...tr.querySelectorAll('td, th')].map(c => (c.innerText || c.textContent || '').trim()).join(String.fromCharCode(9))",
+            null, new() { Timeout = 3000 });
+        return cells.Trim().Length > 0 ? cells : await row.InnerTextAsync(new() { Timeout = 3000 });
+    }
+
     internal static bool RowHasGroup(string rowText, string group) =>
         System.Text.RegularExpressions.Regex.IsMatch(rowText ?? "",
             $@"(?<![A-Za-z0-9_]){System.Text.RegularExpressions.Regex.Escape(group.Trim())}(?![A-Za-z0-9_])",
@@ -1797,7 +1825,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         {
             string text;
             // A row being replaced must not cost a full default timeout each time.
-            try { text = await row.InnerTextAsync(new() { Timeout = 3000 }); }
+            try { text = await RowTextAsync(row); }
             catch (PlaywrightException) { continue; }
             rowsSeen++;
             listedGroups.Add(Summarise(text));

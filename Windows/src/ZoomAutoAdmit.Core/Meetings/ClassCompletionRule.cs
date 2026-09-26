@@ -15,9 +15,9 @@ public static class ClassCompletionRule
 {
     public static TimeSpan NoEarlierThan { get; set; } = TimeSpan.FromHours(3);
 
-    /// <summary>Whether a class's name says it is a Coaching session.</summary>
+    /// <summary>Whether a class's name says it is a Coaching session ("Coaching", or the LMS's "coach").</summary>
     public static bool IsCoaching(string? className) =>
-        className?.Contains("coaching", StringComparison.OrdinalIgnoreCase) == true;
+        className?.Contains("coach", StringComparison.OrdinalIgnoreCase) == true;
 
     /// <summary>
     /// The earliest moment this class may be completed, or null when it may be completed as soon as

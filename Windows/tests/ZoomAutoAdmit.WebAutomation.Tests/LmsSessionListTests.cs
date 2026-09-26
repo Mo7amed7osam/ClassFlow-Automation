@@ -60,6 +60,9 @@ public class LmsSessionModeTests
     [InlineData("Week 9 - Session 2\t2026-09-21\n19:00\tCAI5_AIS4_S7\tCAI\tOnline\tCoaching\tPending\t", "Online", "Coaching")]
     [InlineData("Week 9 - Session 2\t2026-09-21\n19:00\tCAI5_AIS4_S7\tCAI\tOnline\tFinished", "Online", "")]
     [InlineData("Week 9 - Session 2\t2026-09-21 19:00\tCAI5_AIS4_S7", "", "")]
+    // The list as it reads since 2026-09-26: lower case, "live" for an online class, "coach" for Coaching.
+    [InlineData("Week 11 - Session 1\tYYossef ayoub\t2026-09-26 14:00\tCAI5_IND1_G1\tsecond\tyth\tCAI\tlive\tcoach\tpending\tJoin Session", "Online", "coach")]
+    [InlineData("Week 11 - Session 1\tGGehad Wahed\t2026-09-25 14:00\tCAI5_AIS4_S7\tsecond\tyth\tCAI\tphysical\tfreelancing\tfinished\tLocation", "Physical", "freelancing")]
     public void TheRowSaysWhetherTheClassIsInARoomAndWhatItIsAbout(string row, string mode, string focus) =>
         Assert.Equal((mode, focus), LmsSessionRunner.ModeOfRow(row));
 }

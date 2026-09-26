@@ -61,7 +61,7 @@ public static class ClassMode
     public static string? Normalize(string? mode) => mode?.Trim().ToLowerInvariant() switch
     {
         "physical" or "physical session" or "offline" or "in person" or "in-person" or "onsite" or "on-site" => Physical,
-        "online" or "online session" => Online,
+        "online" or "online session" or "live" => Online,
         _ => null,
     };
 
