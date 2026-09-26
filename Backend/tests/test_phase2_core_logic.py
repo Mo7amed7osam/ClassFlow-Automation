@@ -9,6 +9,7 @@ import uuid
 from datetime import UTC, date, datetime
 
 import pytest
+from sqlalchemy import select
 from central_backend.attendance_names import clean_display_name, is_globally_ignored
 from central_backend.models import (
     AttendanceSession,
@@ -16,6 +17,7 @@ from central_backend.models import (
     ClassPlan,
     Group,
     Job,
+    RunDelegation,
     Student,
     StudentAlias,
     User,
@@ -197,6 +199,21 @@ async def test_seed_production_data_idempotent(session_maker):
         assert counts1["students"] == 45
         assert counts1["zoom_accounts"] == 2
 
+        # Existing dashboard-owned roster and delegation edits survive startup seeding.
+        student = (await session.execute(select(Student).where(Student.group_name == "CAI5_IND1_G1").limit(1))).scalar_one()
+        student.active = False
+        student.order_index = 99
+        student.aliases = ["Operator alias"]
+        removed_seed_alias = (await session.execute(select(StudentAlias).where(
+            StudentAlias.student_id == student.id, StudentAlias.source == "seed").limit(1))).scalar_one()
+        removed_seed_alias_id = removed_seed_alias.id
+        await session.delete(removed_seed_alias)
+        coordinator_id = (await session.execute(select(User.id).limit(1))).scalar_one()
+        delegation = await session.get(RunDelegation, coordinator_id)
+        assert delegation is not None
+        delegation.enabled = False
+        delegation.lms_account_id = None
+
         # Second run should make 0 additions
         counts2 = await seed_production_data(session, now)
         assert counts2["groups"] == 0
@@ -204,3 +221,9 @@ async def test_seed_production_data_idempotent(session_maker):
         assert counts2["aliases"] == 0
         assert counts2["zoom_accounts"] == 0
         assert counts2["plans"] == 0
+        await session.refresh(student)
+        await session.refresh(delegation)
+        assert (student.active, student.order_index, student.aliases) == (False, 99, ["Operator alias"])
+        assert (delegation.enabled, delegation.lms_account_id) == (False, None)
+        resurrected = await session.get(StudentAlias, removed_seed_alias_id)
+        assert resurrected is None

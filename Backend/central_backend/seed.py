@@ -182,9 +182,8 @@ async def seed_production_data(session: AsyncSession, now: datetime | None = Non
             enabled=True,
             updated_at=now,
         ))
-    else:
-        delegation.enabled = True
-        delegation.lms_account_id = lms_acc.id
+    # An existing delegation is operator-owned. In particular, never re-enable it or
+    # replace its selected LMS account on a deployment.
     await session.flush()
 
     # 6. Seed Students and Aliases
@@ -193,7 +192,8 @@ async def seed_production_data(session: AsyncSession, now: datetime | None = Non
             existing_s = (await session.execute(
                 select(Student).where(Student.group_name == group_code, Student.full_name == full_name)
             )).scalar_one_or_none()
-            if existing_s is None:
+            is_new = existing_s is None
+            if is_new:
                 s_id = uuid.uuid4()
                 existing_s = Student(
                     id=s_id,
@@ -208,29 +208,28 @@ async def seed_production_data(session: AsyncSession, now: datetime | None = Non
                 session.add(existing_s)
                 counts["students"] += 1
                 await session.flush()
-            else:
-                existing_s.active = True
-                existing_s.order_index = idx + 1
-                existing_s.aliases = list(set((existing_s.aliases or []) + aliases))
 
-            for alias in aliases:
-                key = normalize(alias)
-                if not key:
-                    continue
-                existing_alias = (await session.execute(
-                    select(StudentAlias).where(StudentAlias.student_id == existing_s.id, StudentAlias.alias_key == key)
-                )).scalar_one_or_none()
-                if existing_alias is None:
-                    session.add(StudentAlias(
-                        id=uuid.uuid4(),
-                        student_id=existing_s.id,
-                        alias=alias,
-                        alias_key=key,
-                        status="accepted",
-                        source="seed",
-                        created_at=now,
-                    ))
-                    counts["aliases"] += 1
+            # Starter aliases belong only to a newly created roster row. Recreating a
+            # deleted alias would undo an operator's dashboard decision on every deploy.
+            if is_new:
+                for alias in aliases:
+                    key = normalize(alias)
+                    if not key:
+                        continue
+                    existing_alias = (await session.execute(
+                        select(StudentAlias).where(StudentAlias.student_id == existing_s.id, StudentAlias.alias_key == key)
+                    )).scalar_one_or_none()
+                    if existing_alias is None:
+                        session.add(StudentAlias(
+                            id=uuid.uuid4(),
+                            student_id=existing_s.id,
+                            alias=alias,
+                            alias_key=key,
+                            status="accepted",
+                            source="seed",
+                            created_at=now,
+                        ))
+                        counts["aliases"] += 1
     await session.flush()
 
     # 7. Seed ClassPlans for current week + next 2 weeks (21 days lookahead)
