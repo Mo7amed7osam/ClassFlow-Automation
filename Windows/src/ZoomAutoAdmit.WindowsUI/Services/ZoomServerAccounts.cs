@@ -133,8 +133,50 @@ public sealed class ZoomServerAccounts(
                 ? $"{restored} Zoom account(s) came from your dashboard account; sign in to Zoom as {_restoredWithoutPassword} of them once."
                 : $"{restored} Zoom account(s) came from your dashboard account, with their Zoom sign-in.";
         }
+        // The database is where a password lives: one this PC does not have is taken from there.
+        int filled = await FillMissingPasswordsAsync(here, token);
         int? sent = await PushAsync(here, token);
-        return sent is > 0 ? $"{sent} Zoom account(s) of this PC were saved to your dashboard account." : null;
+        string? took = filled > 0 ? $"{filled} Zoom password(s) came from the database to this PC." : null;
+        return sent is > 0 ? $"{sent} Zoom account(s) of this PC were saved to your dashboard account.{(took != null ? " " + took : "")}" : took;
+    }
+
+    /// <summary>
+    /// For each account on this PC that has no Zoom password here while the database keeps one,
+    /// the password is written into this PC's credential store - so a password saved once, from any
+    /// PC or before a reinstall, is the one every PC signs in with. Answers how many came.
+    /// </summary>
+    public async Task<int> FillMissingPasswordsAsync(IReadOnlyList<WindowsMeetingAccountMetadata> here, CancellationToken token = default)
+    {
+        var missing = here.Where(account => !HasLocal(account.AccountId)).ToArray();
+        if (missing.Length == 0) return 0;
+        List<CentralZoomAccount> theirs;
+        try { theirs = await api.ZoomAccountsAsync(token); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { _log($"the database's Zoom accounts could not be read ({ex.Message})."); return 0; }
+        int filled = 0;
+        foreach (var account in missing)
+        {
+            var kept = theirs.FirstOrDefault(t => t.HasPassword && t.AccountId.Equals(account.AccountId, StringComparison.OrdinalIgnoreCase));
+            if (kept == null) continue;
+            try
+            {
+                var secret = await api.ZoomSecretAsync(kept.Id, token);
+                if (string.IsNullOrEmpty(secret.Password)) continue;
+                _credentials.Save(account.AccountId, string.IsNullOrWhiteSpace(secret.Email) ? account.ZoomEmail ?? "" : secret.Email, secret.Password);
+                filled++;
+                _log($"{account.AccountId}: its Zoom password came from the database.");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log($"{account.AccountId}: its Zoom password could not be read back ({ex.Message}).");
+            }
+        }
+        return filled;
+    }
+
+    private bool HasLocal(string accountId)
+    {
+        try { return _credentials.HasPassword(accountId); }
+        catch { return false; }
     }
 
     /// <summary>

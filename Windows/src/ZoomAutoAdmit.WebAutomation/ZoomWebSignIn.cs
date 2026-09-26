@@ -135,21 +135,34 @@ public static class ZoomWebSignIn
             }
 
             ConsoleLogger.Info($"WEB_SIGN_IN: signing the profile in as {credential.Email}.");
-            var email = await FirstVisibleAsync(page, "input[type=email], input#email, input[name=email]", token);
-            if (email == null) return await NeedsPersonAsync(page);
-            await email.FillAsync(credential.Email);
+            // Zoom's own field for it has moved: "email" until September 2026, then "account" -
+            // "Enter email, Zoom Mail or phone number", with the password on the next step.
+            var email = await FirstVisibleAsync(page,
+                "input[type=email], input#email, input[name=email], input[name=account], input#account, input[autocomplete=username]", token);
+            if (email == null) return await NeedsPersonAsync(page, "no field to type the e-mail into");
+            // Typed, not pasted: the newer page enables Next only on the keys it sees typed.
+            await email.ClickAsync();
+            await email.FillAsync("");
+            await email.PressSequentiallyAsync(credential.Email, new() { Delay = 40 });
             var password = await FirstVisibleAsync(page, "input[type=password]", token, TimeSpan.FromSeconds(2));
             if (password == null)
             {
                 // Newer sign-in: email first, then the password on the next step.
-                await PressAsync(page, NextButton);
-                password = await FirstVisibleAsync(page, "input[type=password]", token, TimeSpan.FromSeconds(10));
-                if (password == null) return await NeedsPersonAsync(page);
+                bool pressed = false;
+                for (int wait = 0; wait < 10 && !pressed; wait++)
+                {
+                    pressed = await PressAsync(page, NextButton);
+                    if (!pressed) await Task.Delay(500, token);
+                }
+                if (!pressed) await email.PressAsync("Enter");
+                password = await FirstVisibleAsync(page, "input[type=password]", token, TimeSpan.FromSeconds(15));
+                if (password == null) return await NeedsPersonAsync(page, "no password field after Next");
             }
             await password.FillAsync(credential.Password);
             if (!await PressAsync(page, SignInButton)) await password.PressAsync("Enter");
 
             var deadline = DateTime.UtcNow.AddSeconds(40);
+            int asking = 0;
             while (DateTime.UtcNow < deadline)
             {
                 token.ThrowIfCancellationRequested();
@@ -159,9 +172,12 @@ public static class ZoomWebSignIn
                     ConsoleLogger.Success($"WEB_SIGN_IN: signed in as {credential.Email}.");
                     return ZoomSignInOutcome.SignedIn;
                 }
-                if (await AsksForPersonAsync(page)) return await NeedsPersonAsync(page);
+                // A challenge a person must answer does not go away by itself; one seen for a moment
+                // while the page moves on is not one. Five seconds of it is.
+                asking = await AsksForPersonAsync(page) ? asking + 1 : 0;
+                if (asking >= 5) return await NeedsPersonAsync(page, "a challenge or a code is shown");
             }
-            ConsoleLogger.Warn("WEB_SIGN_IN: Zoom did not accept the sign-in in 40 seconds (check the saved Zoom password).");
+            ConsoleLogger.Warn($"WEB_SIGN_IN: Zoom did not accept the sign-in in 40 seconds (check the saved Zoom password). {await DescribeAsync(page)}");
             return ZoomSignInOutcome.Failed;
         }
         catch (PlaywrightException ex)
@@ -240,18 +256,50 @@ public static class ZoomWebSignIn
     {
         try
         {
-            if (page.Frames.Any(f => f.Url.Contains("captcha", StringComparison.OrdinalIgnoreCase))) return true;
-            var code = page.Locator("input[autocomplete='one-time-code'], input[name*='code' i], input[id*='code' i]");
+            // Zoom's sign-in page always carries an invisible reCAPTCHA frame, so a captcha frame
+            // being there says nothing (2026-09-26: every sign-in of 's8' gave up on it). Only a
+            // challenge shown on the page - reCAPTCHA's picture grid, hCaptcha - is one.
+            var challenge = page.Locator("iframe[src*='bframe'], iframe[src*='hcaptcha.com'], iframe[title*='challenge' i]");
+            foreach (var frame in await challenge.AllAsync())
+                if (await frame.IsVisibleAsync() && await frame.BoundingBoxAsync() is { Height: > 60 }) return true;
+            var code = page.Locator("input[autocomplete='one-time-code'], input[name*='code' i]:not([name*='country' i]), input[id*='code' i]:not([id*='country' i])");
             foreach (var input in await code.AllAsync()) if (await input.IsVisibleAsync()) return true;
         }
         catch (PlaywrightException) { }
         return false;
     }
 
-    private static Task<ZoomSignInOutcome> NeedsPersonAsync(IPage page)
+    private static async Task<ZoomSignInOutcome> NeedsPersonAsync(IPage page, string why)
     {
-        ConsoleLogger.Warn("WEB_SIGN_IN: Zoom asks for a person (captcha or a one-time code). Sign this profile in by hand once; it is remembered.");
-        return Task.FromResult(ZoomSignInOutcome.NeedsPerson);
+        ConsoleLogger.Warn($"WEB_SIGN_IN: Zoom asks for a person ({why}). Sign this profile in by hand once; it is remembered. " +
+                           await DescribeAsync(page));
+        return ZoomSignInOutcome.NeedsPerson;
+    }
+
+    /// <summary>
+    /// What the sign-in page shows when it stops: its address without the query, the fields a person
+    /// could type into, and its first words - so "asks for a person" can be told from a page that
+    /// only looked like it. Never the values in the fields.
+    /// </summary>
+    private static async Task<string> DescribeAsync(IPage page)
+    {
+        try
+        {
+            string address = page.Url.Split('?')[0];
+            var fields = new List<string>();
+            foreach (var input in await page.Locator("input").AllAsync())
+            {
+                try
+                {
+                    if (await input.IsVisibleAsync())
+                        fields.Add($"{await input.GetAttributeAsync("type") ?? "text"}:{await input.GetAttributeAsync("name") ?? await input.GetAttributeAsync("id") ?? "?"}");
+                }
+                catch (PlaywrightException) { }
+            }
+            string text = System.Text.RegularExpressions.Regex.Replace(await page.Locator("body").InnerTextAsync(new() { Timeout = 3000 }), @"\s+", " ").Trim();
+            return $"[page {address}; fields {string.Join(", ", fields)}; reads \"{(text.Length > 240 ? text[..240] + "..." : text)}\"]";
+        }
+        catch (Exception) { return ""; }
     }
 
     private static async Task<ILocator?> FirstVisibleAsync(IPage page, string selector, CancellationToken token, TimeSpan? wait = null)
