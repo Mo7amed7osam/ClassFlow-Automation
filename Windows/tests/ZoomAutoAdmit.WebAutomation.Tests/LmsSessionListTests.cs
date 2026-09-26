@@ -66,3 +66,35 @@ public class LmsSessionModeTests
     public void TheRowSaysWhetherTheClassIsInARoomAndWhatItIsAbout(string row, string mode, string focus) =>
         Assert.Equal((mode, focus), LmsSessionRunner.ModeOfRow(row));
 }
+
+/// <summary>An assignment is due when the group's next class of the same track starts.</summary>
+public class MaterialDeadlineTests
+{
+    [Fact]
+    public void TheNextFreelancingClassOfTheGroupIsTheDeadline()
+    {
+        TimetableEntry Class(string group, int day, int hour, string kind) =>
+            new(group, new DateOnly(2026, 9, day), new TimeOnly(hour, 0), $"{group} • Week • {kind}");
+        var timetable = new[]
+        {
+            Class("CAI5_AIS4_S7", 25, 14, "freelancing"),
+            Class("CAI5_AIS4_S7", 27, 19, "Technical"),
+            Class("CAI5_AIS4_S8", 30, 14, "freelancing"),       // another group
+            Class("CAI5_AIS4_S7", 2, 14, "freelancing"),         // before this one: not the next
+            Class("CAI5_AIS4_S7", 29, 14, "Freelancing"),
+        };
+
+        Assert.Equal(new DateTime(2026, 9, 29, 14, 0, 0),
+            MaterialPlanner.NextOfTrack(timetable, "CAI5_AIS4_S7", new DateOnly(2026, 9, 25), new TimeOnly(14, 0), MaterialPlanner.Freelancing));
+        Assert.Null(MaterialPlanner.NextOfTrack(timetable, "CAI5_AIS4_S7", new DateOnly(2026, 9, 29), new TimeOnly(14, 0), MaterialPlanner.Freelancing));
+    }
+
+    [Fact]
+    public void WithoutANextClassTheDeadlineIsAWeekOn()
+    {
+        var plan = new MaterialPlan(MaterialPlanner.Freelancing, 5, null, [], [], null, "");
+        Assert.Equal(new DateTime(2026, 10, 2, 14, 0, 0), MaterialPlanner.DefaultDeadline(plan, new DateOnly(2026, 9, 25), new TimeOnly(14, 0)));
+        Assert.Equal(new DateTime(2026, 9, 29, 14, 0, 0), MaterialPlanner.DefaultDeadline(plan with { NextOfTrack = new DateTime(2026, 9, 29, 14, 0, 0) },
+            new DateOnly(2026, 9, 25), new TimeOnly(14, 0)));
+    }
+}

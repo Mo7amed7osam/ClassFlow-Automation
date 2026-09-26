@@ -235,7 +235,8 @@ public sealed class LmsSessionsViewModel : ObservableObject
     private Task CheckLmsAsync(bool full)
     {
         var today = DateOnly.FromDateTime(DateTime.Now);
-        return CheckLmsAsync(full, full ? today.AddDays(-30) : today.AddDays(-3), full ? today.AddDays(1) : today.AddDays(3));
+        // A week and a day ahead: next week's class of the same track is when an assignment is due.
+        return CheckLmsAsync(full, full ? today.AddDays(-30) : today.AddDays(-3), full ? today.AddDays(1) : today.AddDays(8));
     }
 
     /// <summary>Reads the LMS for these days only: full opens every session (status, link, attendance).</summary>
@@ -309,7 +310,7 @@ public sealed class LmsSessionsViewModel : ObservableObject
             var pending = await _queue.ReadAsync();
             var history = await _queue.ReadHistoryAsync();
             var cache = _cache.Read();
-            var timetable = Timetable(schedules);
+            var timetable = Timetable(schedules, cache);
             var materials = MaterialSettings.Load();
 
             static string Key(string g, DateOnly d, TimeOnly t) => $"{g.ToUpperInvariant()}|{d:yyyy-MM-dd}|{t:HH\\:mm}";
@@ -915,9 +916,38 @@ public sealed class LmsSessionsViewModel : ObservableObject
 
     // ------------------------------------------------------------------ material and assignments
 
-    private static List<TimetableEntry> Timetable(IEnumerable<MeetingSchedule> schedules) =>
-        [.. schedules.Where(s => s.OccurrenceDate.HasValue)
-            .Select(s => new TimetableEntry(s.GroupName ?? s.AccountId, s.OccurrenceDate!.Value, new TimeOnly(s.Time.Hour, s.Time.Minute), s.Name))];
+    /// <summary>
+    /// The classes and what each is about: the schedules here, and the LMS's own list for what they
+    /// do not say. A class the schedules do not have (a physical one dropped by an older import) is
+    /// taken from the LMS, and a schedule entry whose name does not say its kind ("Week 10 -
+    /// Session 1") takes the LMS's focus - so a Freelancing class's material and its next Freelancing
+    /// class are known without anyone typing them (2026-09-26, S7 on Fri 25 Sep).
+    /// </summary>
+    private List<TimetableEntry> Timetable(IEnumerable<MeetingSchedule> schedules) => Timetable(schedules, _cache.Read());
+
+    private static List<TimetableEntry> Timetable(IEnumerable<MeetingSchedule> schedules, IReadOnlyList<LmsSessionCache.Entry> lms)
+    {
+        LmsSessionRunner.LmsSessionInfo? Listed(string group, DateOnly day, TimeOnly start) => lms
+            .Where(c => c.Session.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && c.Session.Date == day && c.Session.Start is { } t
+                        && Math.Abs((t.ToTimeSpan() - start.ToTimeSpan()).TotalMinutes) <= 90)
+            .OrderByDescending(c => c.ReadAt).Select(c => c.Session).FirstOrDefault();
+        var entries = schedules.Where(s => s.OccurrenceDate.HasValue).Select(s =>
+        {
+            string group = s.GroupName ?? s.AccountId;
+            var start = new TimeOnly(s.Time.Hour, s.Time.Minute);
+            string name = s.Name;
+            if (MaterialPlanner.TrackOf(name).Length == 0 && Listed(group, s.OccurrenceDate!.Value, start) is { Focus.Length: > 0 } session)
+                name = $"{name} • {session.Focus}";
+            return new TimetableEntry(group, s.OccurrenceDate!.Value, start, name);
+        }).ToList();
+        foreach (var session in lms.Select(c => c.Session).Where(s => s.Date != null && s.Start != null && s.Focus.Length > 0))
+        {
+            if (entries.Any(e => e.Group.Equals(session.Group, StringComparison.OrdinalIgnoreCase) && e.Date == session.Date
+                                 && Math.Abs((e.Start.ToTimeSpan() - session.Start!.Value.ToTimeSpan()).TotalMinutes) <= 90)) continue;
+            entries.Add(new TimetableEntry(session.Group, session.Date!.Value, session.Start!.Value, $"{session.Group} • {session.Title} • {session.Focus}"));
+        }
+        return entries;
+    }
 
     /// <summary>
     /// Puts the class's material on its session - each file as an attachment - and creates its
@@ -1043,8 +1073,10 @@ public sealed class LmsSessionsViewModel : ObservableObject
         if (Processor == null || DateTimeOffset.Now - _lastMaterialSweep < TimeSpan.FromMinutes(5)) return;
         _lastMaterialSweep = DateTimeOffset.Now;
         var now = DateTime.Now;
-        var due = Rows.Where(r => r.Material is { Fixed: true, Done: false, RemovedOnLms: false, Files.Count: > 0 } && r.Date == DateOnly.FromDateTime(now))
-            .Where(r => now >= r.Date.ToDateTime(r.Start).AddMinutes(10) && now <= r.Date.ToDateTime(r.Start).AddHours(8))
+        // Today's classes, and one of the last two days whose material never went up (its kind was
+        // not known then, or the app was closed): it is put on its session late rather than never.
+        var due = Rows.Where(r => r.Material is { Fixed: true, Done: false, RemovedOnLms: false, Files.Count: > 0 })
+            .Where(r => now >= r.Date.ToDateTime(r.Start).AddMinutes(10) && now <= r.Date.ToDateTime(r.Start).AddHours(48))
             .Where(r => !_materialTried.TryGetValue(r.Key, out var at) || DateTimeOffset.Now - at > TimeSpan.FromMinutes(30))
             .ToList();
         foreach (var row in due)

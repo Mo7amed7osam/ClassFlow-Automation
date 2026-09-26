@@ -115,6 +115,8 @@ public sealed record MaterialPlan(
     /// <summary>Fixed material goes up by itself at class time; a technical class waits for its folder.</summary>
     public bool IsFixed => MaterialPlanner.FixedTracks.Contains(Track);
     public string Label => Track.Length == 0 ? "" : Number is { } n ? $"{Track} {n}" : Track;
+    /// <summary>When the group's next class of the same track starts: its assignment is due then.</summary>
+    public DateTime? NextOfTrack { get; init; }
 }
 
 /// <summary>
@@ -189,6 +191,26 @@ public static class MaterialPlanner
 
     public static MaterialPlan Plan(IReadOnlyList<TimetableEntry> timetable, string group, DateOnly date, TimeOnly start, MaterialSettings settings, string? lmsTitle = null)
     {
+        var plan = PlanOf(timetable, group, date, start, settings, lmsTitle);
+        return plan.IsFixed ? plan with { NextOfTrack = NextOfTrack(timetable, group, date, start, plan.Track) } : plan;
+    }
+
+    /// <summary>
+    /// The start of the group's next class of the same track after this one, in the timetable -
+    /// the uploaded one, and the LMS's own list for the classes it does not have. Null when none is known.
+    /// </summary>
+    public static DateTime? NextOfTrack(IEnumerable<TimetableEntry> timetable, string group, DateOnly date, TimeOnly start, string track)
+    {
+        var after = date.ToDateTime(start);
+        return timetable
+            .Where(e => e.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && TrackOf(e.Name) == track && e.Date.ToDateTime(e.Start) > after.AddHours(4))
+            .Select(e => (DateTime?)e.Date.ToDateTime(e.Start))
+            .OrderBy(at => at)
+            .FirstOrDefault();
+    }
+
+    private static MaterialPlan PlanOf(IReadOnlyList<TimetableEntry> timetable, string group, DateOnly date, TimeOnly start, MaterialSettings settings, string? lmsTitle)
+    {
         string key = MaterialSettings.KeyOf(group, date, start);
         var entry = timetable.FirstOrDefault(e => e.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && e.Date == date && e.Start == start);
         string track = TrackOf(entry?.Name);
@@ -260,7 +282,10 @@ public static class MaterialPlanner
         return [.. plan.Files, new LmsMaterialFile(Path.GetFileNameWithoutExtension(sheet).Trim(), sheet)];
     }
 
-    /// <summary>The deadline a class's assignment gets unless one was chosen: a week after the class, except technical ones.</summary>
+    /// <summary>
+    /// The deadline a class's assignment gets unless one was chosen: the start of the group's next
+    /// class of the same track, else a week after the class. A technical class gets none by itself.
+    /// </summary>
     public static DateTime? DefaultDeadline(MaterialPlan plan, DateOnly date, TimeOnly start) =>
-        plan.IsTechnical ? null : date.ToDateTime(start).AddDays(7);
+        plan.IsTechnical ? null : plan.NextOfTrack ?? date.ToDateTime(start).AddDays(7);
 }
