@@ -17,9 +17,10 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Job, Recording
+from .models import GoogleSheetsSyncRecord, Job, Recording
 from .observability import emit
 
 OUTCOME_STATUS = {"succeeded": "attached", "failed": "failed"}
@@ -27,9 +28,12 @@ OUTCOME_STATUS = {"succeeded": "attached", "failed": "failed"}
 
 async def record_job_outcome(session: AsyncSession, job: Job, now: datetime) -> str | None:
     """Update the job's recording, if it has one. Returns the new lms_status, or None if unchanged."""
-    if job.recording_id is None or job.status not in OUTCOME_STATUS:
+    if job.status not in OUTCOME_STATUS:
         return None
     payload = job.payload or {}
+    await _record_sheet_outcome(session, job, now)
+    if job.recording_id is None:
+        return None
     if payload.get("dryRun"):
         emit("recording.dry_run_finished", recordingId=str(job.recording_id), jobId=str(job.id), outcome=job.status)
         return None
@@ -48,3 +52,19 @@ async def record_job_outcome(session: AsyncSession, job: Job, now: datetime) -> 
     recording.updated_at = now
     emit("recording.lms_status", recordingId=str(recording.id), jobId=str(job.id), lmsStatus=status)
     return status
+
+
+async def _record_sheet_outcome(session: AsyncSession, job: Job, now: datetime) -> None:
+    """Close the exact read-only source row only after the worker's attach result is final."""
+    rows = (await session.execute(
+        select(GoogleSheetsSyncRecord).where(GoogleSheetsSyncRecord.job_id == job.id).with_for_update()
+    )).scalars().all()
+    if not rows or (job.payload or {}).get("dryRun"):
+        return
+    for row in rows:
+        row.status = "attached" if job.status == "succeeded" else (
+            "conflict" if (job.error or {}).get("code") == "recordingConflict" else "failed")
+        row.detail = None if job.status == "succeeded" else str((job.error or {}).get("message") or "LMS attachment failed")[:500]
+        row.processed_at = now
+        row.updated_at = now
+        emit("google_sheets.attach_finished", sheetRecordId=str(row.id), jobId=str(job.id), status=row.status)

@@ -56,6 +56,8 @@ async def record_occurrence_outcome(session: AsyncSession, job: Job, now: dateti
         # last error instead of marking the entire class irrecoverably failed.
         error = job.error or {}
         occurrence.last_error = str(error.get("message") or error.get("code") or "Worker job failed")[:500]
+        if job.type == "recording.process" and error.get("code") == "recordingConflict":
+            occurrence.state = "conflict"
         return
 
     occurrence.last_error = None
@@ -63,6 +65,13 @@ async def record_occurrence_outcome(session: AsyncSession, job: Job, now: dateti
     if job.type == "class.run":
         occurrence.actual_start = _timestamp(result.get("startedAt")) or occurrence.actual_start
         occurrence.actual_end = _timestamp(result.get("endedAt")) or now
+        return
+
+    if job.type == "recording.process":
+        if not result.get("dryRun") and isinstance((job.payload or {}).get("recordLink"), str):
+            occurrence.drive_recording_url = job.payload["recordLink"]
+            if _STATE_ORDER.get(occurrence.state, -1) <= _STATE_ORDER["driveLinkAttached"]:
+                occurrence.state = "driveLinkAttached"
         return
 
     state = _SUCCESS_STATES.get(job.type)

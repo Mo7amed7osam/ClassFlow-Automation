@@ -49,7 +49,7 @@ _DRIVE_FILE_PATH = re.compile(r"^/file/d/(?P<id>[A-Za-z0-9_-]{20,100})(?:/(?:vie
 _TIME = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _CAPABILITY = re.compile(r"^[a-z][a-z0-9_.-]{0,40}$")
 
-RECORDING_FIELDS = ("group", "recordLink", "date", "startTime", "replaceExisting", "dryRun")
+RECORDING_FIELDS = ("group", "recordLink", "date", "startTime", "replaceExisting", "dryRun", "lmsAccountId")
 
 CLASS_STAGE_FIELDS = (
     "classPlanId", "group", "date", "startTime", "coordinatorId", "title",
@@ -134,6 +134,9 @@ def validate_recording_payload(payload: Any) -> dict[str, Any]:
         if not isinstance(value, bool):
             raise PayloadError(f"'{flag}' must be true or false.")
         normalised[flag] = value
+    lms_account_id = _identifier(payload, "lmsAccountId", required=False)
+    if lms_account_id is not None:
+        normalised["lmsAccountId"] = lms_account_id
     return normalised
 
 

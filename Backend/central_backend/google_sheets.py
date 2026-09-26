@@ -27,6 +27,7 @@ from sqlalchemy import func, select
 
 from .api import ApiError, _json
 from .auth import CurrentUser, current_user, require_admin, require_dashboard_header
+from .jobs import create_job
 from .models import ClassOccurrence, GoogleSheetsConnection, GoogleSheetsSyncRecord, Recording
 from .recordings import _same_session, sync_recording
 from .user_data import SecretBox
@@ -213,6 +214,36 @@ class GoogleSheetsSynchronizer:
                     occurrence.updated_at = now
                     if occurrence.state not in ("driveLinkAttached", "conflict"):
                         occurrence.state = "driveLinkFound"
+                    # The worker must use the account captured for this exact class.  A sheet row
+                    # never contains credentials and must not fall back to a random signed-in LMS
+                    # profile on a cloud machine.
+                    if occurrence.lms_account_id is None or occurrence.scheduled_start is None:
+                        record.status, record.detail, record.processed_at = (
+                            "conflict", "This occurrence has no bound LMS account or scheduled start time.", now)
+                        counts["conflict"] += 1
+                        continue
+                    start = occurrence.scheduled_start.astimezone(CAIRO).strftime("%H:%M")
+                    payload = {
+                        "group": occurrence.group_name,
+                        "recordLink": row.drive_link,
+                        "date": occurrence.session_date.isoformat(),
+                        "startTime": start,
+                        # The LMS runner replaces only its own temporary Zoom URL.  A different
+                        # Drive/manual URL is a visible conflict, never an automatic overwrite.
+                        "replaceExisting": False,
+                        "dryRun": False,
+                        "lmsAccountId": str(occurrence.lms_account_id),
+                    }
+                    key = hashlib.sha256(row.drive_link.encode()).hexdigest()[:24]
+                    job, _ = await create_job(
+                        session, job_type="recording.process", payload=payload,
+                        idempotency_key=f"occurrence:{occurrence.id}:drive:{key}", now=now, max_attempts=3,
+                    )
+                    job.occurrence_id = occurrence.id
+                    record.occurrence_id, record.job_id = occurrence.id, job.id
+                    record.recording_id, record.status, record.processed_at = recording.id, "processing", now
+                    counts["pending"] += 1
+                    continue
                 record.recording_id, record.status, record.processed_at = recording.id, "pending", now
                 counts["pending"] += 1
         return counts

@@ -16,6 +16,8 @@ public enum LmsFailure
     SessionNotFinished,
     /// <summary>The link handed in is not a Zoom recording link.</summary>
     InvalidLink,
+    /// <summary>The exact session already has a different non-Zoom recording link.</summary>
+    RecordingConflict,
     /// <summary>Anything else: a page that did not load, a save that did not take.</summary>
     Failed,
 }
@@ -352,12 +354,17 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             if (alreadyHasLink && !replaceExisting)
             {
                 string current = (await field.InputValueAsync()).Trim();
-                if (!current.Contains("zoom.us", StringComparison.OrdinalIgnoreCase) ||
-                    current.Equals(recordLink.Trim(), StringComparison.Ordinal))
+                if (current.Equals(recordLink.Trim(), StringComparison.Ordinal))
                 {
                     await page.Keyboard.PressAsync("Escape");       // closed unsaved
                     return LmsRunResult.Success($"{group}: the session already has a recording link, so it was left as it is.")
                         with { AlreadyExists = true };
+                }
+                if (!current.Contains("zoom.us", StringComparison.OrdinalIgnoreCase))
+                {
+                    await page.Keyboard.PressAsync("Escape");       // closed unsaved
+                    return LmsRunResult.Fail(LmsFailure.RecordingConflict,
+                        $"{group}: the LMS session already has a different non-Zoom record link, so it was not replaced.");
                 }
                 ConsoleLogger.Info($"[LMS] {group}: the session has the Zoom link; it is replaced by the Drive link.");
             }
@@ -380,6 +387,21 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             if (stillOpen)
                 return LmsRunResult.Failure(
                     $"{group}: Save was pressed but the record link box is still open, so it was not saved.");
+            // A closed modal only proves the frontend accepted the click. Reload the exact session
+            // and read its value back so the server never marks a Drive link attached when the LMS
+            // discarded or normalised it behind the dialog.
+            step = "verifying the saved record link";
+            await page.ReloadAsync(new() { WaitUntil = WaitUntilState.NetworkIdle });
+            var verify = page.GetByRole(AriaRole.Button, new()
+            { NameRegex = new(@"Edit\s+Record\s+Link", System.Text.RegularExpressions.RegexOptions.IgnoreCase) }).First;
+            await verify.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 20000 });
+            await verify.ClickAsync();
+            await field.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
+            string saved = (await field.InputValueAsync()).Trim();
+            await page.Keyboard.PressAsync("Escape");
+            if (!saved.Equals(recordLink.Trim(), StringComparison.Ordinal))
+                return LmsRunResult.Failure(
+                    $"{group}: the LMS saved a different record link after reload, so this attachment needs review.");
             return LmsRunResult.Success($"{group}: the recording link was saved on the session.");
         }
         catch (OperationCanceledException) { throw; }

@@ -306,6 +306,7 @@ public sealed class RecordingLinkProcessor(
                     LmsFailure.SessionNotFound => "sessionNotFound",
                     LmsFailure.SessionNotFinished => "sessionNotFinished",
                     LmsFailure.InvalidLink => "invalidLink",
+                    LmsFailure.RecordingConflict => "recordingConflict",
                     _ => "lmsFailed",
                 },
             };

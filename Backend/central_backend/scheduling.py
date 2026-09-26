@@ -136,9 +136,15 @@ async def ensure_occurrence(session: AsyncSession, plan: ClassPlan, payload: dic
             session_date=plan.session_date, scheduled_start=scheduled_start,
             scheduled_end=scheduled_start + timedelta(hours=3) if scheduled_start else None,
             zoom_account_id=uuid.UUID(zoom_id) if zoom_id else None,
+            lms_account_id=uuid.UUID(payload["lmsAccountId"]) if payload.get("lmsAccountId") else None,
             zoom_meeting_url=plan.meeting_url, state="scheduled", created_at=now, updated_at=now,
         )
         session.add(occurrence)
+    elif occurrence.lms_account_id is None and payload.get("lmsAccountId"):
+        # Occurrences made before the account binding migration are safe to backfill only from the
+        # scheduler's already-authorised class payload; never infer a profile from a sheet row.
+        occurrence.lms_account_id = uuid.UUID(payload["lmsAccountId"])
+        occurrence.updated_at = now
     return occurrence
 
 

@@ -588,6 +588,9 @@ class ClassOccurrence(Base):
     scheduled_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     scheduled_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     zoom_account_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("zoom_accounts.id", ondelete="SET NULL"))
+    # Recording attachment is an LMS operation.  Keep the account selected when the class was
+    # scheduled, rather than letting a later worker pick whichever profile happens to be open.
+    lms_account_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("lms_accounts.id", ondelete="SET NULL"))
     zoom_meeting_url: Mapped[str | None] = mapped_column(Text)
     actual_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     actual_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -660,6 +663,8 @@ class GoogleSheetsSyncRecord(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
     detail: Mapped[str | None] = mapped_column(String(500))
     recording_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("recordings.id", ondelete="SET NULL"))
+    occurrence_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("class_occurrences.id", ondelete="SET NULL"))
+    job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"))
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -668,6 +673,7 @@ class GoogleSheetsSyncRecord(Base):
         CheckConstraint("status IN ('pending', 'processing', 'attached', 'conflict', 'failed')", name="ck_google_sheet_sync_status"),
         Index("uq_google_sheet_sync_row", "connection_id", "row_key", unique=True),
         Index("ix_google_sheet_sync_class", "group_name", "session_date"),
+        Index("ix_google_sheet_sync_job", "job_id"),
     )
 
 

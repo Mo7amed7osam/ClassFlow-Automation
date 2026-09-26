@@ -176,6 +176,7 @@ var lmsHandlers = new IJobHandler[]
     new AttendanceStage(lmsAccounts, presentNames, Log),
     new LateJoinersStage(lmsAccounts, presentNames, Log),
     new CompleteSessionStage(lmsAccounts, Log),
+    new RecordingProcessStage(lmsAccounts, Log),
 };
 
 if (!twoLanes)
@@ -185,7 +186,7 @@ if (!twoLanes)
     meetingHandlers.AddRange(lmsHandlers);
 }
 
-string[] meetingCapabilities = twoLanes ? ["zoom_web"] : ["zoom_web", "lms"];
+string[] meetingCapabilities = twoLanes ? ["zoom_web"] : ["zoom_web", "lms", "recording_processing"];
 Log($"meeting lane: {string.Join(", ", meetingHandlers.Select(h => h.JobType))}");
 if (twoLanes) Log($"LMS lane: {string.Join(", ", lmsHandlers.Select(h => h.JobType))}");
 
@@ -200,7 +201,7 @@ meetingAgent = new CentralAgentService(
 
 if (twoLanes)
     lmsAgent = new CentralAgentService(
-        new CentralAgentSettings { BackendUrl = settings.BackendUrl, Version = version, Capabilities = ["lms"] },
+        new CentralAgentSettings { BackendUrl = settings.BackendUrl, Version = version, Capabilities = ["lms", "recording_processing"] },
         lmsIdentity!,
         lmsTokens,
         new ClientWebSocketFactory(),
