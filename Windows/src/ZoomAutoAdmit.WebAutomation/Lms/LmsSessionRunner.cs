@@ -186,6 +186,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
                     $"{group}: Run Session did not verify as running after the press" +
                     $"{(stillOffered ? "; the button is still offered" : string.Empty)}" +
                     $"{(finalState.Length > 0 ? $"; the page reads \"{finalState}\"" : "; the status is unknown")}.");
+            return LmsRunResult.Failure($"{group}: the LMS session state could not be verified.");
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
