@@ -115,6 +115,14 @@ public sealed class LmsFollowUpProcessor
         {
             throw;       // the meeting is still going somewhere: the correction waits (see ProcessDueAsync)
         }
+        catch (Exception ex) when (IsNetworkDown(ex) && DateTime.Now < item.SessionDate.ToDateTime(item.SessionStart) + WaitForReportUntil)
+        {
+            // The PC could not reach Zoom at all (2026-09-25: net::ERR_NAME_NOT_RESOLVED). That is
+            // not a report with nobody in it: the step waits and reads it again once the network is back.
+            string why = ex.Message.Split((char)10)[0].Trim();
+            ConsoleLogger.Warn($"[LMS] {item.Describe}: Zoom could not be reached ({why}); the report is read again in a minute.");
+            throw new MeetingNotInReportException($"Zoom could not be reached ({why}); the report is read again when the network is back.");
+        }
         catch (Exception ex)
         {
             _reportNotes[ClassKey(item)] = $"Zoom report not read ({ex.Message}); the snapshots were used alone.";
@@ -163,7 +171,7 @@ public sealed class LmsFollowUpProcessor
         await using var held = await new ZoomAutoAdmit.WebAutomation.Recordings.ProfileOperationLock()
             .TryAcquireAsync(profile, TimeSpan.FromMinutes(2), token);
         if (held == null) throw new InvalidOperationException($"the '{profile}' browser profile is busy");
-        var report = await new ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReportReader().ReadAsync(profile, url, classStart, token);
+        var report = await new ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReportReader().ReadAsync(profile, url, classStart, token, accountId: item.Group);
         // Zoom lists a meeting only once it has ended: nothing for the class yet means it is still going.
         return report ?? throw new MeetingNotInReportException();
     }
@@ -172,10 +180,18 @@ public sealed class LmsFollowUpProcessor
     public static readonly TimeSpan WaitForReportUntil = TimeSpan.FromHours(6);
 
     /// <summary>Zoom's report has no run of the class's meeting yet: it has not ended.</summary>
-    public sealed class MeetingNotInReportException() : Exception("Zoom's usage report does not list the meeting yet, so it has not ended.");
+    public sealed class MeetingNotInReportException(string? message = null)
+        : Exception(message ?? "Zoom's usage report does not list the meeting yet, so it has not ended.");
+
+    /// <summary>The browser could not reach Zoom: no network, no DNS, the connection dropped.</summary>
+    public static bool IsNetworkDown(Exception ex) =>
+        ex.Message.Contains("net::ERR_", StringComparison.OrdinalIgnoreCase)
+        && !ex.Message.Contains("ERR_ABORTED", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Whether a meeting of the group is running on this PC now.</summary>
     private readonly Func<string, bool> _isLive;
+    /// <summary>Whether a step's class is held in a room (the schedule first, then the LMS's type).</summary>
+    private readonly Func<LmsFollowUp, CancellationToken, Task<bool>> _isPhysical;
     /// <summary>How long a step waits before looking again while its meeting runs.</summary>
     public static readonly TimeSpan LiveWait = TimeSpan.FromMinutes(1);
 
@@ -189,11 +205,14 @@ public sealed class LmsFollowUpProcessor
         Func<string?, LmsSessionRunner>? runner = null,
         AppAttendanceMatcher? appMatcher = null,
         Func<string, bool>? isLive = null,
-        Func<LmsFollowUp, CancellationToken, Task<ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReport?>>? zoomReport = null)
+        Func<LmsFollowUp, CancellationToken, Task<ZoomAutoAdmit.WebAutomation.Zoom.ZoomParticipantsReport?>>? zoomReport = null,
+        Func<LmsFollowUp, CancellationToken, Task<bool>>? isPhysical = null)
     {
         var feed = new ExtensionAttendanceFeed();
         _zoomReport = zoomReport ?? ((item, token) => ReadZoomReportAsync(item, feed, token));
         _isLive = isLive ?? (group => ZoomAutoAdmit.Core.Meetings.LiveMeetings.IsLive(group));
+        _isPhysical = isPhysical ?? ((item, token) =>
+            ZoomAutoAdmit.WindowsRuntime.Scheduling.ClassMode.IsPhysicalAsync(item.Group, item.SessionDate, item.SessionStart, token));
         _queue = queue;
         var historyReader = history ?? new AttendanceHistoryReader();
         var rosterStore = roster ?? new GroupRosterStore(log: ConsoleLogger.Info);
@@ -293,6 +312,19 @@ public sealed class LmsFollowUpProcessor
                 foreach (var item in session.OrderBy(item => item.Step))
                 {
                     if (chainBlocked && item.Step != LmsFollowUpStep.AttachZoomRecording) continue;
+                    // A physical class has no meeting to read attendance from: what was written
+                    // down for it as an online class (a meeting opened by hand) is not owed.
+                    if (LmsFollowUpQueue.IsFromZoom(item.Step) && await _isPhysical(item, token))
+                    {
+                        const string inRoom = "A physical session: attendance is taken in the room, not from Zoom.";
+                        messages.Add($"{item.Describe}: {inRoom}");
+                        if (!dryRun)
+                        {
+                            await _queue.RecordAsync(item, true, inRoom, token);
+                            await _queue.CompleteAsync(item, token);
+                        }
+                        continue;
+                    }
                     // The late-joiner correction, Complete and the recording wait while the class's
                     // meeting is still running on this PC: attendance is taken until the meeting closes.
                     if (item.Step != LmsFollowUpStep.TakeAttendance && _isLive(item.Group))

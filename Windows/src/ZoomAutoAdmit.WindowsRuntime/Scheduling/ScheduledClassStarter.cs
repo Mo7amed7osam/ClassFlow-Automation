@@ -26,6 +26,13 @@ public sealed class ScheduledClassStarter(IScheduledMeetingRunner runner, Window
     /// <summary>A class that could not be opened at all (after every try).</summary>
     public static event Action<MeetingSchedule, string>? GaveUp;
 
+    /// <summary>
+    /// What a physical class gets at its time instead of a Zoom meeting: Run Session on the LMS and
+    /// the steps it still owes (Complete, the recording). Set by the process that runs classes; a
+    /// process without it only leaves the class unopened, which is still right for a room.
+    /// </summary>
+    public static Func<string, DateOnly, TimeOnly, CancellationToken, Task>? RunInRoom { get; set; }
+
     /// <summary>The engine for try number <paramref name="attempt"/>: the preferred one first, then the other, in turn.</summary>
     public static SessionEngineType? EngineFor(SessionEngineType? preferred, int attempt)
     {
@@ -70,6 +77,22 @@ public sealed class ScheduledClassStarter(IScheduledMeetingRunner runner, Window
         {
             await store.MarkOpenedAsync(current.Id, day, token);
             _log($"{current.Name}: already opened today as \"{twin.Name}\"; not opened twice.");
+            return null;
+        }
+
+        // Held in a room: no Zoom meeting at all. The class is run on the LMS instead, once.
+        var classTime = new TimeOnly(current.Time.Hour, current.Time.Minute);
+        if (ClassMode.IsPhysical(all, ClassMode.LmsSessions(), group, day, classTime))
+        {
+            if (reopen) return null;
+            await store.MarkOpenedAsync(current.Id, day, token);
+            _log($"{current.Name}: a physical session - no Zoom meeting is opened; it is run on the LMS.");
+            if (RunInRoom != null)
+            {
+                try { await RunInRoom(group, day, classTime, token); }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (Exception ex) { _log($"{current.Name}: could not be run on the LMS: {ex.Message}"); }
+            }
             return null;
         }
 

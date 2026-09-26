@@ -130,10 +130,18 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
         {
             var schedules = new ZoomAutoAdmit.WindowsRuntime.Scheduling.WindowsMeetingScheduleStore()
                 .ListAsync().GetAwaiter().GetResult();
-            return schedules.FirstOrDefault(s =>
+            string? name = schedules.FirstOrDefault(s =>
                 string.Equals(string.IsNullOrWhiteSpace(s.GroupName) ? s.AccountId : s.GroupName, group, StringComparison.OrdinalIgnoreCase)
                 && s.Time.Hour == start.Hour && s.Time.Minute == start.Minute
                 && (s.OccurrenceDate is { } once ? once == day : s.Days.Includes(day.DayOfWeek)))?.Name;
+            // The LMS's own focus column ("Technical", "Freelancing", "Coaching") says what the title
+            // "Week 10 - Session 1" no longer does.
+            string? focus = new LmsSessionCache().Read()
+                .Where(c => c.Session.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && c.Session.Date == day && c.Session.Focus.Length > 0)
+                .OrderBy(c => c.Session.Start is { } at ? Math.Abs((at.ToTimeSpan() - start.ToTimeSpan()).TotalMinutes) : 9999)
+                .Select(c => c.Session.Focus).FirstOrDefault();
+            string joined = string.Join(" · ", new[] { name, focus }.Where(part => !string.IsNullOrWhiteSpace(part)));
+            return joined.Length > 0 ? joined : null;
         }
         catch { return null; }
     }
@@ -196,13 +204,39 @@ public sealed class LmsMeetingBridge : IAsyncDisposable
         }
 
         if (!RunOnMeetingStart) { _log($"Run Session on meeting start is off; {group} was not started on the dashboard."); return; }
+        await PressRunSessionAsync(group, day, start, token);
+    }
+
+    /// <summary>
+    /// A physical class at its time: no meeting goes live, so this is its whole start - Run Session
+    /// on the LMS, and Complete and the recording written down. Nothing is asked of Zoom.
+    /// </summary>
+    public async Task RunInRoomAsync(string group, DateOnly day, TimeOnly start, CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(group)) return;
+        _activity.Write("class.opened", "done", $"{group}: the {start:HH\\:mm} class is held in the room (physical session).", group, day);
+        try
+        {
+            var written = await _queue.SchedulePhysicalAsync(group, day, start, token);
+            foreach (var item in written.Where(item => item.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && item.SessionDate == day))
+                _log($"Due {item.DueAt.LocalDateTime:yyyy-MM-dd HH:mm}: {item.Describe}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log($"The steps of the physical class of {group} could not be written down: {ex.Message}");
+        }
+        await PressRunSessionAsync(group, day, start, token);
+    }
+
+    private async Task PressRunSessionAsync(string group, DateOnly day, TimeOnly start, CancellationToken token)
+    {
         if (!_hasLogin()) { _log($"No LMS sign-in is saved, so {group} was not started on the dashboard."); return; }
 
         for (int attempt = 0; ; attempt++)
         {
             try
             {
-                _log($"Meeting live for {group}; pressing Run Session for {day:yyyy-MM-dd} {start:HH\\:mm}.");
+                _log($"{group}: pressing Run Session for {day:yyyy-MM-dd} {start:HH\\:mm}.");
                 var result = await _runSession(group, start, day, token);
                 bool alreadyRunning = result.Message.Contains("no Run Session button", StringComparison.OrdinalIgnoreCase);
                 await RecordAsync(group, day, start, result.IsSuccess || alreadyRunning, result.Message);

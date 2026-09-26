@@ -32,6 +32,12 @@ public sealed record ClassRow(
     public string Coordinator { get; init; } = "";
     /// <summary>Its meeting is running on this PC right now.</summary>
     public bool Live { get; init; }
+    /// <summary>"Physical", "Online", or empty when neither the schedule nor the LMS says.</summary>
+    public string Mode { get; init; } = "";
+    /// <summary>Held in a room: no Zoom meeting, and no attendance from Zoom.</summary>
+    public bool Physical => Mode == ClassMode.Physical;
+    /// <summary>What the LMS says the class is about: "Technical", "Freelancing", "Coaching"...</summary>
+    public string Focus { get; init; } = "";
     /// <summary>Students the match is unsure about, for a person to say yes or no to.</summary>
     public IReadOnlyList<ExtensionAttendanceFeed.ReviewName> Attention { get; init; } = [];
     public string? RecordLink { get; init; }
@@ -311,6 +317,9 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 string lmsStatus = lms is null ? "" : (lms.Session.PageStatus.Length > 0 && !lms.Session.PageStatus.StartsWith('(') ? lms.Session.PageStatus : lms.Session.ListStatus);
                 bool finished = lmsStatus is "finished" or "completed";
                 bool running = lmsStatus == "running";
+                // Held in a room or on Zoom: the schedule says first, then the LMS's own type.
+                string mode = ClassMode.Resolve(schedules, cache, group, date, start) ?? "";
+                bool physical = mode == ClassMode.Physical;
 
                 string zoom = schedule == null ? "—"
                     : schedule.LastTriggeredDate == date ? "Opened"
@@ -344,9 +353,9 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 string next; string tone;
                 bool past = classStart.AddHours(3.5) < now;
                 if (classStart > now.AddMinutes(20)) { next = zoom.StartsWith("Opens") ? zoom : "Scheduled"; tone = "future"; }
-                else if (zoom == "Not opened" && !running && !finished) { next = "Meeting did not open"; tone = "bad"; }
+                else if (!physical && zoom == "Not opened" && !running && !finished) { next = "Meeting did not open"; tone = "bad"; }
                 else if (!running && !finished) { next = run.StartsWith('✗') ? "Run Session failed — press it on the LMS" : "Run Session"; tone = run.StartsWith('✗') || past ? "bad" : "live"; }
-                else if (!attendance.StartsWith('✓')) { next = attendance == "—" ? (past ? "Attendance not taken" : "Attendance at 1.5 h") : $"Attendance {attendance}"; tone = attendance.Contains("Retry") || (past && attendance == "—") ? "bad" : "live"; }
+                else if (!physical && !attendance.StartsWith('✓')) { next = attendance == "—" ? (past ? "Attendance not taken" : "Attendance at 1.5 h") : $"Attendance {attendance}"; tone = attendance.Contains("Retry") || (past && attendance == "—") ? "bad" : "live"; }
                 else if (!finished && !complete.StartsWith('✓')) { next = complete == "—" ? "Correction + Complete at 3 h" : $"Complete {complete}"; tone = complete.Contains("Retry") ? "bad" : "live"; }
                 else if (link is "No link" or "—") { next = finished ? "Add the record link" : "Record link"; tone = lms?.Session.LinkKind == "none" ? "warn" : "live"; }
                 else if (link.StartsWith("Zoom")) { next = "Waiting for the Drive link"; tone = "warn"; }
@@ -489,6 +498,24 @@ public sealed class LmsSessionsViewModel : ObservableObject
                     SeenOnLms = seenAt?.LocalDateTime.ToString("ddd dd MMM HH:mm"),
                 };
 
+                // A physical class: no meeting and no attendance from Zoom. Run, Complete and the
+                // recording are the same as any class's; the Zoom half says it was held in the room.
+                if (physical)
+                {
+                    for (int i = 0; i < steps.Count; i++)
+                    {
+                        steps[i] = steps[i].Key switch
+                        {
+                            "zoom" => steps[i] with { State = "none", Text = "In the room",
+                                Detail = "A physical session: no Zoom meeting is opened for it. It is run and completed on the LMS, and its recording goes up as usual." },
+                            "attendance" when steps[i].State is "done" or "lms" => steps[i],
+                            "attendance" or "correct" or "ended" or "report" => steps[i] with { State = "none", Text = "In the room",
+                                Detail = "A physical session: attendance is taken in the room, not from Zoom." },
+                            _ => steps[i],
+                        };
+                    }
+                }
+
                 bool linkNext = next is "Waiting for the Drive link" or "Add the record link" or "Record link";
                 if (driveOnLms && linkNext) { next = "Done"; tone = "done"; }
                 else if (zoomOnLms && !driveOnLms && linkNext) { next = "Waiting for the Drive link"; tone = "warn"; }
@@ -497,7 +524,8 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 if (date < today)
                 {
                     for (int i = 0; i < steps.Count; i++)
-                        if (steps[i].Key is "zoom" or "run" or "attendance" or "correct" or "complete" && steps[i].State is not ("done" or "lms"))
+                        if (steps[i].Key is "zoom" or "run" or "attendance" or "correct" or "complete" && steps[i].State is not ("done" or "lms")
+                            && !(physical && steps[i].Text == "In the room"))
                             steps[i] = steps[i] with { State = "lms", Text = "Past" };
                     (next, tone) = driveOnLms ? ("Done", "done") : zoomOnLms ? ("Waiting for the Drive link", "warn") : ("Add the recording", "warn");
                 }
@@ -513,6 +541,8 @@ public sealed class LmsSessionsViewModel : ObservableObject
                     // classes, that is the first thing to look at when one of them goes wrong.
                     ZoomAccount = schedule?.AccountId ?? "",
                     Live = LiveMeetings.IsLive(group),
+                    Mode = mode,
+                    Focus = lms?.Session.Focus ?? "",
                     Attention = ExtensionAttendanceFeed.ResultsNear(group, date, start, TimeSpan.FromHours(2), app: true)?.Attention ?? [],
                     Coordinator = _classAccounts.Whose(group) is { Length: > 0 } whose ? whose : schedule?.Coordinator ?? "",
                     LmsAccount = LmsEmailFor(group),
@@ -563,6 +593,27 @@ public sealed class LmsSessionsViewModel : ObservableObject
         settings.Save();
         Status = settings.Url == null ? "The recordings sheet link was removed." : "The recordings sheet link is saved.";
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Says by hand whether a class is held in the room or on Zoom. It is written on the class's own
+    /// schedule entry, which the LMS's type never overrides: a physical class opens no meeting and
+    /// takes no attendance from Zoom; it is still run, completed and given its recording.
+    /// </summary>
+    private async Task<(bool Ok, string Message)> SetModeAsync(string group, DateOnly date, TimeOnly start, string mode)
+    {
+        var schedules = await _schedules.ListAsync();
+        var entries = schedules.Where(s => (string.IsNullOrWhiteSpace(s.GroupName) ? s.AccountId : s.GroupName).Equals(group, StringComparison.OrdinalIgnoreCase)
+                                           && s.OccurrenceDate == date && s.Time.Hour == start.Hour && s.Time.Minute == start.Minute).ToArray();
+        if (entries.Length == 0)
+            return (false, $"{group} {date:ddd d MMM} {start:HH:mm} is not on this PC's schedule, so the LMS's own type decides it.");
+        foreach (var entry in entries) await _schedules.UpsertAsync(entry with { Mode = mode });
+        if (mode == ClassMode.Physical)
+            await _queue.SchedulePhysicalAsync(group, date, start);
+        ConsoleLogger.Info($"[SESSIONS] {group} {date:yyyy-MM-dd} {start:HH:mm}: marked {(mode == ClassMode.Physical ? "held in the room" : "on Zoom")} by hand.");
+        return (true, mode == ClassMode.Physical
+            ? $"{group} is held in the room: no Zoom meeting and no attendance from Zoom. Run, Complete and the recording go on as usual."
+            : $"{group} is on Zoom: its meeting opens at its time and attendance is taken from it.");
     }
 
     /// <summary>
@@ -642,6 +693,8 @@ public sealed class LmsSessionsViewModel : ObservableObject
                 }),
                 "yesThem" => Answer(group, date, start, link, present: true),
                 "notThem" => Answer(group, date, start, link, present: false),
+                "inRoom" => await SetModeAsync(group, date, start, ClassMode.Physical),
+                "onZoom" => await SetModeAsync(group, date, start, ClassMode.Online),
                 "zoom" => await OpenZoomAsync(group, date, start),
                 "zoomAgain" => await OpenZoomAsync(group, date, start, again: true),
                 "attendance" => await processor.RunNowAsync(group, date, start, LmsFollowUpStep.TakeAttendance),

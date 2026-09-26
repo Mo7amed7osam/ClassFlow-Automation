@@ -30,6 +30,20 @@ public sealed class LmsFollowUpQueueTests : IDisposable
     }
 
     [Fact]
+    public async Task APhysicalClassOwesCompleteAndItsRecordingButNothingFromZoom()
+    {
+        // A meeting was opened by hand for it first, which wrote down the online steps.
+        await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start);
+
+        var owed = await Queue.SchedulePhysicalAsync("CAI5_AIS4_S8", Day, Start);
+
+        Assert.Equal(new[] { LmsFollowUpStep.CompleteSession, LmsFollowUpStep.AttachZoomRecording },
+            owed.Select(item => item.Step).OrderBy(step => step).ToArray());
+        Assert.All(owed, item => Assert.Equal(At(21, 0), item.DueAt));        // three hours on, like any class
+        Assert.Equal(2, (await Queue.SchedulePhysicalAsync("CAI5_AIS4_S8", Day, Start)).Count);   // written once
+    }
+
+    [Fact]
     public async Task NothingIsDueBeforeItsTimeAndTheUploadComesFirst()
     {
         await Queue.ScheduleAsync("CAI5_AIS4_S8", Day, Start);

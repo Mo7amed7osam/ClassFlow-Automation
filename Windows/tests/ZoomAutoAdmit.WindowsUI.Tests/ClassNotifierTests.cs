@@ -48,6 +48,58 @@ public sealed class ClassNotifierTests
     }
 
     [Fact]
+    public async Task ANoticeWrittenWhileTheNetworkIsDownGoesOutOnceItIsBack()
+    {
+        var gaps = ClassNotifier.TryAgainAfter;
+        ClassNotifier.TryAgainAfter = [TimeSpan.Zero, TimeSpan.Zero];
+        try
+        {
+            List<string> sent = [];
+            bool networkUp = false;
+            var notifier = new ClassNotifier(
+                settings: () => new NotifySettings { Url = "https://n8n.example.com/webhook/class-notifications" },
+                post: (_, body, _) => networkUp ? Task.FromResult(Record(sent, body)) : throw new HttpRequestException("No such host is known."),
+                log: _ => { });
+
+            Assert.False(await notifier.SendAsync(DidNotOpen));
+            Assert.Equal(1, notifier.Waiting);
+            Assert.Equal(0, await notifier.FlushAsync());            // still down: kept
+
+            networkUp = true;
+            Assert.Equal(1, await notifier.FlushAsync());
+            Assert.Equal(0, notifier.Waiting);
+            using var body = JsonDocument.Parse(Assert.Single(sent));
+            Assert.Equal("G1 class did not open", body.RootElement.GetProperty("title").GetString());
+        }
+        finally { ClassNotifier.TryAgainAfter = gaps; }
+    }
+
+    [Fact]
+    public async Task WhatWasKeptGoesWithTheNextNoticeThatGetsThrough()
+    {
+        var gaps = ClassNotifier.TryAgainAfter;
+        ClassNotifier.TryAgainAfter = [TimeSpan.Zero, TimeSpan.Zero];
+        try
+        {
+            List<string> sent = [];
+            bool networkUp = false;
+            var notifier = new ClassNotifier(
+                settings: () => new NotifySettings { Url = "https://n8n.example.com/webhook/class-notifications" },
+                post: (_, body, _) => networkUp ? Task.FromResult(Record(sent, body)) : throw new HttpRequestException("No such host is known."),
+                log: _ => { });
+            await notifier.SendAsync(DidNotOpen);
+
+            networkUp = true;
+            Assert.True(await notifier.SendAsync(DidNotOpen with { Title = "the next one" }));
+            Assert.Equal(2, sent.Count);
+            Assert.Equal(0, notifier.Waiting);
+        }
+        finally { ClassNotifier.TryAgainAfter = gaps; }
+    }
+
+    private static bool Record(List<string> sent, string body) { sent.Add(body); return true; }
+
+    [Fact]
     public async Task AStuckStepCarriesItsStepAndHowManyTriesItHasHad()
     {
         List<string> sent = [];

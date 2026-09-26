@@ -92,7 +92,9 @@ public static class ScheduleWorkbookReader
             string time = Field(timeCol);
             string start = time.Split(['-', '–', '—'])[0].Trim();
             TimeOnly? parsedTime = TimeOnly.TryParseExact(start, ["h:mm tt", "hh:mm tt", "H:mm", "HH:mm"], CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var parsed) ? parsed : null;
-            if (!type.Equals("Online", StringComparison.OrdinalIgnoreCase)) issue = "Excluded: " + (type.Length == 0 ? "unknown session type" : type);
+            // Online and Physical classes both come in: a physical one is run and completed on the
+            // LMS without a Zoom meeting. "No Session" and anything unknown stay out.
+            if (ZoomAutoAdmit.WindowsRuntime.Scheduling.ClassMode.Normalize(type) == null) issue = "Excluded: " + (type.Length == 0 ? "unknown session type" : type);
             else if (!date.HasValue || !parsedTime.HasValue || number.Length == 0 || topic.Length == 0) issue = "Invalid/missing date, time, session number or topic";
             else if (!seen.Add($"{date}|{parsedTime}")) issue = "Duplicate date/time in workbook";
             result.Add(new(row.Row, number, date, type, topic, parsedTime, time, issue));

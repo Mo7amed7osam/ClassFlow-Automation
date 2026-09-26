@@ -8,7 +8,7 @@ const STATE_ICON: Record<Step['state'], string> = { done: 'check', lms: 'check',
 const STEP_ACTIONS: Partial<Record<StepKey, Action[]>> = {
   // Pressing Zoom asks about the meeting itself: whether it is still running here, and opening it
   // again when it is not.
-  zoom: ['zoom', 'zoomAgain'],
+  zoom: ['zoom', 'zoomAgain', 'inRoom', 'onZoom'],
   run: ['run'], attendance: ['attendance'], correct: ['correct'], report: ['report'], complete: ['complete'], record: ['recording', 'zoomRecording', 'link'], drive: ['recording', 'sheet', 'link'],
   material: ['material'], assignment: ['assignment'],
 }
@@ -67,6 +67,11 @@ export function SessionCard({ row, now, working, onAction, onOpen, onMaterial, o
           <span className="group-chip" title={row.group}>{shortGroup(row.group)}</span>
           <h3>{row.title || row.group}</h3>
           <span className="time"><Icon name="clock" size={13} /> {row.start}<em>{relative(start, now)}</em></span>
+          {row.mode === 'Physical' && (
+            <span className="lms-pill mode-physical" title="A physical session: no Zoom meeting, attendance in the room. Run, Complete and the recording as usual.">
+              In the room{row.focus ? ` · ${row.focus}` : ''}
+            </span>
+          )}
           <span className={`lms-pill lms-${row.lmsStatus || 'unknown'}`}>
             {live && <i className="pulse" />}LMS · {LMS_LABEL[row.lmsStatus] ?? row.lmsStatus}
           </span>

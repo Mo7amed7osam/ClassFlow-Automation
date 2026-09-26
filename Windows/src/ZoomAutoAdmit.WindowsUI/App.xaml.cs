@@ -91,6 +91,8 @@ public partial class App : Application
             // The same notices, sent on as well as shown: a webhook (n8n) turns them into an e-mail,
             // so nobody has to be at this PC to learn that a class needs them.
             Services.ClassNotifier.Current ??= new Services.ClassNotifier();
+            // A notice written while the network was down goes out, late but dated, once it is back.
+            Services.ClassNotifier.Current.KeepFlushing(TimeSpan.FromMinutes(1));
             // Zoom dropped a meeting and Retry is not bringing it back: said on the desktop and
             // sent on, because nobody is being admitted and no attendance is being counted.
             ZoomAutoAdmit.WebAutomation.WebAutoAdmitEngine.MeetingStuck += (profile, why) =>

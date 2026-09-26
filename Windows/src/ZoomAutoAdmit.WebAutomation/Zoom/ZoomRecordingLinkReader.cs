@@ -111,10 +111,13 @@ public sealed class ZoomRecordingLinkReader(
         string step = "opening My Recordings";
         try
         {
-            await page.GotoAsync(RecordingsUrl, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
-            if (page.Url.Contains("/signin", StringComparison.OrdinalIgnoreCase))
+            // Signed out, the profile signs itself in with the account's saved Zoom password, as a
+            // meeting does - the recordings are the same account's.
+            if (!await ZoomWebSignIn.OpenSignedInAsync(page, RecordingsUrl, WaitUntilState.DOMContentLoaded, [group, profileName], cancellationToken,
+                    waitForPerson: headed ? TimeSpan.FromMinutes(5) : null))
                 return ZoomRecordingLinkResult.Fail(ZoomRecordingFailure.NotSignedIn,
-                    $"The '{profileName}' browser profile is not signed in to Zoom, so the recordings could not be read.");
+                    $"The '{profileName}' browser profile is not signed in to Zoom and could not sign itself in " +
+                    $"(no Zoom password saved for {group}, Zoom refused it, or Zoom asked for a code), so the recordings could not be read.");
 
             step = "searching the recordings for the group";
             await SearchAsync(page, group, cancellationToken);

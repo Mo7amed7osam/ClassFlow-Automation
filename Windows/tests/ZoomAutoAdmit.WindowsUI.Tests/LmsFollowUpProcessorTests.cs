@@ -32,6 +32,26 @@ public sealed class LmsFollowUpProcessorTests : IDisposable
     }
 
     [Fact]
+    public async Task APhysicalClassTakesNoAttendanceFromZoomButIsCompletedAndGetsItsRecording()
+    {
+        var queue = new LmsFollowUpQueue(_path);
+        var now = new DateTimeOffset(2026, 9, 14, 22, 1, 0, TimeSpan.FromHours(3));
+        // Written down as an online class (a meeting opened by hand), and then found to be in a room.
+        await queue.ScheduleAsync("CAI5_AIS4_S8", new DateOnly(2026, 9, 14), new TimeOnly(19, 0));
+        List<LmsFollowUpStep> calls = [];
+        var processor = new LmsFollowUpProcessor(queue,
+            presentNames: (_, _) => Task.FromResult<IReadOnlyCollection<string>>(["Student One"]),
+            runAction: (item, _, _, _) => { calls.Add(item.Step); return Task.FromResult((true, "ok")); },
+            isPhysical: (_, _) => Task.FromResult(true));
+
+        await processor.ProcessDueAsync(now);
+
+        Assert.Equal([LmsFollowUpStep.CompleteSession, LmsFollowUpStep.AttachZoomRecording], calls);
+        Assert.Empty(await queue.ReadAsync());
+        Assert.Contains(await queue.ReadHistoryAsync(), h => h.Step == LmsFollowUpStep.TakeAttendance && h.Succeeded && h.Message.Contains("physical"));
+    }
+
+    [Fact]
     public async Task StepsAfterTheClassWaitWhileItsMeetingIsStillRunning()
     {
         var queue = new LmsFollowUpQueue(_path);

@@ -179,6 +179,36 @@ public sealed class LmsFollowUpQueue
         }, cancellationToken);
     }
 
+    /// <summary>
+    /// A physical class: held in a room, so nothing is owed from Zoom's side of it - no attendance,
+    /// no late joiners, no participants report. What it does owe is Complete Session, three hours on
+    /// like every class, and its recording (Zoom, then Drive), the same as an online class.
+    /// </summary>
+    public async Task<IReadOnlyList<LmsFollowUp>> SchedulePhysicalAsync(
+        string group, DateOnly date, TimeOnly start, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(group);
+        var startedAt = new DateTimeOffset(date.ToDateTime(start), DateTimeOffset.Now.Offset);
+        var wanted = new[]
+        {
+            Build(group, date, start, LmsFollowUpStep.CompleteSession, startedAt + CorrectAttendanceAfter),
+            Build(group, date, start, LmsFollowUpStep.AttachZoomRecording, startedAt + CorrectAttendanceAfter),
+        };
+        return await UpdateAsync(items =>
+        {
+            // Anything written for it as an online class (a meeting opened by hand) is not owed.
+            items.RemoveAll(item => item.Group.Equals(group, StringComparison.OrdinalIgnoreCase) && item.SessionDate == date
+                                    && item.SessionStart == start && IsFromZoom(item.Step));
+            var known = items.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+            items.AddRange(wanted.Where(item => !known.Contains(item.Id)));
+            return items;
+        }, cancellationToken);
+    }
+
+    /// <summary>The steps that read the class from its Zoom meeting, which a physical class does not have.</summary>
+    public static bool IsFromZoom(LmsFollowUpStep step) =>
+        step is LmsFollowUpStep.TakeAttendance or LmsFollowUpStep.CorrectAttendance or LmsFollowUpStep.ZoomReportAttendance;
+
     /// <summary>Everything due now, oldest first, skipping what has been left behind.</summary>
     public async Task<IReadOnlyList<LmsFollowUp>> DueAsync(DateTimeOffset now, CancellationToken cancellationToken = default)
     {

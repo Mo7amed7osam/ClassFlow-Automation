@@ -12,18 +12,36 @@ public sealed class ScheduleUploadTests : IDisposable
 {
     private readonly string _folder = Path.Combine(Path.GetTempPath(), "ZoomScheduleUploadTests", Guid.NewGuid().ToString("N"));
     [Fact]
-    public async Task PreviewDoesNotSaveAndImportPreservesDatesSkipsPhysicalAndDuplicates()
+    public async Task PreviewDoesNotSaveAndImportPreservesDatesKeepsPhysicalAsSuchAndSkipsDuplicates()
     {
         var service = new UiService(); using var vm = new SchedulesViewModel(service);
         await vm.RefreshAsync(); await vm.PreviewImportAsync(Workbook());
         Assert.Equal(4, vm.ImportRows.Count); Assert.Empty(service.Schedules);
         Assert.Equal("CAI5_AIS4_S8", vm.ImportAccount!.AccountId);
         await vm.ConfirmImportAsync(new DateTime(2025, 1, 1));
-        var schedule = Assert.Single(service.Schedules);
-        Assert.Equal(DateOnly.FromDateTime(DateTime.FromOADate(46227)), schedule.OccurrenceDate);
-        Assert.Equal(new TimeOnly(19, 0), schedule.Time); Assert.Equal(ScheduleDays.None, schedule.Days); Assert.True(schedule.Enabled);
+        Assert.Equal(2, service.Schedules.Count);
+        var online = service.Schedules.Single(s => s.Mode == "Online");
+        Assert.Equal(DateOnly.FromDateTime(DateTime.FromOADate(46227)), online.OccurrenceDate);
+        Assert.Equal(new TimeOnly(19, 0), online.Time); Assert.Equal(ScheduleDays.None, online.Days); Assert.True(online.Enabled);
+        // The physical class comes in as one: run and completed on the LMS, no Zoom meeting.
+        var physical = service.Schedules.Single(s => s.Mode == "Physical");
+        Assert.Equal(DateOnly.FromDateTime(DateTime.FromOADate(46228)), physical.OccurrenceDate);
+        Assert.Equal(new TimeOnly(18, 0), physical.Time);
         await vm.ConfirmImportAsync(new DateTime(2025, 1, 1));
-        Assert.Single(service.Schedules); Assert.Contains("duplicate", vm.ImportStatus);
+        Assert.Equal(2, service.Schedules.Count); Assert.Contains("duplicate", vm.ImportStatus);
+    }
+
+    [Fact]
+    public async Task AClassImportedBeforeTheTypeWasKeptLearnsItFromTheTimetable()
+    {
+        var service = new UiService(); using var vm = new SchedulesViewModel(service);
+        var day = DateOnly.FromDateTime(DateTime.FromOADate(46228));
+        service.Schedules.Add(new(Guid.NewGuid(), "CAI5_AIS4_S8 • 2 • Technical", "https://zoom.us/j/93181040158", "CAI5_AIS4_S8",
+            new TimeOnly(18, 0), ScheduleDays.None, true, null, day, "CAI5_AIS4_S8"));
+        await vm.RefreshAsync(); await vm.PreviewImportAsync(Workbook());
+        await vm.ConfirmImportAsync(new DateTime(2025, 1, 1));
+        Assert.Equal("Physical", service.Schedules.Single(s => s.OccurrenceDate == day).Mode);
+        Assert.Contains("now marked", vm.ImportStatus);
     }
     [Fact]
     public async Task PastMeetingsAreNotRescheduledAndMissingAccountIsVisible()
@@ -33,7 +51,7 @@ public sealed class ScheduleUploadTests : IDisposable
         Assert.Empty(service.Schedules); Assert.Contains("Select", vm.ImportStatus);
         await vm.RefreshAsync(); vm.ImportAccount = vm.Accounts[0];
         await vm.ConfirmImportAsync(new DateTime(2030, 1, 1));
-        Assert.Empty(service.Schedules); Assert.Contains("1 past/duplicate", vm.ImportStatus);
+        Assert.Empty(service.Schedules); Assert.Contains("2 past/duplicate", vm.ImportStatus);
     }
     [Fact]
     public async Task EveryImportableDateStartsSelectedAndUntickedDatesAreNotSaved()
@@ -48,14 +66,15 @@ public sealed class ScheduleUploadTests : IDisposable
         excluded.Include = true;
         Assert.False(excluded.Include);
 
-        vm.ImportRows.First(row => row.CanImport).Include = false;
+        foreach (var row in vm.ImportRows.Where(row => row.CanImport)) row.Include = false;
         await vm.ConfirmImportAsync(new DateTime(2025, 1, 1));
         Assert.Empty(service.Schedules);
         Assert.Contains("Select at least one date", vm.ImportStatus);
 
         vm.SelectAllImportCommand.Execute(null);
         await vm.ConfirmImportAsync(new DateTime(2025, 1, 1));
-        Assert.True(Assert.Single(service.Schedules).Enabled);
+        Assert.Equal(2, service.Schedules.Count);
+        Assert.All(service.Schedules, schedule => Assert.True(schedule.Enabled));
     }
 
     [Fact]
@@ -179,7 +198,7 @@ public sealed class ScheduleUploadTests : IDisposable
         Assert.Equal("https://zoom.us/j/11111111111", vm.MeetingUrl);
         Assert.Equal("https://zoom.us/j/93181040158", vm.ImportMeetingUrl);
         await vm.ConfirmImportAsync(new DateTime(2025, 1, 1));
-        Assert.Equal("https://zoom.us/j/93181040158", Assert.Single(service.Schedules).MeetingUrl);
+        Assert.All(service.Schedules, schedule => Assert.Equal("https://zoom.us/j/93181040158", schedule.MeetingUrl));
     }
 
     [Fact]
@@ -188,7 +207,7 @@ public sealed class ScheduleUploadTests : IDisposable
         var path = Environment.GetEnvironmentVariable("ZOOM_SCHEDULE_TEMPLATE");
         var preview = ScheduleWorkbookReader.Read(string.IsNullOrWhiteSpace(path) ? Workbook() : path);
         Assert.Equal("CAI5_AIS4_S8", preview.GroupCode);
-        Assert.Equal(string.IsNullOrWhiteSpace(path) ? 1 : 55, preview.Rows.Count(r => r.CanImport));
+        Assert.Equal(string.IsNullOrWhiteSpace(path) ? 2 : 64, preview.Rows.Count(r => r.CanImport));
         if (!string.IsNullOrWhiteSpace(path))
         {
             Assert.Equal(66, preview.Rows.Count); Assert.Equal(9, preview.Rows.Count(r => r.Type == "Physical"));

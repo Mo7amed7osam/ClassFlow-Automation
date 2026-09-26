@@ -368,7 +368,8 @@ public sealed class DelegatedRuns
             kept.Add(id);
             // Only what changed: saving registers a Windows task again, and a class that already
             // opened today keeps that mark rather than being opened a second time.
-            if (before != null) schedule = schedule with { LastTriggeredDate = before.LastTriggeredDate };
+            // and a class marked as held in the room (or on Zoom) by hand keeps that.
+            if (before != null) schedule = schedule with { LastTriggeredDate = before.LastTriggeredDate, Mode = before.Mode };
             if (before == schedule) { scheduled++; continue; }
             try
             {

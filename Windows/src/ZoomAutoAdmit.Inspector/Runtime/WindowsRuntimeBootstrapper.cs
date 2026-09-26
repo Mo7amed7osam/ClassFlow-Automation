@@ -70,6 +70,8 @@ public sealed class WindowsRuntimeBootstrapper : IAsyncDisposable
         LmsMeetingBridge.ClassStart classStart = async (group, day, live, token) =>
             ScheduleTiming.ClassStartNear(await ScheduleStore.ListAsync(token), group, day, live);
         Lms = createLmsBridge?.Invoke(LifecycleEvents) ?? new LmsMeetingBridge(LifecycleEvents, classStart: classStart);
+        // A physical class opens no meeting: at its time it is run on the LMS by the same bridge.
+        ScheduledClassStarter.RunInRoom = Lms.RunInRoomAsync;
         // Ends a finished class for everyone (three hours on, and only when the room is empty or small
         // and silent). Reads the participants list only; never opens it.
         AutoEnd = createAutoEnd != null ? createAutoEnd(LifecycleEvents) : new AutoEndMeetingBridge(

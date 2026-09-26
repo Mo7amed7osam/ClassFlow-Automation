@@ -50,3 +50,16 @@ public class LmsSessionTitleTests
     public void TheNameIsTakenFromTheRowWhateverTheColumnOrder(string row, string expected) =>
         Assert.Equal(expected, LmsSessionRunner.TitleOfRow(row));
 }
+
+/// <summary>The type and focus columns of the session list (read live on 2026-09-26).</summary>
+public class LmsSessionModeTests
+{
+    [Theory]
+    [InlineData("Week 10 - Session 1\n\tM\n\nMostafa Mohamed\n\n\t2026-09-25\n18:00\tCAI5_AIS4_S8\tsecond\tyth\tCAI\tPhysical\tTechnical\tFinished\t\nLocation\n\t", "Physical", "Technical")]
+    [InlineData("Week 11 - Session 1\n\tG\n\nGehad Wahed\n\n\t2026-09-25\n14:00\tCAI5_AIS4_S7\tsecond\tyth\tCAI\tPhysical\tFreelancing\tFinished\t\nLocation\n\t", "Physical", "Freelancing")]
+    [InlineData("Week 9 - Session 2\t2026-09-21\n19:00\tCAI5_AIS4_S7\tCAI\tOnline\tCoaching\tPending\t", "Online", "Coaching")]
+    [InlineData("Week 9 - Session 2\t2026-09-21\n19:00\tCAI5_AIS4_S7\tCAI\tOnline\tFinished", "Online", "")]
+    [InlineData("Week 9 - Session 2\t2026-09-21 19:00\tCAI5_AIS4_S7", "", "")]
+    public void TheRowSaysWhetherTheClassIsInARoomAndWhatItIsAbout(string row, string mode, string focus) =>
+        Assert.Equal((mode, focus), LmsSessionRunner.ModeOfRow(row));
+}

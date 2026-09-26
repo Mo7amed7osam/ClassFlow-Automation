@@ -43,6 +43,14 @@ export interface ActionInfo {
 }
 
 export const ACTIONS: Record<Action, ActionInfo> = {
+  inRoom: {
+    action: 'inRoom', label: 'Held in the room', changesLms: false,
+    explain: 'Mark this class as a physical session: no Zoom meeting is opened and no attendance is taken from Zoom. It is still run and completed on the LMS, and its recording goes up.',
+  },
+  onZoom: {
+    action: 'onZoom', label: 'On Zoom after all', changesLms: false,
+    explain: 'Mark this class as online, whatever the LMS says: its meeting opens on Zoom and attendance is taken from it.',
+  },
   zoomAgain: {
     action: 'zoomAgain', label: 'Start the meeting again', changesLms: false,
     explain: 'Stop what this PC is running for this class and open its meeting afresh - for when the meeting dropped but the app still shows it as running.',
@@ -103,10 +111,15 @@ export function availableActions(row: Row, now: Date): Action[] {
   const material: Action[] = hasMaterial(row) ? ['material'] : []
   if (row.material?.assignmentTitle && row.material.deadline && !row.material.noAssignment) material.push('assignment')
   if (!started) return material
-  if (isPastDay(row, now)) return ['report', 'recording', 'sheet', 'zoomRecording', 'link', ...material]
+  const physical = row.mode === 'Physical'
+  const mode: Action[] = [physical ? 'onZoom' : 'inRoom']
+  // A physical class has no meeting: only the LMS half of it and its recording.
+  if (isPastDay(row, now)) return physical ? ['recording', 'sheet', 'zoomRecording', 'link', ...mode, ...material]
+    : ['report', 'recording', 'sheet', 'zoomRecording', 'link', ...mode, ...material]
+  if (physical) return ['run', 'complete', 'recording', 'zoomRecording', 'sheet', 'link', ...mode, ...material]
   // Opening it by hand, or - when this PC still shows it running - starting it afresh.
   const zoom: Action[] = row.live ? ['zoomAgain'] : ['zoom']
-  return [...zoom, 'run', 'attendance', 'correct', 'report', 'complete', 'recording', 'zoomRecording', 'sheet', 'link', ...material]
+  return [...zoom, 'run', 'attendance', 'correct', 'report', 'complete', 'recording', 'zoomRecording', 'sheet', 'link', ...mode, ...material]
 }
 
 /** Before today: the class is over and Completed. */

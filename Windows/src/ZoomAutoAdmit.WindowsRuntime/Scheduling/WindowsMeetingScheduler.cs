@@ -146,6 +146,9 @@ public sealed class WindowsMeetingScheduler : IAsyncDisposable
             string group = string.IsNullOrWhiteSpace(schedule.GroupName) ? schedule.AccountId : schedule.GroupName;
             if (LiveMeetings.IsLive(group, now)) continue;
             if (_endings.For(group, today, schedule.Time) != null) continue;      // it ended; it is over
+            // A physical class never had a meeting to lose.
+            if (ClassMode.IsPhysical([schedule], ClassMode.LmsSessions(), group, today,
+                    new TimeOnly(schedule.Time.Hour, schedule.Time.Minute))) continue;
 
             string key = $"{schedule.Id:N}|{today:yyyyMMdd}";
             lock (_opening)

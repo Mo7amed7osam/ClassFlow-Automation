@@ -55,8 +55,9 @@ public sealed class ZoomParticipantsReportReader
     /// </summary>
     /// <param name="meetingUrl">The class's Zoom link; only its meeting number is used.</param>
     /// <param name="classStart">The class's scheduled start on this PC's clock.</param>
+    /// <param name="accountId">The Zoom account the profile belongs to, whose saved password signs it in when needed.</param>
     public async Task<ZoomParticipantsReport?> ReadAsync(string profileName, string meetingUrl, DateTime classStart,
-        CancellationToken cancellationToken = default, TimeZoneInfo? zoomZone = null)
+        CancellationToken cancellationToken = default, TimeZoneInfo? zoomZone = null, string? accountId = null)
     {
         var zone = zoomZone ?? ReportZone();
         DateTimeOffset Local(DateTime reportTime) =>
@@ -66,7 +67,9 @@ public sealed class ZoomParticipantsReportReader
         await using var session = await new ZoomBrowserLauncher().LaunchAsync(plan, cancellationToken);
         var page = session.Context.Pages.Count > 0 ? session.Context.Pages[0] : await session.Context.NewPageAsync();
         page.SetDefaultTimeout((float)StepTimeout.TotalMilliseconds);
-        await page.GotoAsync(ReportUrl, new() { WaitUntil = WaitUntilState.NetworkIdle });
+        if (!await ZoomWebSignIn.OpenSignedInAsync(page, ReportUrl, WaitUntilState.NetworkIdle, [accountId, profileName], cancellationToken))
+            throw new InvalidOperationException(
+                $"the '{profileName}' browser profile is not signed in to Zoom and could not sign itself in (no Zoom password saved, or Zoom asked for a code)");
 
         var rows = new List<string[]>();
         var seen = new HashSet<string>(StringComparer.Ordinal);

@@ -311,7 +311,7 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
                 ImportRows.Add(selection);
             }
             OnPropertyChanged(nameof(ImportSelectionSummary));
-            ImportStatus = $"{preview.GroupCode}: {ImportRows.Count} rows; {ImportRows.Count(r => r.CanImport)} online (all selected); {ImportRows.Count(r => !r.CanImport)} excluded. Untick anything you do not want, choose the account and meeting URL, then confirm. Past dates will be skipped.";
+            ImportStatus = $"{preview.GroupCode}: {ImportRows.Count} rows; {ImportRows.Count(r => r.CanImport)} to import (all selected, {ImportRows.Count(r => r.CanImport && r.Row.Type.Equals("Physical", StringComparison.OrdinalIgnoreCase))} physical); {ImportRows.Count(r => !r.CanImport)} excluded. Untick anything you do not want, choose the account and meeting URL, then confirm. Past dates will be skipped.";
             // Exact ID only, never display-name or menu-position matching.
             var mapped = Accounts.FirstOrDefault(a =>
                 (a.GroupName ?? a.AccountId).Equals(preview.GroupCode, StringComparison.OrdinalIgnoreCase));
@@ -339,20 +339,33 @@ public sealed class SchedulesViewModel : ObservableObject, IDisposable
             var existing = (await _service.GetSchedulesAsync()).ToList();
             var candidates = ImportRows.Where(r => r.CanImport && r.Include).Select(r => r.Row).ToArray();
             if (candidates.Length == 0) throw new InvalidOperationException("Select at least one date to import, or upload a valid timetable first.");
+            int marked = 0;
             foreach (var row in candidates)
             {
-                if (row.Date!.Value.ToDateTime(row.StartTime!.Value) <= now || existing.Any(s =>
-                    s.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase) && s.OccurrenceDate == row.Date && s.Time == row.StartTime))
+                // Online or Physical, as the timetable says: this outranks the LMS's own type.
+                string? mode = ZoomAutoAdmit.WindowsRuntime.Scheduling.ClassMode.Normalize(row.Type);
+                var twin = existing.FirstOrDefault(s =>
+                    s.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase) && s.OccurrenceDate == row.Date && s.Time == row.StartTime);
+                if (twin != null && mode != null && twin.Mode == null)
+                {
+                    // Imported before the timetable's type was kept: it learns it now.
+                    var updated = twin with { Mode = mode };
+                    await _service.SaveScheduleAsync(updated);
+                    existing[existing.IndexOf(twin)] = updated; marked++;
+                }
+                if (row.Date!.Value.ToDateTime(row.StartTime!.Value) <= now || twin != null)
                 { skipped++; continue; }
                 ImportStatus = $"Saving exact-date schedules… {saved} saved.";
                 var schedule = new MeetingSchedule(Guid.NewGuid(), $"{_importGroup} • {row.SessionNumber} • {row.Topic}", url,
                     accountId, row.StartTime.Value, ScheduleDays.None, enableImported, OccurrenceDate: row.Date, GroupName: _importGroup,
-                    PreferredEngine: EngineOf(ImportOpensWith));
+                    PreferredEngine: EngineOf(ImportOpensWith), Mode: mode);
                 await _service.SaveScheduleAsync(schedule);
                 existing.Add(schedule); saved++;
             }
             await RefreshAsync();
-            ImportStatus = $"Done — {saved} of {candidates.Length} selected dates saved ({(EnableImported ? "enabled" : "disabled")}); {skipped} past/duplicate online dates skipped. Physical / No Session excluded. Times use this PC's local timezone.";
+            ImportStatus = $"Done — {saved} of {candidates.Length} selected dates saved ({(EnableImported ? "enabled" : "disabled")}); {skipped} past/duplicate dates skipped" +
+                           $"{(marked > 0 ? $"; {marked} existing class(es) now marked Online or Physical" : "")}. " +
+                           "Physical classes open no Zoom meeting; No Session is excluded. Times use this PC's local timezone.";
         }
         catch (Exception ex)
         {

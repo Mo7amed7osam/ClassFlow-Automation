@@ -717,6 +717,43 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         public bool? HasAssignment { get; init; }
         /// <summary>When the session's own page (attachments, assignment) was last read.</summary>
         public DateTimeOffset? DetailsReadAt { get; init; }
+        /// <summary>"Physical" or "Online", as the list's type column says; empty when not read.</summary>
+        public string Mode { get; init; } = "";
+        /// <summary>The list's focus column: "Technical", "Freelancing", "Coaching"...; empty when not read.</summary>
+        public string Focus { get; init; } = "";
+        /// <summary>Held in a room, not on Zoom: nothing is opened, admitted or snapshotted for it.</summary>
+        public bool IsPhysical => Mode.Equals("Physical", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex ModeCell =
+        new(@"^(Physical|Online|Offline|Hybrid)(\s+Session)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The session's type and focus from its list row. The row reads, one cell a tab apart,
+    /// "... CAI5_AIS4_S8 second yth CAI Physical Technical Finished Location" (read 2026-09-26):
+    /// the type is its own cell, and the focus is the cell after it. "Offline" is taken as Physical.
+    /// </summary>
+    internal static (string Mode, string Focus) ModeOfRow(string rowText)
+    {
+        var cells = rowText.Split(SummaryBreaks, StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Trim()).Where(part => part.Length > 0).ToArray();
+        for (int i = 0; i < cells.Length; i++)
+        {
+            var match = ModeCell.Match(cells[i]);
+            if (!match.Success) continue;
+            string mode = match.Groups[1].Value.ToLowerInvariant() switch
+            {
+                "physical" or "offline" => "Physical",
+                "online" => "Online",
+                _ => "Hybrid",
+            };
+            string focus = i + 1 < cells.Length &&
+                           !System.Text.RegularExpressions.Regex.IsMatch(cells[i + 1], @"^(pending|running|finished|cancelled|completed|location)$",
+                               System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                ? cells[i + 1] : "";
+            return (mode, focus);
+        }
+        return ("", "");
     }
 
     private static readonly System.Text.RegularExpressions.Regex GroupCode =
@@ -743,7 +780,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
         await SignInAsync(page, account, cancellationToken);
 
         // 1. the list: one day at a time, every page of it (an admin sees 40+ sessions a day, 10 a page)
-        var listed = new List<(string Group, DateOnly? Date, TimeOnly? Start, string Title, string Status, DateOnly Day, int ListPage, int Row)>();
+        var listed = new List<(string Group, DateOnly? Date, TimeOnly? Start, string Title, string Status, DateOnly Day, int ListPage, int Row, string Mode, string Focus)>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var day = from; day <= to; day = day.AddDays(1))
         {
@@ -768,7 +805,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
                     var status = System.Text.RegularExpressions.Regex.Match(text, @"\b(pending|running|finished|cancelled|completed)\b",
                         System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                     string title = TitleOfRow(text);
-                    listed.Add((group, date, ReadRowTime(text), title, status.Success ? status.Value.ToLowerInvariant() : "", day, number, index));
+                    var (mode, focus) = ModeOfRow(text);
+                    listed.Add((group, date, ReadRowTime(text), title, status.Success ? status.Value.ToLowerInvariant() : "", day, number, index, mode, focus));
                     index++;
                 }
             }
@@ -783,7 +821,8 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             // so something removed on the LMS shows at once without a full check.
             if (!openEach && openWhen?.Invoke(item.Group, item.Date, item.Start) != true)
             {
-                result.Add(new(item.Group, item.Date, item.Start, item.Title, item.Status, null, "", "", "unknown", null, []));
+                result.Add(new(item.Group, item.Date, item.Start, item.Title, item.Status, null, "", "", "unknown", null, [])
+                { Mode = item.Mode, Focus = item.Focus });
                 continue;
             }
             string pageUrl = "", pageStatus = "", link = "", kind = "unknown";
@@ -846,7 +885,7 @@ public sealed class LmsSessionRunner(ILmsCredentialStore credentials, ZoomProfil
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { pageStatus = $"(error {ex.GetType().Name})"; }
             result.Add(new(item.Group, item.Date, item.Start, item.Title, item.Status, pageUrl, pageStatus, link, kind, attendance, actions)
-            { Attachments = attachments, HasAssignment = hasAssignment, DetailsReadAt = detailsAt });
+            { Attachments = attachments, HasAssignment = hasAssignment, DetailsReadAt = detailsAt, Mode = item.Mode, Focus = item.Focus });
         }
         return result;
     }

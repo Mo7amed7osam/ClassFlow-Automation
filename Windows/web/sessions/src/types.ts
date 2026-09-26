@@ -33,6 +33,10 @@ export interface Row {
   coordinator?: string
   /** Its meeting is running on this PC right now. */
   live?: boolean
+  /** "Physical" (held in a room: no Zoom meeting, no attendance from Zoom), "Online", or empty. */
+  mode?: string
+  /** What the LMS says the class is: "Technical", "Freelancing", "Coaching"... */
+  focus?: string
   /** Students the match is unsure about, waiting for a yes or a no. */
   attention?: { student: string; seenAs: string; percent: number }[]
   recordLink?: string | null
@@ -107,7 +111,7 @@ export interface State {
 }
 
 /** A step the page can ask the app to do now, on the real LMS. */
-export type Action = 'zoom' | 'zoomAgain' | 'yesThem' | 'notThem' | 'yesThem' | 'notThem' | 'run' | 'attendance' | 'correct' | 'report' | 'complete' | 'zoomRecording' | 'sheet' | 'recording' | 'link' | 'material' | 'assignment'
+export type Action = 'zoom' | 'zoomAgain' | 'inRoom' | 'onZoom' | 'yesThem' | 'notThem' | 'run' | 'attendance' | 'correct' | 'report' | 'complete' | 'zoomRecording' | 'sheet' | 'recording' | 'link' | 'material' | 'assignment'
 
 export interface Result {
   ok: boolean

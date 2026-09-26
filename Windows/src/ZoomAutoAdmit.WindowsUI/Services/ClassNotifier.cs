@@ -38,8 +38,9 @@ public sealed record ClassNotice(string Kind, string Title, string Message)
 /// webhook, and n8n sends the e-mail - so no mailbox password is ever kept here.
 ///
 /// Nothing depends on it: a webhook that is down, slow or not set up at all changes nothing about
-/// the class. It is tried three times, a little further apart each time, and then written off with
-/// a line in the log.
+/// the class. It is tried three times, a little further apart each time. A notice that still could
+/// not go - the network itself is down, which is exactly when a notice about the network is written -
+/// is kept and sent, with the time it happened, as soon as anything gets through again.
 /// </summary>
 public sealed class ClassNotifier
 {
@@ -48,6 +49,15 @@ public sealed class ClassNotifier
 
     public static TimeSpan[] TryAgainAfter { get; set; } =
         [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(20)];
+
+    /// <summary>How many unsent notices are kept for when the network is back; the oldest go first.</summary>
+    public const int MostWaiting = 50;
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(string Url, string Body, string Title)> _waiting = new();
+    private readonly SemaphoreSlim _flushing = new(1, 1);
+
+    /// <summary>Notices kept because they could not be sent yet.</summary>
+    public int Waiting => _waiting.Count;
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = false };
     private readonly Func<NotifySettings> _settings;
@@ -98,6 +108,8 @@ public sealed class ClassNotifier
                 if (await _post(settings.Url, body, token))
                 {
                     _log($"{notice.Kind}: {notice.Title} - sent.");
+                    // Something got through: whatever was kept while it could not goes now too.
+                    await FlushAsync(token);
                     return true;
                 }
             }
@@ -106,13 +118,52 @@ public sealed class ClassNotifier
 
             if (attempt >= TryAgainAfter.Length)
             {
-                _log($"{notice.Kind}: \"{notice.Title}\" could not be sent after {attempt + 1} tries. The class is unaffected.");
+                _waiting.Enqueue((settings.Url, body, notice.Title));
+                while (_waiting.Count > MostWaiting) _waiting.TryDequeue(out _);
+                _log($"{notice.Kind}: \"{notice.Title}\" could not be sent after {attempt + 1} tries; it is kept and sent when the network is back. The class is unaffected.");
                 return false;
             }
             try { await Task.Delay(TryAgainAfter[attempt], token); }
             catch (OperationCanceledException) { return false; }
         }
     }
+
+    /// <summary>
+    /// Sends what was kept, oldest first, until one does not go. Answers how many went. Each keeps
+    /// the time it was written, so an e-mail that arrives late says when the thing happened.
+    /// </summary>
+    public async Task<int> FlushAsync(CancellationToken token = default)
+    {
+        if (_waiting.IsEmpty || !await _flushing.WaitAsync(0, token)) return 0;
+        int sent = 0;
+        try
+        {
+            while (_waiting.TryPeek(out var kept))
+            {
+                bool ok;
+                try { ok = await _post(kept.Url, kept.Body, token); }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
+                catch (Exception) { ok = false; }
+                if (!ok) break;
+                _waiting.TryDequeue(out _);
+                sent++;
+                _log($"\"{kept.Title}\" - sent late, now that the network is back.");
+            }
+        }
+        finally { _flushing.Release(); }
+        return sent;
+    }
+
+    /// <summary>Tries what was kept every so often, for as long as the app runs.</summary>
+    public void KeepFlushing(TimeSpan every, CancellationToken token = default) => _ = Task.Run(async () =>
+    {
+        while (!token.IsCancellationRequested)
+        {
+            try { await Task.Delay(every, token); await FlushAsync(token); }
+            catch (OperationCanceledException) { break; }
+            catch (Exception) { }
+        }
+    });
 
     /// <summary>Sends without waiting and without ever failing the caller: for a handler that must not block.</summary>
     public void Send(ClassNotice notice) => _ = Task.Run(async () =>

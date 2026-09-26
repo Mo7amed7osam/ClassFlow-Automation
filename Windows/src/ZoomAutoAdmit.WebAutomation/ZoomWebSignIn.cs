@@ -175,6 +175,64 @@ public static class ZoomWebSignIn
         }
     }
 
+    /// <summary>
+    /// Opens a zoom.us page on a profile, signing the profile in first when Zoom sends it to its
+    /// sign-in page - with the same saved password the meeting uses, looked up by the account's name
+    /// and then the profile's. A page that reads recordings or reports needs the account as much as a
+    /// meeting does (2026-09-25: the 's8' profile had lost its zoom.us session while S8's password
+    /// was saved, and every recording read stopped at "not signed in"). A network that is down is
+    /// tried again three times before it counts. Answers false when the page still asks for a sign-in.
+    /// </summary>
+    /// <param name="waitForPerson">
+    /// In a visible browser, how long to leave Zoom's sign-in page up for a person when Zoom asks for a
+    /// captcha or a code: they sign in there once, and the profile remembers it.
+    /// </param>
+    public static async Task<bool> OpenSignedInAsync(IPage page, string url, WaitUntilState waitUntil,
+        IEnumerable<string?> accounts, CancellationToken token, TimeSpan? waitForPerson = null)
+    {
+        await GotoAsync(page, url, waitUntil, token);
+        try { await page.WaitForURLAsync(address => OnSignInPage(address), new() { Timeout = 5000 }); }
+        catch (TimeoutException) { }
+        if (!OnSignInPage(page.Url)) return true;
+
+        var credential = accounts.Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => ZoomSignInCredential.ReadFor(null, name))
+            .FirstOrDefault(found => found != null);
+        var outcome = await EnsureSignedInAsync(page.Context, credential, token);
+        if (outcome is not (ZoomSignInOutcome.SignedIn or ZoomSignInOutcome.AlreadySignedIn))
+        {
+            if (waitForPerson is not { } wait || wait <= TimeSpan.Zero) return false;
+            await GotoAsync(page, url, waitUntil, token);
+            ConsoleLogger.Info($"WEB_SIGN_IN: sign in to Zoom in the open browser window (captcha or code); waiting up to {wait.TotalMinutes:0} minutes.");
+            try { await page.WaitForURLAsync(address => !OnSignInPage(address), new() { Timeout = (float)wait.TotalMilliseconds }); }
+            catch (TimeoutException) { return false; }
+            ConsoleLogger.Success("WEB_SIGN_IN: signed in by hand; the profile remembers it.");
+        }
+        await GotoAsync(page, url, waitUntil, token);
+        return !OnSignInPage(page.Url);
+    }
+
+    /// <summary>Goes to a page, trying again after 5 and 20 seconds when the network is what failed.</summary>
+    public static async Task GotoAsync(IPage page, string url, WaitUntilState waitUntil, CancellationToken token)
+    {
+        TimeSpan[] waits = [TimeSpan.Zero, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(20)];
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await page.GotoAsync(url, new() { WaitUntil = waitUntil });
+                return;
+            }
+            catch (PlaywrightException ex) when (attempt + 1 < waits.Length
+                                                 && ex.Message.Contains("net::ERR_", StringComparison.OrdinalIgnoreCase)
+                                                 && !ex.Message.Contains("ERR_ABORTED", StringComparison.OrdinalIgnoreCase))
+            {
+                ConsoleLogger.Warn($"WEB: {url} could not be reached ({ex.Message.Split((char)10)[0].Trim()}); trying again.");
+                await Task.Delay(waits[attempt + 1], token);
+            }
+        }
+    }
+
     private static bool OnSignInPage(string url) =>
         url.Contains("/signin", StringComparison.OrdinalIgnoreCase) || url.Contains("/login", StringComparison.OrdinalIgnoreCase);
 

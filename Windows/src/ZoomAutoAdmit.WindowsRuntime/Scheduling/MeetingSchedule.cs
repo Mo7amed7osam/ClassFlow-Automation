@@ -77,7 +77,10 @@ public sealed record MeetingSchedule(
     // name shown in the list; CoordinatorId is their account on the central server, and the class
     // is dropped from here when they are turned off there. Null on this PC's own classes.
     string? Coordinator = null,
-    string? CoordinatorId = null);
+    string? CoordinatorId = null,
+    // "Physical" (held in a room: no Zoom meeting is opened, and attendance is not taken from Zoom)
+    // or "Online"; null when this entry does not say, and then the LMS's own type decides.
+    string? Mode = null);
 
 public static class ScheduleDaysExtensions
 {
