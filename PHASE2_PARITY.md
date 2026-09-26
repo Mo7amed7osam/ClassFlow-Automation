@@ -1,7 +1,7 @@
 # Phase 2 cloud parity audit
 
 Audit date: 2026-09-26. Repository: branch `linux`, local and `origin/linux` at
-`040faf3bb47a3cc417b92a1084ddeb93e576a03e`. Production was checked after the two
+`28906044da172956b5fafd6654853a62c8a95d6b` (audit documentation update). Production was checked after the two
 successful Coolify deployments using the public health endpoint and authenticated
 dashboard. Do not treat a code path or a green build as proof of a successful live
 Zoom/LMS run.
@@ -21,8 +21,7 @@ Zoom/LMS run.
 
 | Item | Evidence | Result |
 |---|---|---|
-| Local commit | `040faf3bb47a3cc417b92a1084ddeb93e576a03e` | Matches `origin/linux` |
-| `origin/linux` | `040faf3bb47a3cc417b92a1084ddeb93e576a03e` | No ahead/behind commits |
+| Local commit / `origin/linux` | `28906044da172956b5fafd6654853a62c8a95d6b` | Matches; documentation-only commit after application deployment |
 | Deployed backend | Coolify latest success is `040faf3` | Matches current source; redesign and timezone fix are live |
 | Backend liveness | `GET /health` returned HTTP 200, `{"status":"ok"}` | PASS for process/database liveness only |
 | Detailed backend / worker health | Authenticated health modal loaded; Backend and PostgreSQL responsive, server time reported in Africa/Cairo | PASS for those checks; not a live class proof |
