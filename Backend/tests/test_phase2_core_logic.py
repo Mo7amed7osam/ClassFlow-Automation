@@ -44,6 +44,17 @@ def test_global_ignored_names():
     assert cleaned_student.is_staff is False
 
 
+from central_backend.db import make_engine, make_sessionmaker
+
+
+@pytest.fixture
+def session_maker(settings):
+    engine = make_engine(settings.database_url)
+    sm = make_sessionmaker(engine)
+    yield sm
+    engine.sync_engine.dispose()
+
+
 @pytest.mark.asyncio
 async def test_occurrence_lifecycle_zoom_recording_pipeline(session_maker):
     now = datetime.now(UTC)

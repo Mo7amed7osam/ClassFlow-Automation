@@ -34,9 +34,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .api import _json
+from .api import ApiError, _json
 from .auth import CurrentUser, current_user
-from .dashboard import group_items
+from .dashboard import group_items, job_summary, parse_id
 from .models import ClassPlan, Job, LmsAccount, RunDelegation, User, ZoomAccount
 from .scheduling import CAIRO, GRACE, STAGES, due_at, idempotency_key
 
@@ -276,6 +276,132 @@ async def sessions(
         _json({"from": start.isoformat(), "to": finish.isoformat(),
                "classes": rows, "counters": counters,
                "groups": sorted({r["group"] for r in rows})}),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/api/v1/dashboard/classes/{plan_id}")
+async def class_details(
+    plan_id: str,
+    request: Request,
+    user: CurrentUser = Depends(current_user),
+) -> JSONResponse:
+    """One planned class with its occurrence lifecycle, attendance, recording, jobs and audit notes."""
+    now = request.app.state.clock()
+    key = parse_id(plan_id)
+    async with request.app.state.sessionmaker() as session:
+        plan = await session.get(ClassPlan, key)
+        if plan is None:
+            raise ApiError(404, "Not found")
+        if not user.is_admin and plan.coordinator_id != user.id:
+            raise ApiError(404, "Not found")
+
+        view = await _class_view(session, plan, now)
+
+        from .models import AttendanceRecord, AttendanceSession, ClassOccurrence, DeviceActivity, Recording
+        from sqlalchemy import or_
+
+        occurrence = (await session.execute(
+            select(ClassOccurrence).where(ClassOccurrence.class_plan_id == key)
+        )).scalar_one_or_none()
+
+        occ_dict = None
+        if occurrence:
+            occ_dict = {
+                "id": str(occurrence.id),
+                "state": occurrence.state,
+                "actualStart": occurrence.actual_start,
+                "actualEnd": occurrence.actual_end,
+                "lastError": occurrence.last_error,
+                "zoomMeetingUrl": occurrence.zoom_meeting_url,
+                "zoomRecordingUrl": occurrence.zoom_recording_url,
+                "driveRecordingUrl": occurrence.drive_recording_url,
+                "recordingFoundAt": occurrence.recording_found_at,
+                "retryState": occurrence.retry_state,
+                "nextRetryAt": occurrence.next_retry_at,
+                "attendanceSessionId": str(occurrence.attendance_session_id) if occurrence.attendance_session_id else None,
+                "lmsSessionUrl": occurrence.lms_session_url,
+                "lmsSessionId": occurrence.lms_session_id,
+            }
+
+        # Recent jobs
+        jobs_query = select(Job).where(
+            or_(
+                Job.payload["classPlanId"].astext == str(key),
+                Job.idempotency_key.like(f"%:{key}:%"),
+            )
+        ).order_by(Job.created_at.desc()).limit(20)
+        jobs = (await session.execute(jobs_query)).scalars().all()
+
+        # Attendance session
+        att_session = None
+        if occurrence and occurrence.attendance_session_id:
+            att_session = await session.get(AttendanceSession, occurrence.attendance_session_id)
+        if not att_session:
+            att_session = (await session.execute(
+                select(AttendanceSession).where(
+                    AttendanceSession.group_name == plan.group_name,
+                    AttendanceSession.session_date == plan.session_date,
+                ).order_by(AttendanceSession.updated_at.desc()).limit(1)
+            )).scalar_one_or_none()
+
+        att_dict = None
+        if att_session:
+            records = (await session.execute(
+                select(AttendanceRecord).where(AttendanceRecord.session_id == att_session.id)
+            )).scalars().all()
+            att_dict = {
+                "id": str(att_session.id),
+                "status": att_session.status,
+                "students": len(records),
+                "present": sum(1 for r in records if r.status == "present"),
+                "needsReview": sum(1 for r in records if r.status == "needs_review"),
+                "absent": sum(1 for r in records if r.status == "absent"),
+            }
+
+        # Recording
+        rec = (await session.execute(
+            select(Recording).where(
+                Recording.group_name == plan.group_name,
+                Recording.session_date == plan.session_date,
+            ).order_by(Recording.updated_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        rec_dict = None
+        if rec:
+            rec_dict = {
+                "id": str(rec.id),
+                "zoomLink": rec.zoom_link,
+                "driveLink": rec.drive_link,
+                "lmsStatus": rec.lms_status,
+                "lmsUpdatedAt": rec.lms_updated_at,
+            }
+
+        # Activity
+        acts = (await session.execute(
+            select(DeviceActivity).where(
+                DeviceActivity.group_name == plan.group_name,
+                DeviceActivity.session_date == plan.session_date,
+            ).order_by(DeviceActivity.happened_at.desc()).limit(20)
+        )).scalars().all()
+
+        act_list = [{
+            "id": a.id,
+            "kind": a.kind,
+            "outcome": a.outcome,
+            "summary": a.summary,
+            "at": a.happened_at,
+            "detail": a.detail,
+        } for a in acts]
+
+    return JSONResponse(
+        _json({
+            "class": view,
+            "occurrence": occ_dict,
+            "attendance": att_dict,
+            "recording": rec_dict,
+            "jobs": [job_summary(j) for j in jobs],
+            "activity": act_list,
+        }),
         headers={"Cache-Control": "no-store"},
     )
 
