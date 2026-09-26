@@ -6,10 +6,13 @@ import { ActivityPage } from './pages/ActivityPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { AttendancePage } from './pages/AttendancePage'
 import { AttendanceSessionPage } from './pages/AttendanceSessionPage'
+import { ClassDetailPage } from './pages/ClassDetailPage'
 import { GroupsPage } from './pages/GroupsPage'
+import { HelpPage } from './pages/HelpPage'
 import { LmsAccountsPage } from './pages/LmsAccountsPage'
 import { LoginPage } from './pages/LoginPage'
 import { LiveSessionsPage } from './pages/LiveSessionsPage'
+import { NotificationsPage } from './pages/NotificationsPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { SessionsPage } from './pages/SessionsPage'
 import { RecordingsPage } from './pages/RecordingsPage'
@@ -46,6 +49,9 @@ export function App() {
       <Route path="/register" element={<RegisterPage />} />
       <Route element={<RequireSignIn />}>
         <Route index element={<OverviewPage />} />
+        <Route path="classes/:id" element={<ClassDetailPage />} />
+        <Route path="notifications" element={<NotificationsPage />} />
+        <Route path="help" element={<HelpPage />} />
         <Route path="sessions" element={<SessionsPage />} />
         <Route path="recordings" element={<RecordingsPage />} />
         <Route path="attendance" element={<AttendancePage />} />
@@ -62,6 +68,7 @@ export function App() {
         {/* Where the accounts and the logs used to live: a bookmark still opens what it meant. */}
         <Route path="accounts" element={<Navigate to="/zoom-accounts" replace />} />
         <Route path="logs" element={<Navigate to="/activity" replace />} />
+        <Route path="automation" element={<Navigate to="/agents" replace />} />
         <Route path="live" element={<LiveSessionsPage />} />
         <Route element={<RequireAdmin />}>
           <Route path="agents" element={<AgentsPage />} />

@@ -70,7 +70,7 @@ export function RecordingsPage() {
 
   return (
     <>
-      <PageHeader title="Recordings" description="Every recording n8n reported. Select a row for details; edit it or attach it to its LMS session." />
+      <PageHeader title="Recordings" description="Every recording synchronized from Google Sheets. Select a row for details; edit it or attach it to its LMS session." />
       <Card>
         <div className="flex flex-wrap items-end gap-3 border-b border-slate-100 px-5 py-4" role="search">
           <Field label="Group">
@@ -120,7 +120,7 @@ export function RecordingsPage() {
           <RecordingsTable
             items={recordings.data?.items}
             loading={recordings.isLoading}
-            empty={filtered ? 'No recordings match these filters.' : 'No recordings yet. They appear here as n8n reports them.'}
+            empty={filtered ? 'No recordings match these filters.' : 'No recordings yet. They appear here as Google Sheets synchronizes them.'}
             onSelect={(recording) => update({ recording: recording.id })}
             onEdit={setEditing}
             onAttach={setAttaching}

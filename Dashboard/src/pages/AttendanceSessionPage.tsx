@@ -123,7 +123,7 @@ function RecordsTable({ details, locked, onlyReview, onEdit }: { details: Sessio
   const correct = useCorrectRecord()
   const toast = useToast()
   const rows = onlyReview ? details.records.filter((r) => r.status === 'needs_review') : details.records
-  const columns = ['#', 'Student', 'Status', 'Zoom name', 'Confidence', 'Joined', 'Left', 'In meeting', '']
+  const columns = ['#', 'Student', 'Status', 'Zoom name', 'Confidence', 'First Observed', 'Last Observed', 'Observation Count', '']
   const quick = (r: AttendanceRecordView, status: AttendanceStatus) =>
     correct.mutate({ id: details.session.id, studentId: r.studentId, status }, {
       onSuccess: () => toast.success(status === 'present' ? `${r.fullName}: present` : `${r.fullName}: absent`, 'Remembered for next time.'),
@@ -135,24 +135,28 @@ function RecordsTable({ details, locked, onlyReview, onEdit }: { details: Sessio
       <table className="min-w-full divide-y divide-slate-100">
         <thead className="bg-slate-50/70"><tr>{columns.map((c, i) => <th key={i} scope="col" className={th}>{c}</th>)}</tr></thead>
         <tbody className="divide-y divide-slate-100">
-          {rows.map((r) => (
-            <tr key={r.studentId} className="hover:bg-slate-50/60">
-              <td className={`${td} tabular-nums text-slate-500`}>{r.order ?? ''}</td>
-              <td className={td}><span className="font-medium text-slate-900">{r.fullName}</span>{r.reason && r.status !== 'absent' && <p className="max-w-72 text-xs text-slate-500">{r.reason}</p>}</td>
-              <td className={td}>
-                <Pill tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Pill>
-                {r.manual && <span className="ml-1 text-xs text-slate-500" title="Set by hand; re-matching keeps it">✎</span>}
-              </td>
-              <td className={td}>
-                {r.participant ? <span className="text-slate-800">{r.participant.name}</span> : <span className="text-slate-400">—</span>}
-                {r.extraNames.length > 0 && <p className="text-xs text-slate-500">also {r.extraNames.join(', ')}</p>}
-              </td>
-              <td className={`${td} whitespace-nowrap text-slate-600`}>
-                {r.status === 'absent' && !r.participant ? '' : <>{r.confidence}% <span className="text-xs text-slate-400">{SOURCE[r.source] ?? r.source}</span></>}
-              </td>
-              <td className={`${td} tabular-nums`}>{hhmm(r.joinTime)}</td>
-              <td className={`${td} tabular-nums`}>{hhmm(r.leaveTime)}</td>
-              <td className={`${td} tabular-nums`}>{minutes(r.durationSeconds)}</td>
+          {rows.map((r) => {
+            const p = r.participant ? details.participants.find((item) => item.id === r.participant?.id) : undefined
+            return (
+              <tr key={r.studentId} className="hover:bg-slate-50/60">
+                <td className={`${td} tabular-nums text-slate-500`}>{r.order ?? ''}</td>
+                <td className={td}><span className="font-medium text-slate-900">{r.fullName}</span>{r.reason && r.status !== 'absent' && <p className="max-w-72 text-xs text-slate-500">{r.reason}</p>}</td>
+                <td className={td}>
+                  <Pill tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Pill>
+                  {r.manual && <span className="ml-1 text-xs text-slate-500" title="Set by hand; re-matching keeps it">✎</span>}
+                </td>
+                <td className={td}>
+                  {r.participant ? <span className="text-slate-800">{r.participant.name}</span> : <span className="text-slate-400">—</span>}
+                  {r.extraNames.length > 0 && <p className="text-xs text-slate-500">also {r.extraNames.join(', ')}</p>}
+                </td>
+                <td className={`${td} whitespace-nowrap text-slate-600`}>
+                  {r.status === 'absent' && !r.participant ? '' : <>{r.confidence}% <span className="text-xs text-slate-400">{SOURCE[r.source] ?? r.source}</span></>}
+                </td>
+                <td className={`${td} tabular-nums`}>{hhmm(r.joinTime)}</td>
+                <td className={`${td} tabular-nums`}>{hhmm(r.leaveTime)}</td>
+                <td className={`${td} tabular-nums`}>
+                  {p ? `${p.sightings} snapshots` : '—'}
+                </td>
               <td className={`${td} text-right`}>
                 <div className="flex justify-end gap-1.5">
                   {r.status === 'needs_review' && !locked && (
@@ -165,7 +169,8 @@ function RecordsTable({ details, locked, onlyReview, onEdit }: { details: Sessio
                 </div>
               </td>
             </tr>
-          ))}
+          )
+        })}
         </tbody>
       </table>
       {rows.length === 0 && <EmptyState>{onlyReview ? 'Nothing needs a decision.' : 'No students on this group’s roster yet. Add them on the Students page.'}</EmptyState>}
@@ -187,7 +192,7 @@ function UnmatchedNames({ details, locked }: { details: SessionDetails; locked: 
           const best = p.candidates[0]
           return (
             <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
-              <span><span className="font-medium text-slate-800">{p.name}</span> <span className="text-xs text-slate-500">{minutes(p.presentSeconds)}</span></span>
+              <span><span className="font-medium text-slate-800">{p.name}</span> <span className="text-xs text-slate-500">({p.sightings} snapshots)</span></span>
               <span className="flex flex-wrap gap-1.5">
                 {best && !locked && (
                   <button type="button" className={button.smallPrimary} disabled={correct.isPending}
@@ -209,7 +214,7 @@ function UnmatchedNames({ details, locked }: { details: SessionDetails; locked: 
 function NamesTable({ details, locked }: { details: SessionDetails; locked: boolean }) {
   const ignore = useIgnoreParticipant()
   const studentName = useMemo(() => new Map(details.records.map((r) => [r.studentId, r.fullName])), [details.records])
-  const columns = ['Zoom name', 'First seen', 'Last seen', 'In meeting', 'Student', '']
+  const columns = ['Zoom name', 'First Observed', 'Last Observed', 'Observation Count', 'Student', '']
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full divide-y divide-slate-100">
@@ -220,7 +225,7 @@ function NamesTable({ details, locked }: { details: SessionDetails; locked: bool
               <td className={td}><span className="font-medium text-slate-800">{p.name}</span>{p.ignored && <span className="ml-2"><Pill tone="slate">Not a student</Pill></span>}</td>
               <td className={`${td} tabular-nums`}>{hhmm(p.firstSeenAt)}</td>
               <td className={`${td} tabular-nums`}>{hhmm(p.lastSeenAt)}</td>
-              <td className={`${td} tabular-nums`}>{minutes(p.presentSeconds)}</td>
+              <td className={`${td} tabular-nums`}>{p.sightings} snapshots</td>
               <td className={td}>{p.assignedTo ? studentName.get(p.assignedTo) : <span className="text-slate-400">—</span>}</td>
               <td className={`${td} text-right`}>
                 <button type="button" className={button.small} disabled={locked || ignore.isPending}

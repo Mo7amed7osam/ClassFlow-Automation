@@ -184,7 +184,7 @@ export function SettingsPage() {
                   </button>
                 )}
               </div>
-              <p className="text-xs text-slate-500">No n8n, no webhook, and no status columns are added to Google Sheets.</p>
+              <p className="text-xs text-slate-500">Google Sheets is read directly by ClassFlow Cloud without intermediate services.</p>
             </div>
           </Card>
         )}
@@ -196,8 +196,8 @@ export function SettingsPage() {
           >
             <div className="flex flex-col gap-4 px-5 py-4">
               <p className="text-sm text-slate-600">
-                When a step of a class fails for good, or a meeting is left open, the server posts it to your n8n
-                webhook and n8n sends the e-mail. Nothing about a class depends on it: a webhook that is down is
+                When a step of a class fails for good, or a meeting is left open, the server posts an alert notification to your
+                webhook URL. Nothing about a class depends on it: an alert webhook that is down is
                 tried three times and then written off.
               </p>
               <label className="flex items-start gap-3">
@@ -218,7 +218,7 @@ export function SettingsPage() {
                 </span>
               </label>
               <Field
-                label={notify.data?.hasUrl ? 'Replace the webhook address' : 'The n8n webhook address'}
+                label={notify.data?.hasUrl ? 'Replace the webhook address' : 'The alert webhook address'}
                 hint="Kept like a password: it is never shown again, and never leaves the server."
               >
                 <input
@@ -243,7 +243,7 @@ export function SettingsPage() {
                   disabled={testNotify.isPending || !notify.data?.hasUrl}
                   onClick={() => testNotify.mutate(undefined, {
                     onSuccess: (answer) => answer.sent
-                      ? toast.success('It arrived.', 'n8n took the notice.')
+                      ? toast.success('It arrived.', 'The webhook received the notice.')
                       : toast.error('It did not arrive', answer.detail ?? ''),
                   })}
                 >

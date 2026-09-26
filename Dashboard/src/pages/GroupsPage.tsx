@@ -117,7 +117,7 @@ function AdminGroups() {
     <>
       <PageHeader
         title="Groups"
-        description="New groups appear by themselves with their first recording from n8n. Give them to coordinators on the Users page."
+        description="New groups appear automatically with their first recording from Google Sheets. Give them to coordinators on the Users page."
         action={<button type="button" className={button.secondary} onClick={() => setAdding(true)}>Add group</button>}
       />
       <Card>

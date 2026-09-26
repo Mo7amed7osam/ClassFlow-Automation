@@ -378,7 +378,7 @@ describe('settings', () => {
       ? { body: { enabled: true, hasUrl: true, urlHost: 'mine.app.n8n.cloud', label: 'cloud', updatedAt: null, lastSentAt: null, lastError: null, ...overrides } }
       : undefined
 
-  it('takes an n8n webhook, never shows it again, and can try it', async () => {
+  it('takes an alert webhook, never shows it again, and can try it', async () => {
     // The server knows an address once one is saved, so reading again says so - which is what
     // lets "Send a test" be pressed at all.
     const kept = { enabled: true, hasUrl: false, urlHost: null as string | null, label: 'cloud', updatedAt: null, lastSentAt: null, lastError: null }
@@ -394,7 +394,7 @@ describe('settings', () => {
     renderPage(<SettingsPage />, '/settings')
 
     expect(await screen.findByText(/nowhere to send them yet/)).toBeInTheDocument()
-    const field = screen.getByLabelText('The n8n webhook address')
+    const field = screen.getByLabelText('The alert webhook address')
     await userEvent.type(field, 'https://mine.app.n8n.cloud/webhook/class-notifications')
     await userEvent.click(screen.getByRole('button', { name: 'Save the address' }))
 

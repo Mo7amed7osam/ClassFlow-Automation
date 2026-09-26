@@ -540,3 +540,76 @@ export interface Enrollment {
   enrollmentToken: string
   expiresInSeconds: number
 }
+
+export interface ClassOccurrenceView {
+  id: string
+  state: string
+  actualStart: string | null
+  actualEnd: string | null
+  lastError: string | null
+  zoomMeetingUrl: string | null
+  zoomRecordingUrl: string | null
+  driveRecordingUrl: string | null
+  recordingFoundAt: string | null
+  retryState: Record<string, unknown>
+  nextRetryAt: string | null
+  attendanceSessionId: string | null
+  lmsSessionUrl: string | null
+  lmsSessionId: string | null
+}
+
+export interface ClassDetails {
+  class: SessionClass
+  occurrence: ClassOccurrenceView | null
+  attendance: {
+    id: string
+    status: string
+    students: number
+    present: number
+    needsReview: number
+    absent: number
+  } | null
+  recording: {
+    id: string
+    zoomLink: string | null
+    driveLink: string | null
+    lmsStatus: string
+    lmsUpdatedAt: string | null
+  } | null
+  jobs: JobSummary[]
+  activity: {
+    id: number
+    kind: string
+    outcome: 'done' | 'failed' | 'skipped'
+    summary: string
+    at: string
+    detail: Record<string, unknown> | null
+  }[]
+}
+
+export interface HealthCheckItem {
+  name: string
+  status: 'healthy' | 'warning' | 'failed'
+  summary: string
+  detail: string
+  fix: string | null
+  action: string | null
+}
+
+export interface SystemHealth {
+  overall: 'healthy' | 'warning' | 'failed'
+  checks: HealthCheckItem[]
+  serverTime: string
+}
+
+export interface NotificationItem {
+  id: string
+  timestamp: string
+  severity: 'error' | 'warning' | 'info' | 'success'
+  title: string
+  description: string
+  classPlanId?: string | null
+  group?: string | null
+  read?: boolean
+}
+

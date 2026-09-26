@@ -106,7 +106,7 @@ describe('attendance session page', () => {
     const mohab = await rowOf('Mohab Osama Sayed')
     expect(within(mohab).getByText('Present')).toBeInTheDocument()
     expect(within(mohab).getByText(/100%/)).toBeInTheDocument()
-    expect(within(mohab).getByText('90 min')).toBeInTheDocument()
+    expect(within(mohab).getByText('4 snapshots')).toBeInTheDocument()
     expect(within(await rowOf('Ahmed Ali Hassan')).getByText('Needs review')).toBeInTheDocument()
     expect(within(await rowOf('Sara Mahmoud Adel')).getByText('Absent')).toBeInTheDocument()
     expect(screen.getByText('Unmatched Zoom names').parentElement).toHaveTextContent('2')

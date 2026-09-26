@@ -6,7 +6,9 @@ import type {
   AiStatus,
   Agent,
   ClassPlan,
+  ClassDetails,
   CloudPolicy,
+  SystemHealth,
   Delegation,
   Enrollment,
   MyLmsAccount,
@@ -51,7 +53,7 @@ export const REFRESH = { agents: 10_000, overview: 15_000, recordings: 30_000, g
 
 /** Every class in the window and where each one stands. Refreshed on its own, because a class
  *  card changes while somebody is looking at it: a stage goes from due to running to done. */
-export function useSessions(params: { from?: string; to?: string; group?: string }) {
+export function useSessions(params: { from?: string; to?: string; group?: string } = {}) {
   return useQuery({
     queryKey: ['sessions', params],
     queryFn: () => api<SessionsPage>(`/api/v1/dashboard/sessions${query(params)}`),
@@ -523,3 +525,24 @@ export const useEnrollDevice = () =>
   useMutation({
     mutationFn: (name: string) => api<Enrollment>('/api/v1/me/devices/enroll', send('POST', name ? { name } : undefined)),
   })
+
+/** Detailed class occurrence information including timeline, jobs, attendance and recording. */
+export function useClassDetails(planId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['class-details', planId],
+    queryFn: () => api<ClassDetails>(`/api/v1/dashboard/classes/${planId}`),
+    refetchInterval: REFRESH.sessions,
+    enabled: Boolean(planId) && enabled,
+  })
+}
+
+/** 11-point system health checks. */
+export function useSystemHealth(enabled = true) {
+  return useQuery({
+    queryKey: ['system-health'],
+    queryFn: () => api<SystemHealth>('/api/v1/dashboard/health-detailed'),
+    refetchInterval: REFRESH.groups,
+    enabled,
+  })
+}
+
