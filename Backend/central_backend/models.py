@@ -93,6 +93,9 @@ class Job(Base):
     recording_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("recordings.id", ondelete="SET NULL"), index=True
     )
+    occurrence_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("class_occurrences.id", ondelete="SET NULL"), index=True
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -564,6 +567,50 @@ class ClassPlan(Base):
     )
 
 
+OCCURRENCE_STATES = (
+    "scheduled", "live", "attendancePending", "attendanceSubmitted", "correctionPending",
+    "attendanceFinalized", "lmsSessionCompleted", "recordingPending", "zoomLinkFound", "zoomLinkAttached",
+    "waitingForDrive", "driveLinkAttached", "conflict", "failed", "skipped",
+)
+
+
+class ClassOccurrence(Base):
+    """The durable state of one planned class, retained across workers and deployments."""
+
+    __tablename__ = "class_occurrences"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    class_plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("class_plans.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    group_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    scheduled_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scheduled_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    zoom_account_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("zoom_accounts.id", ondelete="SET NULL"))
+    zoom_meeting_url: Mapped[str | None] = mapped_column(Text)
+    actual_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actual_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lms_session_url: Mapped[str | None] = mapped_column(Text)
+    lms_session_id: Mapped[str | None] = mapped_column(String(200))
+    attendance_session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("attendance_sessions.id", ondelete="SET NULL"))
+    state: Mapped[str] = mapped_column(String(32), nullable=False, server_default="scheduled")
+    zoom_recording_url: Mapped[str | None] = mapped_column(Text)
+    drive_recording_url: Mapped[str | None] = mapped_column(Text)
+    recording_found_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retry_state: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    last_error: Mapped[str | None] = mapped_column(String(500))
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("state IN ('scheduled', 'live', 'attendancePending', 'attendanceSubmitted', 'correctionPending', 'attendanceFinalized', 'lmsSessionCompleted', 'recordingPending', 'zoomLinkFound', 'zoomLinkAttached', 'waitingForDrive', 'driveLinkAttached', 'conflict', 'failed', 'skipped')", name="ck_class_occurrences_state"),
+        Index("ix_class_occurrences_group_date", "group_name", "session_date"),
+        Index("ix_class_occurrences_state_retry", "state", "next_retry_at"),
+    )
+
+
 class AppSetting(Base):
     """A setting shared by every copy of the app (e.g. the recordings sheet's link). Never a secret."""
 
@@ -661,7 +708,9 @@ __all__ = [
     "RUN_ENGINES",
     "RUN_PLAN_SOURCES",
     "RUN_PLAN_STATUSES",
+    "OCCURRENCE_STATES",
     "ClassPlan",
+    "ClassOccurrence",
     "RunDelegation",
     "UserSchedule",
     "ZoomAccount",

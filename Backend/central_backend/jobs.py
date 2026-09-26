@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import Settings
 from .models import Job, JobEvent
+from .occurrence_lifecycle import record_occurrence_outcome
 from .observability import emit, link_preview
 from .recording_jobs import record_job_outcome
 from .validation import clean_error, clean_result
@@ -236,6 +237,7 @@ async def agent_finished(
         add_event(session, job.id, "succeeded", now, device_id, job.result)
         emit("job.succeeded", jobId=str(job.id), deviceId=str(device_id), alreadyExists=job.result.get("alreadyExists"))
         await record_job_outcome(session, job, now)
+        await record_occurrence_outcome(session, job, now)
         return "succeeded"
 
     error = clean_error(body)
@@ -250,4 +252,5 @@ async def agent_finished(
     job.finished_at = now
     emit("job.failed", level=logging.WARNING, jobId=str(job.id), deviceId=str(device_id), code=error["code"])
     await record_job_outcome(session, job, now)
+    await record_occurrence_outcome(session, job, now)
     return "failed"

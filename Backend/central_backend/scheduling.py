@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .jobs import create_job
 from .notifications import class_blocked
-from .models import ClassPlan, Job, LmsAccount, RunDelegation, User, ZoomAccount
+from .models import ClassOccurrence, ClassPlan, Job, LmsAccount, RunDelegation, User, ZoomAccount
 from .observability import emit
 from .validation import PayloadError, validate_payload
 
@@ -123,6 +123,25 @@ def idempotency_key(plan_id: uuid.UUID, stage: Stage) -> str:
     return f"plan:{plan_id}:{stage.job_type}"
 
 
+async def ensure_occurrence(session: AsyncSession, plan: ClassPlan, payload: dict, now: datetime) -> ClassOccurrence:
+    """Create one restart-safe occurrence for a plan."""
+    occurrence = (await session.execute(
+        select(ClassOccurrence).where(ClassOccurrence.class_plan_id == plan.id).with_for_update()
+    )).scalar_one_or_none()
+    scheduled_start = due_at(plan, Stage("occurrence", timedelta(), ""))
+    if occurrence is None:
+        zoom_id = payload.get("zoomAccountId")
+        occurrence = ClassOccurrence(
+            id=uuid.uuid4(), class_plan_id=plan.id, group_name=plan.group_name,
+            session_date=plan.session_date, scheduled_start=scheduled_start,
+            scheduled_end=scheduled_start + timedelta(hours=3) if scheduled_start else None,
+            zoom_account_id=uuid.UUID(zoom_id) if zoom_id else None,
+            zoom_meeting_url=plan.meeting_url, state="scheduled", created_at=now, updated_at=now,
+        )
+        session.add(occurrence)
+    return occurrence
+
+
 class Scheduler:
     """Turns the classes that are due into jobs. Started beside the sweeper; safe to run twice."""
 
@@ -190,6 +209,7 @@ class Scheduler:
                         self._say_blocked(plan, stage.job_type,
                                           "no LMS sign-in is chosen for this coordinator")
                         continue
+                    occurrence = await ensure_occurrence(session, plan, payload, now)
                     if (why := self._can_run(stage, payload)) is not None:
                         emit("schedule.cannot_run", level=logging.WARNING, group=plan.group_name,
                              date=plan.session_date.isoformat(), jobType=stage.job_type, reason=why)
@@ -206,7 +226,7 @@ class Scheduler:
                              date=plan.session_date.isoformat(), jobType=stage.job_type, reason=str(problem))
                         continue
 
-                    _, created = await create_job(
+                    job, created = await create_job(
                         session,
                         job_type=stage.job_type,
                         payload=payload,
@@ -214,6 +234,10 @@ class Scheduler:
                         now=now,
                         max_attempts=3,
                     )
+                    # Existing jobs can predate the occurrence migration. Backfilling the link here
+                    # makes restarts safe without ever creating a second job for the class stage.
+                    if job.occurrence_id is None:
+                        job.occurrence_id = occurrence.id
                     if created:
                         counts["created"] += 1
                         emit("schedule.created", group=plan.group_name, jobType=stage.job_type,
