@@ -356,13 +356,19 @@ public sealed class DelegatedRuns
 
         int scheduled = 0;
         var kept = new HashSet<Guid>();
-        foreach (var item in plan.ClassList)
+        foreach (var listed in plan.ClassList)
         {
+            var item = listed;
             if (item.Status != "planned" || item.Day is not { } day || item.Start is not { } start) continue;
             if (!whose.TryGetValue(item.CoordinatorId, out var delegation)) continue;
             string who = delegation.DisplayName;
             if (ownClasses.Any(s => IsSameClass(s, item.Group, day, start))) { scheduled++; continue; }
 
+            // Missing on their side but known here: this PC's own account for the group has its link
+            // and opens it (2026-09-26: a class of ONL5_AIS7_S1 on Hosam's LMS, a group of this PC's).
+            var ownForGroup = here.FirstOrDefault(a => (a.GroupName ?? a.AccountId).Equals(item.Group, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(item.MeetingUrl) && !string.IsNullOrWhiteSpace(ownForGroup?.DefaultMeetingUrl))
+                item = item with { MeetingUrl = ownForGroup!.DefaultMeetingUrl, ZoomAccount = item.ZoomAccount ?? ownForGroup.AccountId };
             if (string.IsNullOrWhiteSpace(item.MeetingUrl))
             {
                 problems.Add($"{who} · {item.Group} {day:ddd d MMM} {start:HH\\:mm}: no Zoom link yet. Add it on the Coordinators page and it carries on to that group's next classes.");

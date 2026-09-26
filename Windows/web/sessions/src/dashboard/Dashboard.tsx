@@ -669,8 +669,51 @@ function RunTheirClasses({ row, user, working, run }: {
       )}
       {on && accounts.length === 0 && <span className="runs-warn">no Zoom account of theirs yet</span>}
       {on && !row?.lms && <span className="runs-warn">no LMS sign-in of theirs</span>}
-      {on && row?.needsLink ? <span className="runs-warn">{row.needsLink} class(es) need a link</span> : null}
+      {on && row?.needsLink ? <MissingLinks id={user.id} count={row.needsLink} run={run} /> : null}
       {on && row?.ready && !row.needsLink && row.planned > 0 ? <span className="runs-note">{row.planned} class(es) ready</span> : null}
+    </div>
+  )
+}
+
+/**
+ * A coordinator's classes that still have no Zoom link, fixed where they are shown: each with a
+ * box for its link. A link given for one class is carried on to its group's later classes.
+ */
+function MissingLinks({ id, count, run }: { id: string; count: number; run: Run }) {
+  const [open, setOpen] = useState(false)
+  const [classes, setClasses] = useState<{ id: string; group: string; date: string; start: string; title: string }[] | null>(null)
+  const [links, setLinks] = useState<Record<string, string>>({})
+  const load = async () => {
+    const answer = await run('links', 'missingLinks', { id }) as (Result & { classes?: typeof classes }) | undefined
+    setClasses(answer?.classes ?? [])
+  }
+  if (!open) {
+    return (
+      <span className="runs-warn">
+        {count} class(es) need a link{' '}
+        <button type="button" className="btn small" onClick={() => { setOpen(true); void load() }}>Add the link</button>
+      </span>
+    )
+  }
+  // One row per group: its link fixes every class of it that is still without one.
+  const byGroup = [...new Map((classes ?? []).map((c) => [c.group, c])).values()]
+  return (
+    <div className="missing-links">
+      {classes === null && <span className="muted">Finding them…</span>}
+      {classes !== null && byGroup.length === 0 && <span className="runs-note">Every class of theirs has its link.</span>}
+      {byGroup.map((c) => (
+        <form key={c.group} className="inline-form" onSubmit={async (e) => {
+          e.preventDefault()
+          const result = await run('links', 'setLink', { planId: c.id, url: links[c.group] ?? '' }) as Result | undefined
+          if (result?.ok) await load()
+        }}>
+          <span className="who">{c.group}<em className="muted"> · from {c.date}{c.start ? ` ${c.start}` : ''}</em></span>
+          <input type="url" required placeholder="https://zoom.us/j/…" value={links[c.group] ?? ''}
+            onChange={(e) => setLinks({ ...links, [c.group]: e.target.value })} aria-label={`Zoom link for ${c.group}`} />
+          <button type="submit" className="btn small">Save</button>
+        </form>
+      ))}
+      <button type="button" className="btn small ghost" onClick={() => setOpen(false)}>Close</button>
     </div>
   )
 }

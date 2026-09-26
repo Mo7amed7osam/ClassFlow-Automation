@@ -158,8 +158,38 @@ public partial class DashboardWebView : UserControl
             }
             // Whose classes this PC runs besides its own: the tick box on the Coordinators page.
             case "setRun":
-                return Done(await central.SetDelegationAsync(Text(p, "id"), Flag(p, "run"),
-                    string.IsNullOrWhiteSpace(Text(p, "zoomAccountId")) ? null : Text(p, "zoomAccountId")));
+            {
+                string said = await central.SetDelegationAsync(Text(p, "id"), Flag(p, "run"),
+                    string.IsNullOrWhiteSpace(Text(p, "zoomAccountId")) ? null : Text(p, "zoomAccountId"));
+                // At once, not at the next pass: ticked, their timetable is read and their classes put
+                // on this PC's schedule; unticked, theirs here are held.
+                if (main.SyncRunsCommand.CanExecute(null)) main.SyncRunsCommand.Execute(null);
+                return Done(Flag(p, "run")
+                    ? $"{said} Their timetable is being read from their LMS and their classes put on this PC now."
+                    : $"{said} Their classes on this PC are being held now.");
+            }
+            // The classes of a coordinator still without a Zoom link, for the card to ask for one each.
+            case "missingLinks":
+            {
+                var today = DateOnly.FromDateTime(DateTime.Now);
+                var plan = await central.Api.RunPlanAsync(today.AddDays(-7), today.AddDays(21), [Text(p, "id")]);
+                var missing = plan.ClassList.Where(c => c.NeedsLink && c.Status == "planned")
+                    .OrderBy(c => c.Date).ThenBy(c => c.StartTime)
+                    .Select(c => new { id = c.Id, group = c.Group, date = c.Date, start = c.StartTime ?? "", title = c.Title ?? "" })
+                    .ToArray();
+                return new { ok = true, message = missing.Length == 0 ? "Every class of theirs has its link." : "", classes = missing };
+            }
+            // One class's Zoom link, carried on to the later classes of its group.
+            case "setLink":
+            {
+                string link = Text(p, "url").Trim();
+                if (!System.Text.RegularExpressions.Regex.IsMatch(link, @"^https://([a-z0-9-]+\.)?zoom\.us/(j|w|my|s)/", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    return new { ok = false, message = "Paste the class's Zoom link, like https://zoom.us/j/92844609413." };
+                await central.Api.UpdateClassPlanAsync(Text(p, "planId"), new { meetingUrl = link, applyToGroup = true });
+                await central.RefreshAsync();
+                if (main.SyncRunsCommand.CanExecute(null)) main.SyncRunsCommand.Execute(null);
+                return Done("The link was saved for this class and the group's later classes; they are on this PC's schedule now.");
+            }
             case "setGroups":
                 await central.Api.SetUserGroupsAsync(Text(p, "id"), List(p, "groupIds"));
                 await central.RefreshAsync();
