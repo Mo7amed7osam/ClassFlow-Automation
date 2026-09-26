@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 
 from .api import ApiError, _json
 from .auth import CurrentUser, current_user, require_admin, require_dashboard_header
-from .models import GoogleSheetsConnection, GoogleSheetsSyncRecord, Recording
+from .models import ClassOccurrence, GoogleSheetsConnection, GoogleSheetsSyncRecord, Recording
 from .recordings import _same_session, sync_recording
 from .user_data import SecretBox
 from .scheduling import CAIRO
@@ -192,6 +192,27 @@ class GoogleSheetsSynchronizer:
                 recording, _ = await sync_recording(session, {"group_name": row.group, "session_date": row.day,
                     "start_time": None, "file_name": row.file_name or None, "record_type": row.record_type or None,
                     "drive_link": row.drive_link}, now)
+                occurrences = (await session.execute(
+                    select(ClassOccurrence)
+                    .where(ClassOccurrence.group_name == row.group, ClassOccurrence.session_date == row.day)
+                    .with_for_update()
+                )).scalars().all()
+                if len(occurrences) > 1:
+                    record.status, record.detail, record.processed_at = (
+                        "conflict", "More than one class occurrence matches this group and date; a sheet row has no start time.", now)
+                    counts["conflict"] += 1
+                    continue
+                if occurrences:
+                    occurrence = occurrences[0]
+                    if occurrence.drive_recording_url and occurrence.drive_recording_url != row.drive_link:
+                        record.status, record.detail, record.processed_at = (
+                            "conflict", "A different Drive link already exists for this class occurrence.", now)
+                        counts["conflict"] += 1
+                        continue
+                    occurrence.drive_recording_url = row.drive_link
+                    occurrence.updated_at = now
+                    if occurrence.state not in ("driveLinkAttached", "conflict"):
+                        occurrence.state = "driveLinkFound"
                 record.recording_id, record.status, record.processed_at = recording.id, "pending", now
                 counts["pending"] += 1
         return counts

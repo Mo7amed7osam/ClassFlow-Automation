@@ -36,7 +36,8 @@ _STATE_ORDER = {
     "zoomLinkFound": 8,
     "zoomLinkAttached": 9,
     "waitingForDrive": 10,
-    "driveLinkAttached": 11,
+    "driveLinkFound": 11,
+    "driveLinkAttached": 12,
 }
 
 

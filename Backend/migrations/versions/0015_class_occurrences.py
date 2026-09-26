@@ -39,7 +39,7 @@ def upgrade() -> None:
         sa.Column("next_retry_at", sa.DateTime(timezone=True)),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.CheckConstraint("state IN ('scheduled', 'live', 'attendancePending', 'attendanceSubmitted', 'correctionPending', 'attendanceFinalized', 'lmsSessionCompleted', 'recordingPending', 'zoomLinkFound', 'zoomLinkAttached', 'waitingForDrive', 'driveLinkAttached', 'conflict', 'failed', 'skipped')", name="ck_class_occurrences_state"),
+        sa.CheckConstraint("state IN ('scheduled', 'live', 'attendancePending', 'attendanceSubmitted', 'correctionPending', 'attendanceFinalized', 'lmsSessionCompleted', 'recordingPending', 'zoomLinkFound', 'zoomLinkAttached', 'waitingForDrive', 'driveLinkFound', 'driveLinkAttached', 'conflict', 'failed', 'skipped')", name="ck_class_occurrences_state"),
     )
     op.create_index("ix_class_occurrences_group_date", "class_occurrences", ["group_name", "session_date"])
     op.create_index("ix_class_occurrences_state_retry", "class_occurrences", ["state", "next_retry_at"])

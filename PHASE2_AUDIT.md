@@ -15,8 +15,8 @@ external account, OAuth configuration, or a safe test class.
 | Co-host | PARTIAL | A web co-host assigner exists; it has not been validated against Zoom Web on Linux. |
 | Zoom recording discovery | PARTIAL | Group/date/time-window logic exists and avoids the Zoom API; retry-until-08:00 is not yet represented as durable occurrence state. |
 | Google Sheets read-only sync | PARTIAL | OAuth, encrypted refresh token, 08:00 Cairo and a durable source-row ledger are deployed. Google OAuth credentials and a real sheet connection are not configured. |
-| Drive link replacement on LMS | MISSING | Sheet rows currently create pending recordings only; they do not prove one completed LMS session and replace that session's Zoom link. |
-| Persistent ClassOccurrence lifecycle | MISSING | `ClassPlan`, jobs and attendance rows exist, but there is no single durable occurrence with the requested state machine. |
+| Drive link replacement on LMS | PARTIAL | Sheet rows now match exactly one Group + Date occurrence and persist its Drive link; ambiguous days become a conflict. Automatic LMS replacement is still not wired. |
+| Persistent ClassOccurrence lifecycle | PARTIAL | A durable occurrence is created idempotently with linked jobs and records stage outcomes; attachment/retry and dashboard transitions are still incomplete. |
 | Persistent queues / recovery | PARTIAL | Jobs, retries, browser profiles and journals persist; recording retry and all occurrence-level recovery are not yet durable. |
 | Pre-flight, notifications, operations dashboard and guide | PARTIAL | Worker preflight and basic dashboard/activity exist; the requested occurrence-focused operations view, notification history and built-in guide are absent. |
 | Restart and VPS recovery | PARTIAL | Device tokens, profile state, journals and job retries persist; no controlled worker/VPS restart during a live class has been tested. |

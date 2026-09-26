@@ -570,7 +570,7 @@ class ClassPlan(Base):
 OCCURRENCE_STATES = (
     "scheduled", "live", "attendancePending", "attendanceSubmitted", "correctionPending",
     "attendanceFinalized", "lmsSessionCompleted", "recordingPending", "zoomLinkFound", "zoomLinkAttached",
-    "waitingForDrive", "driveLinkAttached", "conflict", "failed", "skipped",
+    "waitingForDrive", "driveLinkFound", "driveLinkAttached", "conflict", "failed", "skipped",
 )
 
 
@@ -605,7 +605,7 @@ class ClassOccurrence(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
-        CheckConstraint("state IN ('scheduled', 'live', 'attendancePending', 'attendanceSubmitted', 'correctionPending', 'attendanceFinalized', 'lmsSessionCompleted', 'recordingPending', 'zoomLinkFound', 'zoomLinkAttached', 'waitingForDrive', 'driveLinkAttached', 'conflict', 'failed', 'skipped')", name="ck_class_occurrences_state"),
+        CheckConstraint("state IN ('scheduled', 'live', 'attendancePending', 'attendanceSubmitted', 'correctionPending', 'attendanceFinalized', 'lmsSessionCompleted', 'recordingPending', 'zoomLinkFound', 'zoomLinkAttached', 'waitingForDrive', 'driveLinkFound', 'driveLinkAttached', 'conflict', 'failed', 'skipped')", name="ck_class_occurrences_state"),
         Index("ix_class_occurrences_group_date", "group_name", "session_date"),
         Index("ix_class_occurrences_state_retry", "state", "next_retry_at"),
     )
