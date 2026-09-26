@@ -1,10 +1,10 @@
 # Phase 2 cloud parity audit
 
 Audit date: 2026-09-26. Repository: branch `linux`, local and `origin/linux` at
-`8f152b1` before the audit fixes in this working tree. Production was read from the
-public health endpoint, the authenticated dashboard already open in Chrome, and the
-Coolify deployment history. Do not treat a code path or a green build as proof of a
-successful live Zoom/LMS run.
+`040faf3bb47a3cc417b92a1084ddeb93e576a03e`. Production was checked after the two
+successful Coolify deployments using the public health endpoint and authenticated
+dashboard. Do not treat a code path or a green build as proof of a successful live
+Zoom/LMS run.
 
 ## Status meanings
 
@@ -21,22 +21,23 @@ successful live Zoom/LMS run.
 
 | Item | Evidence | Result |
 |---|---|---|
-| Local commit | `8f152b1a0e2b8620072ec282fb9c64c3b46d7726` | Same as origin before this audit's changes |
-| `origin/linux` | `8f152b1a0e2b8620072ec282fb9c64c3b46d7726` | No ahead/behind commits |
-| Deployed backend | Coolify latest successful deployment `3a4fbad7a4c91f23b0103ee4f0fbfb91a3d81e13` | Behind desired `linux` head |
-| Backend liveness | `GET /health` returned HTTP 200, `{"status":"ok"}` | PASS for process + database liveness only |
-| Detailed backend / worker health | Anonymous `GET /api/v1/dashboard/health-detailed` returns 401 | Authenticated details not retrieved through direct request |
-| Worker signal | Authenticated Overview reported 2 of 3 agents online; 0 busy | Warning; does not prove Zoom readiness |
-| Current class signal | Overview listed today's G1 and G2 as “Zoom failed / Needs somebody” | Live automation is not ready |
-| Production dashboard | `/dashboard/` responds 200; assets are served | Older menu and copy are live; requested redesign is not deployed |
-| Current recordings / attendance | Overview showed no recordings; Attendance showed no sessions | No successful live class evidence in those views |
+| Local commit | `040faf3bb47a3cc417b92a1084ddeb93e576a03e` | Matches `origin/linux` |
+| `origin/linux` | `040faf3bb47a3cc417b92a1084ddeb93e576a03e` | No ahead/behind commits |
+| Deployed backend | Coolify latest success is `040faf3` | Matches current source; redesign and timezone fix are live |
+| Backend liveness | `GET /health` returned HTTP 200, `{"status":"ok"}` | PASS for process/database liveness only |
+| Detailed backend / worker health | Authenticated health modal loaded; Backend and PostgreSQL responsive, server time reported in Africa/Cairo | PASS for those checks; not a live class proof |
+| Worker signal | Health modal reported 2 online / 3 registered; Agents page showed one agent offline for 5 days | Warning; dashboard's “2 Worker Active” badge does not mean all workers are healthy |
+| Current class signal | G1 and G2 show “Zoom failed”; G2 details show Zoom Started and Run Session failed, no attendance snapshot | Live automation is not ready |
+| Production dashboard | `/dashboard/` responds 200 and new dashboard routes/assets load; bare `/` responds 404 | Use `/dashboard/` as the application URL |
+| Recordings / attendance | No recordings; G2 attendance pending with no first Zoom snapshot; 2 sessions need attention | No successful end-to-end class evidence |
+| Integrations | 1 LMS account and 3 Zoom account records configured; Google OAuth and Sheet missing; OpenRouter key missing | Credentials/configuration counts do not verify successful login |
 
 Production URL: <https://classflow.152.239.115.207.sslip.io/dashboard/>
 
-Coolify confirms source branch `linux`, source SHA `HEAD`, and latest successful run
-`3a4fbad`. The service is serving that older frontend despite local `8f152b1`. A
-deployment was not started during this audit because the startup seeder below was found
-to modify operator-owned fields and required a source fix before redeployment.
+Coolify confirms source branch `linux`, source SHA `HEAD`, and successful deployments
+of `ba357ba` (seeder safety) and `040faf3` (dashboard timezone diagnostics). The live
+diagnostics modal now renders the formatted Cairo time rather than returning the 500
+seen before the timezone fix. The source commits are pushed and deployed.
 
 ## Parity audit
 
@@ -44,7 +45,7 @@ to modify operator-owned fields and required a source fix before redeployment.
 |---:|---|---|---|---|---|
 | 1 | Scheduler and six weekly slots | PARTIAL | `Backend/central_backend/scheduling.py`; Cairo stage schedule; production seeder makes plans | `class_plans`, `class_occurrences`, idempotent stage keys; retry queue | Overview showed today's G1 and G2 Zoom jobs failed. No successful scheduled class evidence. |
 | 2 | ClassOccurrence | IMPLEMENTED_UNVERIFIED | `scheduling.py`, `models.py`, `occurrence_lifecycle.py` | PostgreSQL row linked to jobs; outcome projection | Public health confirms DB liveness, not actual occurrence lifecycle/restart recovery. |
-| 3 | Zoom Web profiles | BLOCKED | `CloudWorker` profile managers and encrypted Zoom account records | Worker state volume stores per-account browser profiles | No authenticated proof that the two required profiles exist, have cookies, or are signed in. Today's Zoom jobs failed. |
+| 3 | Zoom Web profiles | BLOCKED | `CloudWorker` profile managers and encrypted Zoom account records | Worker state volume stores per-account browser profiles | Health reports 3 configured Zoom account records, but cookie/session readiness is not verified. Today's G1/G2 Zoom jobs failed. |
 | 4 | Zoom account isolation | IMPLEMENTED_UNVERIFIED | Account-specific profile path and operation lock in CloudWorker | Persistent worker volume | No live proof that G1/G2 were opened with the correct separate accounts. |
 | 5 | Zoom meeting start | BLOCKED | `Stages/ClassRunStage.cs`, `WebAutoAdmitEngine` | Job state and browser profile | Production Overview reports Zoom failures; no successful live start. |
 | 6 | Mic/camera state | IMPLEMENTED_UNVERIFIED | `WebAutoAdmitEngine` DOM controls | Browser state during meeting only | No live Zoom Web evidence. |
@@ -74,22 +75,23 @@ to modify operator-owned fields and required a source fix before redeployment.
 | 30 | Browser recovery | IMPLEMENTED_UNVERIFIED | Browser lifecycle scoped by job/profile; failed jobs can be retried | Profile and job state on volume/Postgres | No production browser restart/recovery test. |
 | 31 | Worker recovery | PARTIAL | Worker reconnects and registers; persistent `/var/lib/classflow` volume | Worker token, profiles and journals | Overview reports 2/3 agents online; no safe restart recovery evidence during class. |
 | 32 | VPS restart recovery | IMPLEMENTED_UNVERIFIED | Compose restart policies, named PostgreSQL/worker volumes, entrypoint migrations | Persistent named volumes | Health is live, but no controlled VPS restart proof from this audit. |
-| 33 | Notifications | PARTIAL | `notifications.py` and dashboard notification APIs | Stored notification/audit state depends on event path | Production redesign with notifications is not deployed; delivery channel/configuration not proven. |
+| 33 | Notifications | PARTIAL | `notifications.py` and dashboard notification APIs | Stored notification/audit state depends on event path | Notifications Center loads and reports four errors for today's classes; external delivery channel/configuration is not proven. |
 | 34 | Pre-flight | PARTIAL | `CloudWorker/Preflight.cs` checks Chromium/backend/time/storage at worker startup | Startup logs only | No current pre-flight report retrieved; 2/3 online and today's Zoom failures are blockers. |
 | 35 | Secrets and migrations | PARTIAL | AES-GCM secret store, environment configuration, Alembic entrypoint | Encrypted account credentials and PostgreSQL schema | `/health` indicates DB responds. Secret presence/validity, current migration revision, OAuth and account login remain unverified. Never expose secret values. |
-| 36 | Dashboard redesign and route wiring | PARTIAL | React/Vite `Dashboard/src`; current desired redesign is in `8f152b1` | Built into backend image | Production still serves the older `3a4fbad` bundle. Old Groups copy mentions n8n; redesigned Overview/Live/Class Detail/Notifications/Help/health modal were not verified live. |
+| 36 | Dashboard redesign and route wiring | PARTIAL | React/Vite `Dashboard/src`; redesign is included in `8f152b1` and deployed in `040faf3` | Built into backend image | Authenticated Overview, Live, Schedule, Attendance, Groups, Zoom, LMS, Recordings, Agents, Notifications, Logs, Settings, Help, Users, Coordinators, Sessions, and class detail routes load. No explicit “Automation” link is present; Schedule and class lifecycle detail carry this function. The overview's recent activity says G2 was admitted/held, but G2's actual class detail reports Zoom and Run Session failed and no attendance snapshot, so the audit treats it as failed. Responsive mobile/tablet layout and a working dark/light toggle were not verified. |
 
 ## Seeder safety
 
 `Backend/central_backend/seed.py` is called at every backend start by
 `deploy/backend-entrypoint.sh`. It creates absent starter data and is intended to be
 idempotent. The audit found it also reset existing students' active flag, order, and
-aliases and re-enabled an existing `RunDelegation`. That would overwrite operator edits on
-every deployment. The current working-tree fix leaves existing student fields and
-delegation choices alone; it creates starter alias records only alongside newly created
-students. Existing group,
-Zoom account, LMS account, and class-plan rows are not replaced. Verify this fix is on the
-deployed source before redeploying.
+aliases and re-enabled an existing `RunDelegation`. Commit `ba357ba` leaves existing
+student fields and delegation choices alone; it creates starter alias records only
+alongside newly created students. The fix is in deployed commit `040faf3`, which includes
+`ba357ba`. PostgreSQL-backed regression cases were added, but could not execute in the
+local environment because PostgreSQL binaries were unavailable; pytest reported those
+cases skipped. Thus the source-level safety fix is deployed, but its database scenario
+was not exercised locally.
 
 ## Lifecycle and business-order gaps
 
@@ -103,7 +105,12 @@ remains separate from LMS completion; do not alter it without live room evidence
 
 ## Readiness
 
-**NOT READY. Do not turn the Mac off yet.** The latest intended dashboard/backend commit
-is not deployed, today's production Overview reports Zoom failures, worker connectivity is
-2/3, and Zoom profile login, LMS login, Google OAuth/Sheet access, and OpenRouter live
-request were not verified. There is no complete live class run in the available evidence.
+**NOT READY. Do not turn the Mac off yet.** The latest source commit `040faf3` is pushed
+and deployed, and `/health` is 200, but both today's production classes show Zoom failure;
+G2's detail shows its first two lifecycle stages failed and attendance is still pending.
+Only 2/3 workers are online (one offline for 5 days), there are no recordings, Google OAuth
+and a spreadsheet are not configured, and OpenRouter reports rule-based matching only.
+The dashboard stores Zoom/LMS account records, but the live Zoom and LMS login/submission
+paths have not passed a full class run. Bare `/` returns 404; the application is at
+`/dashboard/`. Turning off the Mac cannot be recommended as verified-safe based on this
+production state.
